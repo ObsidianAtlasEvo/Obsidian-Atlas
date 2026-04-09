@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.env
+data/memory/*.db
+data/memory/*.db-wal
+data/memory/*.db-shm
+data/traces/**/*.jsonl
+data/datasets/**/*.jsonl
+!data/**/.gitkeep

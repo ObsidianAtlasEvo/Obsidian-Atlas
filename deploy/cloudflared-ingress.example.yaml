@@ -1,0 +1,20 @@
+# Point a Cloudflare Tunnel at the machine that runs Caddy/nginx + Atlas.
+# 1. cloudflared tunnel create obsidian-atlas
+# 2. Copy credentials JSON path into credentials-file below
+# 3. Route DNS in Cloudflare dashboard to this tunnel
+# 4. Run Caddy (or nginx) on localhost:80/443; tunnel forwards HTTPS to it.
+#
+#   cloudflared tunnel --config deploy/cloudflared-ingress.example.yaml run
+#
+# Replace tunnel UUID and credentials path before use.
+
+tunnel: YOUR_TUNNEL_UUID
+credentials-file: /path/to/.cloudflared/YOUR_TUNNEL_UUID.json
+
+ingress:
+  # Origin: Caddy/nginx on this machine (HTTP). Use :443 + https if your edge terminates TLS locally.
+  - hostname: obsidianatlastech.com
+    service: http://127.0.0.1:80
+  - hostname: www.obsidianatlastech.com
+    service: http://127.0.0.1:80
+  - service: http_status:404

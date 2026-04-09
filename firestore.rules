@@ -1,0 +1,129 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Document ID: {userId}
+    // Fields:
+    //   - uid: string (required)
+    //   - email: string (required)
+    //   - role: string (required, enum: guest, registered_user, power_user, sovereign_creator)
+    //   - createdAt: timestamp (required)
+    //   - lastLogin: timestamp
+    //   - securitySettings: map
+    //   - privacySettings: map
+    //
+    // Collection: audit_logs
+    // Document ID: {logId}
+    // Fields:
+    //   - id: string (required)
+    //   - timestamp: timestamp (required)
+    //   - actorUid: string (required)
+    //   - action: string (required)
+    //   - severity: string (required, enum: low, medium, high, critical)
+    //   - metadata: map
+    //
+    // Collection: gap_ledger
+    // Document ID: {gapId}
+    // Fields:
+    //   - id: string (required)
+    //   - title: string (required)
+    //   - type: string (required)
+    //   - severity: string (required)
+    //   - status: string (required)
+    //
+    // Collection: change_control
+    // Document ID: {proposalId}
+    // Fields:
+    //   - id: string (required)
+    //   - class: int (required, 0-4)
+    //   - status: string (required)
+    //
+    // Collection: emergency_containment
+    // Document ID: status
+    // Fields:
+    //   - active: bool (required)
+    //   - level: int (required, 1-4)
+    //
+    // ===============================================================
+
+    // Helper Functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isVerified() {
+      return isAuthenticated() && request.auth.token.email_verified == true;
+    }
+
+    function isCreator() {
+      return isAuthenticated() && 
+             isVerified() && 
+             request.auth.token.email == "crowleyrc62@gmail.com";
+    }
+
+    function isFrozen() {
+      return exists(/databases/$(database)/documents/system_config/emergency_state) && 
+             get(/databases/$(database)/documents/system_config/emergency_state).data.active == true;
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    function isValidUser(data) {
+      return data.uid is string &&
+             data.email is string &&
+             data.role in ["guest", "registered_user", "power_user", "sovereign_creator"] &&
+             data.createdAt is string;
+    }
+
+    // Rules
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isCreator();
+      allow create: if !isFrozen() && 
+                      isAuthenticated() && 
+                      isValidUser(request.resource.data) && 
+                      isOwner(userId) && 
+                      (request.resource.data.role == "registered_user" || (request.resource.data.role == "sovereign_creator" && request.auth.token.email == "crowleyrc62@gmail.com"));
+      allow update: if !isFrozen() && 
+                      isOwner(userId) && 
+                      isValidUser(request.resource.data) && 
+                      request.resource.data.role == resource.data.role; // Role cannot be changed by user
+      allow update: if isCreator(); // Creator can manage roles even during freeze
+      allow delete: if isCreator();
+    }
+
+    match /audit_logs/{logId} {
+      allow read: if isCreator();
+      allow write: if isAuthenticated() && 
+                      request.resource.data.keys().hasAll(['id', 'timestamp', 'actorUid', 'action', 'severity', 'metadata']);
+      allow update, delete: if false; // Immutable
+    }
+
+    match /gap_ledger/{gapId} {
+      allow read, write: if isCreator();
+    }
+
+    match /change_control/{proposalId} {
+      allow read, write: if isCreator();
+    }
+
+    match /system_config/emergency_state {
+      allow read: if isAuthenticated();
+      allow write: if isCreator();
+    }
+
+    // Default deny
+    match /{path=**} {
+      allow read, write: if false;
+    }
+  }
+}

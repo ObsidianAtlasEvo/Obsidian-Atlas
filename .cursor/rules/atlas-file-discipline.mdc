@@ -1,0 +1,36 @@
+---
+description: Atlas — file-by-file discipline, boundaries, first-milestone exclusions
+globs: atlas-backend/**
+alwaysApply: false
+---
+
+# Obsidian Atlas — file discipline
+
+## How to work
+
+1. **Implement one requested file at a time** unless the user explicitly asks for multiple files or a batch. Do not expand scope across the tree without instruction.
+
+2. **Do not refactor unrelated files.** Touch only what the task requires. No drive-by renames, formatting sweeps, or “while we’re here” edits in other packages (e.g. the Vite `src/` UI) unless explicitly requested.
+
+3. **Keep functions small and typed.** Prefer explicit TypeScript types and narrow return shapes. Avoid `any` for persisted or API-bound data.
+
+4. **Prefer clear interfaces and service boundaries** over clever meta-frameworks. A boring function in the right module beats a novel abstraction that obscures the pipeline.
+
+## First-milestone exclusions (unless explicitly requested)
+
+Do **not** introduce:
+
+- Docker or container orchestration  
+- Vector databases or embedding-backed retrieval (beyond optional embedding API on the provider)  
+- Authentication, sessions, or multi-user product complexity  
+- New UI surfaces inside `atlas-backend` (the runtime stays API-only here)  
+- **SDKs or HTTP clients for OpenAI, Anthropic, Gemini, or other hosted LLM vendors**
+
+## Persistence and tests
+
+- **Every persistence-related module must be deterministic and testable**: same inputs and DB/JSONL state should yield the same writes (aside from generated IDs and timestamps). Avoid hidden globals and non-deterministic ordering where it affects stored rows.
+- Append-only logs (`jsonl`, trace files): **append**; do not rewrite prior lines in place.
+
+## Repo layout reminder
+
+Atlas runtime code lives under **`atlas-backend/`** (separate from repo-root **`src/`** for the Vite app). New routes and services for the evolution loop belong under `atlas-backend/src/` unless the user directs otherwise.

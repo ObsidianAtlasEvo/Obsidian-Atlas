@@ -1,0 +1,1 @@
+export { SovereignConsoleModule } from './SovereignConsoleModule';

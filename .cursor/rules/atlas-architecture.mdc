@@ -1,0 +1,46 @@
+---
+description: Obsidian Atlas — local-first runtime doctrine (provider, learning, API-first)
+globs: atlas-backend/**
+alwaysApply: false
+---
+
+# Obsidian Atlas — architecture doctrine
+
+Atlas is a **local-first intelligence runtime**: inference, memory, evaluation, and dataset staging run on the operator’s machine (or their own infra), not on third-party model SaaS.
+
+## Non-negotiables
+
+1. **No external hosted LLM APIs for generation, embeddings, or “cloud memory.”** Do not add clients or SDKs that call OpenAI, Anthropic, Google Gemini, or equivalent hosted inference APIs. All model I/O goes through the **`ModelProvider`** (and related) abstraction implemented against **local** runtimes.
+
+2. **Ollama is the initial concrete provider; vLLM is a planned swap.** Implement generation/embeddings behind `ModelProvider` in `services/model/`. Replacing Ollama with vLLM (or another OpenAI-compatible local server) means **a new adapter file**, not rewrites of memory, context, evaluation, or routes.
+
+3. **All learning is user-local.** Policies, memories, traces, and training rows are keyed by **`userId`**. No mixing of one user’s memory, policy, or datasets into another’s. Multi-tenant “platform” behavior is out of scope for v1.
+
+4. **Evolution order is fixed:** **memory → policy → skill → adapter.** Milestone v1 implements the **memory** and **policy** layers and hooks for later **skills** and **adapters** (e.g. LoRA). Do not jump to adapter training inside the hot request path.
+
+5. **No bypassing the provider abstraction.** Routes and services must call **`ModelProvider`** (or the project’s single factory), not ad-hoc `fetch` to Ollama scattered across the codebase—except inside the dedicated Ollama adapter module.
+
+6. **No memory persistence without confidence and source trace.** Every stored `MemoryRecord` (or equivalent) must carry a **confidence** score and a **source trace** (or `sourceTraceId` / structured provenance) tying the write to a turn or extraction event. Silent or un-attributed memory writes are forbidden.
+
+7. **API-first, UI second.** The runnable contract is the HTTP API (`POST /chat` or `/v1/chat`, health, etc.). The Vite/React app is a separate surface; do not embed core evolution logic only in the browser.
+
+## Atlas v1 evolution loop (required behavior)
+
+The first runtime loop **must**:
+
+1. Accept the chat HTTP handler (e.g. **`POST /v1/chat`**).
+2. **Validate the payload with Zod** before any DB or model calls.
+3. **Load policy + relevant memory** for the requesting `userId`.
+4. **Build the final system context** (context assembler only; no model call there).
+5. **Call the local model** exclusively via **`ModelProvider`** (Ollama adapter in v1).
+6. **Return the model response** to the client.
+7. **Score the exchange** (evaluation engine; rule-based or later judge—never skip gating).
+8. **Extract memory candidates** (extractor returns structured candidates only—no silent writes).
+9. **Persist only candidates at or above the configured confidence threshold**, each with **confidence + source trace**.
+10. **Write a training example only if the exchange passes the evaluation score threshold** (dataset writer; offline training stays out of band).
+
+## Implementation posture
+
+- Prefer **explicit pipelines** matching the loop above over hidden side effects.
+- **Training examples** are appended only when the **exchange passes the evaluation threshold**; that gate lives in the evolution layer, not in the model adapter.
+- Keep rules **precise and enforceable** in code review: if a change violates any bullet above, it does not ship.

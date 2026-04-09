@@ -1,0 +1,8 @@
+{
+  "name": "Obsidian Atlas",
+  "description": "A category-defining cognitive infrastructure for serious minds. Obsidian Atlas is a scalable intelligence environment designed to become a default layer of thought, unifying memory, research, decision architecture, and civilizational synthesis into a sovereign instrument for becoming more integrated, accurate, and formidable. Built with rigorous epistemic discipline and a 'Quiet Power' aesthetic, it serves as a continuity engine across life, work, learning, and identity. Note: This system provides informational and strategic synthesis; ultimate verification and decision responsibility remain with the sovereign user.",
+  "requestFramePermissions": [
+    "microphone",
+    "geolocation"
+  ]
+}

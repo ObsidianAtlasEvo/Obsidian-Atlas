@@ -1,0 +1,1 @@
+export { ResonanceModule } from './ResonanceModule';

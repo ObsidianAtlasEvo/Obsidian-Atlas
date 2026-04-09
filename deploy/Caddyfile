@@ -1,0 +1,33 @@
+# Obsidian Atlas — same-origin production (HTTPS automatic with Caddy).
+# Adjust root path and domain. Backend: Fastify on 127.0.0.1:3001 (full app: atlas-backend/src/index.ts).
+#
+#   sudo caddy run --config /path/to/obsidian-atlas/deploy/Caddyfile
+#
+# Routes mirror vite.config.ts dev proxy:
+#   /api/*  → backend with /api stripped → /v1/... on Fastify
+#   /auth/* → backend unchanged
+#   /ollama/* → local Ollama (optional; strip /ollama) — remove block if unused
+
+obsidianatlastech.com {
+	root * /var/www/obsidian-atlas/dist
+	encode gzip zstd
+
+	# Strip /api prefix (same as Vite: /api/v1/foo → upstream /v1/foo)
+	handle_path /api/* {
+		reverse_proxy 127.0.0.1:3001
+	}
+
+	handle /auth* {
+		reverse_proxy 127.0.0.1:3001
+	}
+
+	# Optional: same-origin Ollama for browser (matches default OLLAMA_CHAT_URL /ollama/api/chat)
+	handle_path /ollama/* {
+		reverse_proxy 127.0.0.1:11434
+	}
+
+	handle {
+		try_files {path} /index.html
+		file_server
+	}
+}

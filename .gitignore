@@ -1,0 +1,16 @@
+# Keep GitHub packs under 2 GiB — local / generated / duplicate trees
+atlas-backend/data/*.db
+atlas-backend/data/*.db-shm
+atlas-backend/data/*.db-wal
+blobs/
+_zip_extract/
+
+node_modules/
+dist/
+build/
+coverage/
+.DS_Store
+*.log
+.env*
+!.env.example
+!.env.production

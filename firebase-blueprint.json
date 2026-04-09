@@ -1,0 +1,102 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile and security settings",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Unique user ID" },
+        "email": { "type": "string", "format": "email", "description": "User email address" },
+        "emailVerified": { "type": "boolean", "description": "Whether the email is verified" },
+        "role": { "type": "string", "enum": ["guest", "registered_user", "power_user", "sovereign_creator"], "description": "User role" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Account creation timestamp" },
+        "lastLogin": { "type": "string", "format": "date-time", "description": "Last login timestamp" },
+        "securitySettings": {
+          "type": "object",
+          "properties": {
+            "mfaEnabled": { "type": "boolean" },
+            "passkeyEnabled": { "type": "boolean" },
+            "recoveryEmail": { "type": "string", "format": "email" }
+          }
+        },
+        "privacySettings": {
+          "type": "object",
+          "properties": {
+            "dataMinimization": { "type": "boolean" },
+            "memorySovereignty": { "type": "boolean" }
+          }
+        }
+      },
+      "required": ["uid", "email", "role", "createdAt"]
+    },
+    "AuditLog": {
+      "title": "Audit Log",
+      "description": "Immutable log of sensitive actions",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "actorUid": { "type": "string" },
+        "action": { "type": "string" },
+        "resource": { "type": "string" },
+        "metadata": { "type": "object" },
+        "severity": { "type": "string", "enum": ["low", "medium", "high", "critical"] }
+      },
+      "required": ["id", "timestamp", "actorUid", "action", "severity"]
+    },
+    "Gap": {
+      "title": "Gap",
+      "description": "Identified weakness or gap in the architecture",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "type": { "type": "string", "enum": ["bug", "logic_failure", "privacy_risk", "security_weakness", "latency_bottleneck", "structural_gap"] },
+        "severity": { "type": "string", "enum": ["low", "medium", "high", "critical"] },
+        "status": { "type": "string", "enum": ["identified", "suspected", "investigating", "repair_proposed", "repaired", "failed_repair"] },
+        "detectedAt": { "type": "string", "format": "date-time" },
+        "repairedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "title", "type", "severity", "status", "detectedAt"]
+    },
+    "ChangeProposal": {
+      "title": "Change Proposal",
+      "description": "Proposal for an internal self-repair or upgrade",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "class": { "type": "integer", "enum": [0, 1, 2, 3, 4] },
+        "status": { "type": "string", "enum": ["draft", "proposed", "testing", "approved", "deployed", "rolled_back", "rejected"] },
+        "proposedBy": { "type": "string" },
+        "approvedBy": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "deployedAt": { "type": "string", "format": "date-time" },
+        "rollbackSafe": { "type": "boolean" }
+      },
+      "required": ["id", "title", "class", "status", "createdAt"]
+    },
+    "EmergencyContainment": {
+      "title": "Emergency Containment",
+      "description": "Status and logs of the emergency containment switch",
+      "type": "object",
+      "properties": {
+        "active": { "type": "boolean" },
+        "activatedAt": { "type": "string", "format": "date-time" },
+        "activatedBy": { "type": "string" },
+        "reason": { "type": "string" },
+        "level": { "type": "integer", "enum": [1, 2, 3, 4] }
+      },
+      "required": ["active"]
+    }
+  },
+  "firestore": {
+    "users": { "schema": "User", "description": "User profiles" },
+    "audit_logs": { "schema": "AuditLog", "description": "Immutable audit logs" },
+    "gap_ledger": { "schema": "Gap", "description": "Ranked ledger of weaknesses" },
+    "change_control": { "schema": "ChangeProposal", "description": "Change proposals and approvals" },
+    "emergency_containment": { "schema": "EmergencyContainment", "description": "Containment status" }
+  }
+}

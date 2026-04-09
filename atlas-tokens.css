@@ -1,0 +1,78 @@
+/* Atlas-Audit: [X] Section X — Token repair: structural borders, shadow ladder, rail/inset surfaces, focus/hover rings. Downstream: all panels, glass utilities, and chrome that reference these vars read calmer hierarchy without purple-only chrome. */
+/**
+ * Atlas UI Systems Layer — spacing (4px base), radii, borders, motion, layout, surfaces.
+ * Semantic tokens for a sovereign, restrained nebula environment.
+ */
+:root {
+  --space-0: 0px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+  --space-20: 80px;
+  --space-24: 96px;
+
+  --radius-xs: 6px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
+  --radius-2xl: 24px;
+  --radius-pill: 999px;
+
+  --border-hairline: 1px;
+  /** Default panel edge: structural (ivory), not purple wash — keeps dashboards readable */
+  --border-structural: rgba(226, 232, 240, 0.08);
+  /** Secondary / quiet chrome */
+  --border-subtle: rgba(88, 28, 135, 0.1);
+  /** Standard panel border — restrained violet hint */
+  --border-default: rgba(88, 28, 135, 0.14);
+  --border-emphasis: rgba(201, 162, 39, 0.28);
+  --border-warning: rgba(166, 107, 50, 0.35);
+  --border-danger: rgba(139, 41, 66, 0.45);
+  /** Interactive hover ring (panels, rails) */
+  --atlas-border-hover: rgba(201, 162, 39, 0.2);
+  /** Focus-visible for composite surfaces */
+  --atlas-ring-focus: rgba(201, 162, 39, 0.35);
+
+  --atlas-nav-collapsed: 72px;
+  --atlas-nav-expanded: 240px;
+  --atlas-context-rail: 320px;
+  --atlas-workspace-max: 920px;
+  --atlas-canvas-max: 1440px;
+
+  --atlas-motion-instant: 80ms;
+  --atlas-motion-fast: 140ms;
+  --atlas-motion-standard: 200ms;
+  --atlas-motion-moderate: 260ms;
+  --atlas-motion-slow: 320ms;
+  --atlas-motion-chamber: 380ms;
+  --atlas-ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --atlas-ease-in: cubic-bezier(0.4, 0, 1, 1);
+  --atlas-ease-standard: cubic-bezier(0.2, 0.8, 0.2, 1);
+
+  /** Canonical void + deep surface (single source for body gradient and legacy aliases) */
+  --atlas-void-core: #050505;
+  --atlas-deep-surface: #0f0a1e;
+
+  --atlas-surface-shell: rgba(15, 10, 30, 0.72);
+  --atlas-surface-panel: rgba(15, 10, 30, 0.55);
+  --atlas-surface-elevated: rgba(15, 10, 30, 0.78);
+  /** Recessed / inset blocks */
+  --atlas-surface-inset: rgba(5, 5, 8, 0.72);
+  /** Narrow rails, side metadata */
+  --atlas-surface-rail: rgba(12, 10, 22, 0.85);
+  --atlas-nebula-bloom: rgba(88, 28, 135, 0.08);
+
+  /** Shadow ladder — premium restraint vs shadow-2xl everywhere */
+  --atlas-shadow-sm: 0 4px 24px -6px rgba(0, 0, 0, 0.45);
+  --atlas-shadow-md: 0 8px 32px -6px rgba(0, 0, 0, 0.5);
+  --atlas-shadow-lg: 0 16px 48px -8px rgba(0, 0, 0, 0.55);
+  --atlas-shadow-chamber: 0 24px 64px -12px rgba(0, 0, 0, 0.6);
+}
