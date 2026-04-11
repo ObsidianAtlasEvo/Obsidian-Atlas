@@ -21,6 +21,7 @@ import { registerIntelligenceChambersRoutes } from './routes/intelligenceChamber
 import { registerMindMapRoutes } from './routes/mindMapRoutes.js';
 import { registerSovereigntyRoutes } from './routes/sovereigntyRoutes.js';
 import { registerAuthRoutes } from './routes/authRoutes.js';
+import { registerRetentionRoutes } from './routes/retentionRoutes.js';
 
 initSqlite();
 await initSemanticVectorIndex();
@@ -72,6 +73,7 @@ registerLegacyRoutes(app);
 registerSovereignOverviewRoutes(app);
 registerIntelligenceChambersRoutes(app);
 registerMindMapRoutes(app);
+registerRetentionRoutes(app);
 
 // POST /chat forwards to the handler registered as POST /v1/chat (same body, no model call here).
 app.post('/chat', async (request: FastifyRequest, reply: FastifyReply) => {
