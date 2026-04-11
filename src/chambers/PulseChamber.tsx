@@ -22,6 +22,9 @@ const SESSION_INTENTS = [
   { id: 'recover', label: 'Recover' },
 ] as const;
 
+/** Stable ref for stats that don't navigate (cursor: default). */
+const PULSE_STAT_NO_OP = (): null => null;
+
 export default function PulseChamber() {
   const pulse = useAtlasStore((s) => s.pulse);
   const sessionIntent = useAtlasStore((s) => s.sessionIntent);
@@ -125,7 +128,7 @@ export default function PulseChamber() {
             { label: 'Questions', value: recentQuestions.length, action: () => setActiveMode('atlas'), color: 'rgba(99,102,241,0.7)' },
             { label: 'Journal', value: journal.length, action: () => setActiveMode('journal'), color: 'rgba(34,197,94,0.65)' },
             { label: 'Doctrine', value: doctrine.length, action: () => setActiveMode('doctrine'), color: 'rgba(201,162,39,0.7)' },
-            { label: 'Pulse Items', value: pulse.items.length, action: () => null, color: 'rgba(167,139,250,0.7)' },
+            { label: 'Pulse Items', value: pulse.items.length, action: PULSE_STAT_NO_OP, color: 'rgba(167,139,250,0.7)' },
           ].map((stat) => (
             <button
               key={stat.label}
@@ -135,7 +138,7 @@ export default function PulseChamber() {
                 border: '1px solid rgba(88,28,135,0.12)',
                 borderRadius: 8,
                 padding: '14px 14px',
-                cursor: stat.action !== (() => null) ? 'pointer' : 'default',
+                cursor: stat.action !== PULSE_STAT_NO_OP ? 'pointer' : 'default',
                 fontFamily: 'inherit',
                 textAlign: 'left',
                 transition: 'all 140ms ease',
