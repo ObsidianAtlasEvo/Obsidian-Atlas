@@ -109,13 +109,14 @@ export const SovereignAuditLog: React.FC<SovereignAuditLogProps> = ({ initialEnt
     select: { background: '#111', border: '1px solid #374151', color: '#e5e7eb', padding: '6px 10px', fontSize: 11 },
     btn: { background: '#1a1a1a', border: '1px solid #374151', color: '#9ca3af', padding: '6px 14px', cursor: 'pointer', fontSize: 11 },
     row: { padding: '10px 12px', borderBottom: '1px solid #1a1a1a', cursor: 'pointer' },
-    badge: (sev: AuditSeverity): React.CSSProperties => ({
-      padding: '2px 6px', fontSize: 9, textTransform: 'uppercase' as const,
-      background: `${SEVERITY_COLORS[sev]}20`, border: `1px solid ${SEVERITY_COLORS[sev]}`,
-      color: SEVERITY_COLORS[sev], letterSpacing: '0.1em',
-    }),
     pagination: { display: 'flex', gap: 8, justifyContent: 'center', marginTop: 16 },
   };
+
+  const badge = (sev: AuditSeverity): React.CSSProperties => ({
+    padding: '2px 6px', fontSize: 9, textTransform: 'uppercase' as const,
+    background: `${SEVERITY_COLORS[sev]}20`, border: `1px solid ${SEVERITY_COLORS[sev]}`,
+    color: SEVERITY_COLORS[sev], letterSpacing: '0.1em',
+  });
 
   return (
     <div style={s.root}>
@@ -170,7 +171,7 @@ export const SovereignAuditLog: React.FC<SovereignAuditLogProps> = ({ initialEnt
               <span style={{ color: '#6b7280' }}>{new Date(entry.timestamp).toLocaleTimeString()}</span>
               <span style={{ color: '#e5e7eb' }}>{entry.action}</span>
               <span style={{ color: '#9ca3af', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>{entry.actor}</span>
-              <span style={s.badge(entry.severity)}>{entry.severity}</span>
+              <span style={badge(entry.severity)}>{entry.severity}</span>
             </div>
             {expandedId === entry.id && (
               <div style={{ padding: '10px 12px 12px 12px', background: '#0d0d0d', borderTop: '1px solid #1a1a1a' }}>
