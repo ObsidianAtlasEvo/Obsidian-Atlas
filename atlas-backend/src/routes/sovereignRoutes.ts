@@ -182,6 +182,12 @@ const sovereignRoutes: FastifyPluginAsync = async (
   fastify.route({
     method: 'GET',
     url: '/logs',
+    config: {
+      rateLimit: {
+        max: 10,
+        timeWindow: '1 minute',
+      },
+    },
     preHandler: async (request, reply) => {
       try {
         await sovereignLogsLimiter.consume(request.ip);
