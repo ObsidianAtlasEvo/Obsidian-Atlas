@@ -122,12 +122,12 @@ jobs:
 
             # ── Reload PM2 (zero-downtime) ──────────────────────────────────
             echo "[6/6] Reloading PM2 process..."
-            if pm2 list | grep -q "atlas-backend"; then
-              pm2 reload atlas-backend --update-env
+            if pm2 list | grep -q "atlas-api"; then
+              pm2 reload atlas-api --update-env
             else
               # First deploy — start the process
               cd atlas-backend
-              pm2 start dist/index.js --name atlas-backend --env production
+              pm2 start dist/index.js --name atlas-api --env production
               pm2 save
               cd ..
             fi
