@@ -1,13 +1,22 @@
 import './bootstrapEnv.js';
 import cookie from '@fastify/cookie';
 import cors from '@fastify/cors';
+import { createClient } from '@supabase/supabase-js';
 import Fastify, { type FastifyReply, type FastifyRequest } from 'fastify';
 import { env } from './config/env.js';
+import { isGoogleAuthConfigured } from './services/auth/authProvider.js';
+import { EvolutionRepository } from './db/evolutionRepository.js';
+import evolutionRoutes from './routes/evolutionRoutes.js';
+import overseerRoutes from './routes/overseerRoutes.js';
+import sovereignRoutes from './routes/sovereignRoutes.js';
+import { EvolutionEngine } from './services/evolutionEngine.js';
+import { AtlasOverseer } from './services/atlasOverseer.js';
+import { OverseerTrainer } from './services/overseerTrainer.js';
+import { registerEvolutionEngine } from './services/evolutionEngineRegistry.js';
 import { startChronosScheduler } from './services/autonomy/chronos.js';
 import { initSemanticVectorIndex } from './db/vectorStore.js';
 import { initSqlite } from './db/sqlite.js';
-import { registerChatRoutes } from './routes/chat.js';
-import { registerHealthRoutes } from './routes/health.js';
+import healthRoutes from './routes/health.js';
 import { registerInferenceQueueRoutes } from './routes/inferenceQueue.js';
 import { registerOmniStreamRoutes } from './routes/omniStream.js';
 import { registerCognitiveGovernanceRoutes } from './routes/cognitiveGovernanceRoutes.js';
@@ -19,11 +28,24 @@ import { registerIntelligenceChambersRoutes } from './routes/intelligenceChamber
 import { registerMindMapRoutes } from './routes/mindMapRoutes.js';
 import { registerSovereigntyRoutes } from './routes/sovereigntyRoutes.js';
 import { registerAuthRoutes } from './routes/authRoutes.js';
+import { initGovernanceEventBus } from './governance/governanceInit.js';
+import { AtlasEventBus } from './infrastructure/eventBus.js';
+import { runMigrationsOnStartup } from './persistence/schemaVersioning.js';
+import { doctrineMiddleware, getFailureModeDoctrine } from './resilience/failureModeDoctrine.js';
+import { registerExplainabilityRoutes } from './explainability/explainabilityRoutes.js';
+import { registerRetentionRoutes } from './privacy/dataRetention.js';
 
 initSqlite();
+await runMigrationsOnStartup();
 await initSemanticVectorIndex();
 
+/** Supabase-backed evolution engine; null when SUPABASE_* unset. */
+let evolutionEngine: EvolutionEngine | null = null;
+
 const app = Fastify({ logger: true });
+
+const failureDoctrine = getFailureModeDoctrine();
+app.addHook('onRequest', doctrineMiddleware(failureDoctrine));
 
 app.setErrorHandler((err, request, reply) => {
   request.log.error(err);
@@ -37,6 +59,11 @@ app.setErrorHandler((err, request, reply) => {
 });
 
 await app.register(cookie);
+
+if (env.phase3SecurityEnabled) {
+  const { registerSecurity } = await import('./security/securityRoutes.js');
+  registerSecurity(app as never, { allowedOrigins: env.corsOrigins, prefix: '/api/security' });
+}
 
 await app.register(cors, {
   origin: (origin, cb) => {
@@ -55,10 +82,9 @@ await app.register(cors, {
   allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
 });
 
-registerHealthRoutes(app);
+void healthRoutes(app);
 registerInferenceQueueRoutes(app);
 registerAuthRoutes(app);
-registerChatRoutes(app);
 registerOmniStreamRoutes(app);
 registerSovereigntyRoutes(app);
 registerCognitiveGovernanceRoutes(app);
@@ -68,6 +94,60 @@ registerLegacyRoutes(app);
 registerSovereignOverviewRoutes(app);
 registerIntelligenceChambersRoutes(app);
 registerMindMapRoutes(app);
+
+if (env.evolutionEnabled && env.supabaseUrl && env.supabaseServiceKey) {
+  const supabaseUrl = env.supabaseUrl;
+  const supabaseKey = env.supabaseServiceKey;
+  app.decorate('supabase', createClient(supabaseUrl, supabaseKey));
+  initGovernanceEventBus(supabaseUrl, supabaseKey);
+  registerExplainabilityRoutes(app, { supabaseUrl, supabaseKey });
+  await registerRetentionRoutes(app);
+
+  evolutionEngine = new EvolutionEngine(supabaseUrl, supabaseKey);
+  const evolutionRepository = new EvolutionRepository(supabaseUrl, supabaseKey);
+
+  await app.register(evolutionRoutes, {
+    prefix: '/evolution',
+    engine: evolutionEngine,
+    repository: evolutionRepository,
+  });
+
+  const groqKey = env.groqApiKey?.trim();
+  if (groqKey) {
+    const overseer = new AtlasOverseer(groqKey, env.overseerModel);
+    const trainer = new OverseerTrainer();
+    await app.register(overseerRoutes, {
+      prefix: '/overseer',
+      overseer,
+      trainer,
+      getAdaptationState: (userId: string) => evolutionEngine!.getAdaptationState(userId),
+    });
+  } else {
+    app.log.warn('[atlas] GROQ_API_KEY unset — Overseer routes not registered');
+  }
+
+  if (isGoogleAuthConfigured()) {
+    await app.register(sovereignRoutes, { prefix: '/sovereign' });
+  } else {
+    app.log.warn('[atlas] Google OAuth not fully configured — Sovereign console routes not registered');
+  }
+
+  registerEvolutionEngine(evolutionEngine);
+} else {
+  registerEvolutionEngine(null);
+}
+
+app.addHook('onReady', () => {
+  evolutionEngine?.start();
+});
+app.addHook('onClose', async () => {
+  evolutionEngine?.stop();
+  try {
+    AtlasEventBus.resetInstance();
+  } catch {
+    /* not initialised */
+  }
+});
 
 // POST /chat forwards to the handler registered as POST /v1/chat (same body, no model call here).
 app.post('/chat', async (request: FastifyRequest, reply: FastifyReply) => {
@@ -99,7 +179,7 @@ app
     }
     console.log(
       `[atlas] ready  http://${env.host === '0.0.0.0' ? '127.0.0.1' : env.host}:${env.port}  ` +
-        `GET /health  POST /chat  POST /v1/chat  (provider: ollama @ ${env.ollamaBaseUrl})`
+        `GET /v1/health  POST /chat  POST /v1/chat  (provider: ollama @ ${env.ollamaBaseUrl})`
     );
     console.log(`[atlas] cors origins: ${env.corsOrigins.join(', ')}`);
   })
