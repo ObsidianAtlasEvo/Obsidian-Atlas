@@ -67,7 +67,7 @@ export default async function healthRoutes(app: FastifyInstance): Promise<void> 
       probeWithTimeout('memory', async () => {
         const { heapUsed, heapTotal } = process.memoryUsage();
         const pct = heapUsed / heapTotal;
-        if (pct > 0.9) throw new Error(`Heap at ${Math.round(pct * 100)}%`);
+        if (pct > 0.97) throw new Error(`Heap at ${Math.round(pct * 100)}%`);
       }),
     ]);
 

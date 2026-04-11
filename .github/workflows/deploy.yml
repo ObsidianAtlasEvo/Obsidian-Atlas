@@ -128,11 +128,15 @@ jobs:
             if pm2 list | grep -q "atlas-api"; then
               pm2 reload atlas-api --update-env
             else
-              # First deploy — start the process
-              cd atlas-backend
-              pm2 start dist/index.js --name atlas-api --env production
+              # First deploy — start via ecosystem config
+              if [ -f ecosystem.config.cjs ]; then
+                pm2 start ecosystem.config.cjs --env production
+              else
+                cd atlas-backend
+                pm2 start dist/index.js --name atlas-api --node-args="--max-old-space-size=512" --env production
+                cd ..
+              fi
               pm2 save
-              cd ..
             fi
             echo "      ✓ PM2 reloaded"
 
