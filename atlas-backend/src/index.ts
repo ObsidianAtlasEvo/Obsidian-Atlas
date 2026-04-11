@@ -44,7 +44,7 @@ const app = Fastify({
     transport: process.env.NODE_ENV === 'development'
       ? { target: 'pino-pretty', options: { colorize: true } }
       : undefined,
-    redact: ['req.headers.authorization', 'req.headers["x-api-key"]'],
+    redact: ['req.headers.authorization', 'req.headers["x-api-key"]', 'req.body.password'],
   },
 });
 

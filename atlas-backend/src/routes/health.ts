@@ -1,7 +1,4 @@
 import type { FastifyInstance } from 'fastify';
-import { ping } from '../services/ollama.js';
-
-const startTime = Date.now();
 
 // ---------------------------------------------------------------------------
 // Dependency probe with timeout
@@ -38,12 +35,23 @@ async function probeWithTimeout<T>(
 // ---------------------------------------------------------------------------
 
 export default async function healthRoutes(app: FastifyInstance): Promise<void> {
-  app.get('/v1/health', async (_request, reply) => {
+  app.get('/health', async (_request, reply) => {
     const checks = await Promise.all([
-      // 1. Ollama (local inference engine)
-      probeWithTimeout('ollama', async () => {
-        const reachable = await ping();
-        if (!reachable) throw new Error('ollama unreachable');
+      // 1. Supabase (live query against atlas_feature_flags)
+      probeWithTimeout('supabase', async () => {
+        const url = process.env.SUPABASE_URL;
+        const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+        if (!url || !key) throw new Error('SUPABASE credentials not set');
+        const res = await fetch(
+          `${url}/rest/v1/atlas_feature_flags?select=id&limit=1`,
+          {
+            headers: {
+              apikey: key,
+              Authorization: `Bearer ${key}`,
+            },
+          },
+        );
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
       }),
 
       // 2. Groq LLM availability
@@ -67,7 +75,7 @@ export default async function healthRoutes(app: FastifyInstance): Promise<void> 
 
     return reply.code(allOk ? 200 : 503).send({
       status: allOk ? 'ok' : 'degraded',
-      uptime: Math.floor((Date.now() - startTime) / 1000),
+      uptime: Math.floor(process.uptime()),
       timestamp: new Date().toISOString(),
       checks,
     });
