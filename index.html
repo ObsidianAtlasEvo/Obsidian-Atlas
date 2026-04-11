@@ -16,7 +16,15 @@
         height: 100%;
         min-height: 100vh;
         min-height: 100dvh;
-        overflow: hidden;
+      }
+      /* Desktop: lock scroll on the outer shell (scroll happens inside chambers) */
+      @media (min-width: 640px) {
+        html, body, #root { overflow: hidden; }
+      }
+      /* Mobile: allow natural page scroll */
+      @media (max-width: 639px) {
+        body { overflow-y: auto; }
+        #root { overflow: visible; }
       }
     </style>
   </head>

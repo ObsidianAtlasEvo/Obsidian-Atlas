@@ -99,20 +99,110 @@ function Icon({ path, size = 18 }: { path: string; size?: number }) {
   );
 }
 
+// ── Mobile tab bar chambers (subset for bottom nav) ──────────────────────
+
+const MOBILE_TAB_IDS: AppState['activeMode'][] = [
+  'atlas', 'pulse', 'journal', 'decisions', 'doctrine',
+];
+
 // ── NavRail ───────────────────────────────────────────────────────────────
 
 interface NavRailProps {
   expanded: boolean;
   onToggle: () => void;
+  isMobile?: boolean;
 }
 
-export default function NavRail({ expanded, onToggle }: NavRailProps) {
+export default function NavRail({ expanded, onToggle, isMobile }: NavRailProps) {
   const activeMode = useAtlasStore((s) => s.activeMode);
   const setActiveMode = useAtlasStore((s) => s.setActiveMode);
   const currentUser = useAtlasStore((s) => s.currentUser);
   const isCreator = currentUser?.role === 'sovereign_creator';
 
   const visibleChambers = CHAMBERS.filter((c) => !c.creatorOnly || isCreator);
+
+  // ── Mobile bottom tab bar ────────────────────────────────────────────
+  if (isMobile) {
+    const mobileTabs = MOBILE_TAB_IDS
+      .map((id) => CHAMBERS.find((c) => c.id === id))
+      .filter((c): c is ChamberDef => !!c);
+
+    return (
+      <nav
+        className="atlas-mobile-nav"
+        style={{
+          position: 'fixed',
+          bottom: 0,
+          left: 0,
+          right: 0,
+          height: 56,
+          background: 'var(--atlas-surface-rail)',
+          borderTop: '1px solid var(--border-structural)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-around',
+          zIndex: 50,
+          backdropFilter: 'blur(12px)',
+          WebkitBackdropFilter: 'blur(12px)',
+          flexShrink: 0,
+        }}
+      >
+        {mobileTabs.map((chamber) => {
+          const isActive = activeMode === chamber.id;
+          return (
+            <button
+              key={chamber.id}
+              onClick={() => setActiveMode(chamber.id)}
+              title={chamber.label}
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 2,
+                background: 'transparent',
+                border: 'none',
+                cursor: 'pointer',
+                padding: '6px 12px',
+                color: isActive
+                  ? 'rgba(201, 162, 39, 0.9)'
+                  : 'rgba(226, 232, 240, 0.42)',
+                transition: 'color 140ms ease',
+                position: 'relative',
+              }}
+            >
+              {isActive && (
+                <div
+                  style={{
+                    position: 'absolute',
+                    top: 0,
+                    left: '20%',
+                    right: '20%',
+                    height: 2,
+                    background: 'rgba(201, 162, 39, 0.8)',
+                    borderRadius: '0 0 2px 2px',
+                  }}
+                />
+              )}
+              <Icon path={ICONS[chamber.icon] ?? ICONS.atlas} size={20} />
+              <span
+                style={{
+                  fontSize: '0.55rem',
+                  fontWeight: isActive ? 600 : 400,
+                  letterSpacing: '0.04em',
+                  textTransform: 'uppercase',
+                }}
+              >
+                {chamber.label}
+              </span>
+            </button>
+          );
+        })}
+      </nav>
+    );
+  }
+
+  // ── Desktop side rail ────────────────────────────────────────────────
 
   // Group them
   const groups = Array.from(new Set(visibleChambers.map((c) => c.group)));
@@ -121,6 +211,7 @@ export default function NavRail({ expanded, onToggle }: NavRailProps) {
 
   return (
     <nav
+      className="atlas-desktop-nav"
       style={{
         width,
         minWidth: width,

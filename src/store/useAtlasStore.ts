@@ -11,6 +11,8 @@
  */
 
 import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
+import { idbStorage } from '../lib/idbStorage';
 import { defaultAppState } from './defaults';
 import { loadUserProfile, saveUserProfile, loadJournal, saveJournalEntry,
          deleteJournalEntry, loadDecisions, saveDecision, deleteDecision,
@@ -48,6 +50,38 @@ import type {
   ResonanceGraphNode,
   ResonanceGraphEdge,
 } from '@/resonance/types';
+
+// ── Conversation Types ───────────────────────────────────────────────────
+
+export type MessageRequestStatus =
+  | 'idle'
+  | 'submitting'
+  | 'streaming'
+  | 'completed'
+  | 'failed'
+  | 'timed_out'
+  | 'aborted'
+  | 'stale'
+  | 'interrupted';
+
+export interface ConversationMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  timestamp: string;
+  requestStatus?: MessageRequestStatus;
+  error?: string;
+  tokens?: number;
+  durationMs?: number;
+}
+
+export interface ConversationThread {
+  id: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+  messages: ConversationMessage[];
+}
 
 // ── Action Types ──────────────────────────────────────────────────────────
 
@@ -100,6 +134,16 @@ export interface AtlasActions {
   addQuestion: (question: UserQuestion) => void;
   updateQuestion: (id: string, partial: Partial<UserQuestion>) => void;
   clearQuestions: () => void;
+
+  // Conversations (persisted chat threads)
+  conversations: ConversationThread[];
+  activeConversationId: string | null;
+  setActiveConversationId: (id: string | null) => void;
+  createConversation: () => string; // returns new id
+  addConversationMessage: (convId: string, message: ConversationMessage) => void;
+  updateConversationMessage: (convId: string, msgId: string, partial: Partial<ConversationMessage>) => void;
+  clearConversation: (convId: string) => void;
+  deleteConversation: (convId: string) => void;
 
   // Memory
   addMemoryEntry: (entry: Omit<MemoryEntry, 'id'>) => void;
@@ -170,7 +214,9 @@ export type AtlasStore = AppState & AtlasActions;
 
 // ── Store ─────────────────────────────────────────────────────────────────
 
-export const useAtlasStore = create<AtlasStore>((set, get) => ({
+export const useAtlasStore = create<AtlasStore>()(
+  persist(
+  (set, get) => ({
   ...defaultAppState,
 
   // ── Navigation ───────────────────────────────────────────────────────
@@ -491,6 +537,68 @@ export const useAtlasStore = create<AtlasStore>((set, get) => ({
     })),
 
   clearQuestions: () => set({ recentQuestions: [] }),
+
+  // ── Conversations ────────────────────────────────────────────────────
+
+  conversations: [],
+  activeConversationId: null,
+
+  setActiveConversationId: (id) => set({ activeConversationId: id }),
+
+  createConversation: () => {
+    const id = generateId();
+    const now = nowISO();
+    const thread: ConversationThread = {
+      id,
+      title: 'New conversation',
+      createdAt: now,
+      updatedAt: now,
+      messages: [],
+    };
+    set((state) => ({
+      conversations: [thread, ...state.conversations].slice(0, 50),
+      activeConversationId: id,
+    }));
+    return id;
+  },
+
+  addConversationMessage: (convId, message) =>
+    set((state) => ({
+      conversations: state.conversations.map((c) =>
+        c.id === convId
+          ? { ...c, messages: [...c.messages, message], updatedAt: nowISO(), title: c.messages.length === 0 && message.role === 'user' ? message.content.slice(0, 60) : c.title }
+          : c,
+      ),
+    })),
+
+  updateConversationMessage: (convId, msgId, partial) =>
+    set((state) => ({
+      conversations: state.conversations.map((c) =>
+        c.id === convId
+          ? {
+              ...c,
+              updatedAt: nowISO(),
+              messages: c.messages.map((m) =>
+                m.id === msgId ? { ...m, ...partial } : m,
+              ),
+            }
+          : c,
+      ),
+    })),
+
+  clearConversation: (convId) =>
+    set((state) => ({
+      conversations: state.conversations.map((c) =>
+        c.id === convId ? { ...c, messages: [], updatedAt: nowISO() } : c,
+      ),
+    })),
+
+  deleteConversation: (convId) =>
+    set((state) => ({
+      conversations: state.conversations.filter((c) => c.id !== convId),
+      activeConversationId:
+        state.activeConversationId === convId ? null : state.activeConversationId,
+    })),
 
   // ── Memory ────────────────────────────────────────────────────────────
 
@@ -904,7 +1012,47 @@ export const useAtlasStore = create<AtlasStore>((set, get) => ({
   setCreatorConsoleState: (state) => set({ creatorConsoleState: state }),
 
   setSettingsOpen: (open) => set({ isSettingsOpen: open }),
-}));
+}),
+  {
+    name: 'atlas-store',
+    storage: {
+      getItem: async (name) => {
+        const str = await idbStorage.getItem(name);
+        return str ? JSON.parse(str) : null;
+      },
+      setItem: async (name, value) => {
+        await idbStorage.setItem(name, JSON.stringify(value));
+      },
+      removeItem: async (name) => {
+        await idbStorage.removeItem(name);
+      },
+    },
+    // Only persist conversation data, chat history, and key user preferences
+    partialize: (state: AtlasStore) => ({
+      conversations: state.conversations,
+      activeConversationId: state.activeConversationId,
+      recentQuestions: state.recentQuestions,
+      activeMode: state.activeMode,
+      activePosture: state.activePosture,
+      uiConfig: state.uiConfig,
+    } as unknown as AtlasStore),
+    // On hydration: mark any in-flight requests as interrupted
+    onRehydrateStorage: () => {
+      return (state) => {
+        if (!state) return;
+        const patched = state.conversations.map((conv) => ({
+          ...conv,
+          messages: conv.messages.map((msg) =>
+            msg.requestStatus === 'submitting' || msg.requestStatus === 'streaming'
+              ? { ...msg, requestStatus: 'interrupted' as const, isStreaming: false }
+              : msg,
+          ),
+        }));
+        useAtlasStore.setState({ conversations: patched });
+      };
+    },
+  },
+));
 
 // ── Bootstrap ─────────────────────────────────────────────────────────────
 
