@@ -1,4 +1,4 @@
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 import { env } from '../../config/env.js';
 import { getPolicyProfile } from '../evolution/policyStore.js';
 import {
@@ -179,7 +179,7 @@ async function geminiGenerateStream(
 
   const { system, rest } = splitSystemAndRest(msgs);
   const model = geminiModelId();
-  const ai = new GoogleGenAI({ apiKey: key });
+  const ai = new GoogleGenerativeAI(key);
 
   const contents = rest.map((m) => ({
     role: m.role === 'assistant' ? ('model' as const) : ('user' as const),
@@ -191,17 +191,16 @@ async function geminiGenerateStream(
   let full = '';
 
   try {
-    const stream = await ai.models.generateContentStream({
-      model,
+    const stream = await ai.getGenerativeModel({ model: "gemini-1.5-flash" }).generateContentStream({
       contents,
-      config: {
-        systemInstruction: system || undefined,
+      systemInstruction: system || undefined,
+      generationConfig: {
+
         temperature: 0.35,
-        abortSignal: options.signal ?? controller.signal,
       },
     });
 
-    for await (const chunk of stream) {
+    for await (const chunk of stream.stream) {
       const piece = typeof chunk.text === 'string' ? chunk.text : '';
       if (piece) {
         full += piece;

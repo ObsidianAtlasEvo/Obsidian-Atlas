@@ -1,4 +1,4 @@
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 import { env } from '../../config/env.js';
 import type { LlmRegistryEntry } from './llmRegistry.js';
 
@@ -176,7 +176,7 @@ export async function streamGeminiChat(params: {
       : params.messages.filter((m) => m.role === 'system').map((m) => m.content).join('\n\n');
   const rest = params.messages.filter((m) => m.role !== 'system');
 
-  const ai = new GoogleGenAI({ apiKey: key });
+  const ai = new GoogleGenerativeAI(key);
   const contents = rest.map((m) => ({
     role: m.role === 'assistant' ? ('model' as const) : ('user' as const),
     parts: [{ text: m.content }],
@@ -187,17 +187,16 @@ export async function streamGeminiChat(params: {
   let full = '';
 
   try {
-    const stream = await ai.models.generateContentStream({
-      model: params.model,
+    const stream = await ai.getGenerativeModel({ model: "gemini-1.5-flash" }).generateContentStream({
       contents,
-      config: {
-        systemInstruction: system || undefined,
+      systemInstruction: system || undefined,
+      generationConfig: {
+
         temperature: params.temperature ?? 0.35,
-        abortSignal: params.signal ?? controller.signal,
       },
     });
 
-    for await (const chunk of stream) {
+    for await (const chunk of stream.stream) {
       const piece = typeof chunk.text === 'string' ? chunk.text : '';
       if (piece) {
         full += piece;
@@ -468,7 +467,7 @@ export async function completeGeminiChat(params: {
       : params.messages.filter((m) => m.role === 'system').map((m) => m.content).join('\n\n');
   const rest = params.messages.filter((m) => m.role !== 'system');
 
-  const ai = new GoogleGenAI({ apiKey: key });
+  const ai = new GoogleGenerativeAI(key);
   const contents = rest.map((m) => ({
     role: m.role === 'assistant' ? ('model' as const) : ('user' as const),
     parts: [{ text: m.content }],
@@ -477,16 +476,15 @@ export async function completeGeminiChat(params: {
   const controller = new AbortController();
   const t = params.timeoutMs ? setTimeout(() => controller.abort(), params.timeoutMs) : undefined;
   try {
-    const response = await ai.models.generateContent({
-      model: params.model,
+    const response = await ai.getGenerativeModel({ model: "gemini-1.5-flash" }).generateContent({
       contents,
-      config: {
-        systemInstruction: system || undefined,
+      systemInstruction: system || undefined,
+      generationConfig: {
+
         temperature: params.temperature ?? 0.25,
-        abortSignal: params.signal ?? controller.signal,
       },
     });
-    const text = typeof response.text === 'string' ? response.text : '';
+    const text = response.response.text() ?? '';
     return { text: text.trim(), model: params.model };
   } finally {
     if (t) clearTimeout(t);

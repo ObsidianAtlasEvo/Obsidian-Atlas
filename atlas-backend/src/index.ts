@@ -6,10 +6,12 @@ import { env } from './config/env.js';
 import { startChronosScheduler } from './services/autonomy/chronos.js';
 import { initSemanticVectorIndex } from './db/vectorStore.js';
 import { initSqlite } from './db/sqlite.js';
-import { registerChatRoutes } from './routes/chat.js';
-import { registerHealthRoutes } from './routes/health.js';
+import registerChatRoutes from './routes/chat.js';
+import registerHealthRoutes from './routes/health.js'
+import { registerRateLimit } from './plugins/rateLimit.js';
+import { registerOllamaCompatRoutes } from './routes/ollamaCompat.js';
 import { registerInferenceQueueRoutes } from './routes/inferenceQueue.js';
-import { registerOmniStreamRoutes } from './routes/omniStream.js';
+// // // // import { registerOmniStreamRoutes } from './routes/omniStream.js';
 import { registerCognitiveGovernanceRoutes } from './routes/cognitiveGovernanceRoutes.js';
 import { registerLongitudinalRoutes } from './routes/longitudinalRoutes.js';
 import { registerStrategicModelingRoutes } from './routes/strategicModelingRoutes.js';
@@ -55,11 +57,13 @@ await app.register(cors, {
   allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
 });
 
+await registerRateLimit(app);
 registerHealthRoutes(app);
 registerInferenceQueueRoutes(app);
 registerAuthRoutes(app);
 registerChatRoutes(app);
-registerOmniStreamRoutes(app);
+registerOllamaCompatRoutes(app);
+// // registerOmniStreamRoutes(app);
 registerSovereigntyRoutes(app);
 registerCognitiveGovernanceRoutes(app);
 registerLongitudinalRoutes(app);
