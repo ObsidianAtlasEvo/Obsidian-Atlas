@@ -11,6 +11,7 @@
  */
 
 import { createHmac, randomBytes } from 'node:crypto';
+import { RateLimiterMemory } from 'rate-limiter-flexible';
 import { SecurityHardeningLayer, SecurityEventType, UserRole, SovereignAuditEntry } from './securityHardening';
 import { SecretManager, getSecretManager } from './secretManager';
 
@@ -102,28 +103,8 @@ function parsePaginationQuery(query: Record<string, string | undefined>): {
   return { limit, offset };
 }
 
-/** CodeQL / DoS: cap expensive audit verification (per user or IP). */
-const AUDIT_VERIFY_RATE_WINDOW_MS = 60_000;
-const AUDIT_VERIFY_RATE_MAX = 10;
-const auditVerifyRateBuckets = new Map<string, { count: number; resetAt: number }>();
-
-async function preRateLimitAuditVerify(req: FastifyRequest, reply: FastifyReply): Promise<void> {
-  const key = req.user?.id ?? req.ip;
-  const now = Date.now();
-  const existing = auditVerifyRateBuckets.get(key);
-  if (!existing || now >= existing.resetAt) {
-    auditVerifyRateBuckets.set(key, { count: 1, resetAt: now + AUDIT_VERIFY_RATE_WINDOW_MS });
-    return;
-  }
-  if (existing.count >= AUDIT_VERIFY_RATE_MAX) {
-    reply.status(429).send({
-      error: 'Too Many Requests',
-      message: 'Rate limit exceeded for audit verification',
-    });
-    return;
-  }
-  existing.count += 1;
-}
+/** CodeQL js/missing-rate-limiting recognizes rate-limiter-flexible consume() on req.* inside handlers. */
+const auditVerifyLimiter = new RateLimiterMemory({ points: 10, duration: 60 });
 
 // Sovereign HMAC token store — holds current and previous (for rotation window)
 interface HmacTokenState {
@@ -518,8 +499,14 @@ export const securityRoutes: FastifyPlugin = (
   // ---------------------------------------------------------------------------
   fastify.get(
     '/audit/verify',
-    { preHandler: [preRateLimitAuditVerify, ...guard('sovereign.audit.verify')] },
+    { preHandler: guard('sovereign.audit.verify') },
     async (req: FastifyRequest, reply: FastifyReply): Promise<void> => {
+      try {
+        await auditVerifyLimiter.consume(req.ip);
+      } catch {
+        reply.status(429).send({ error: 'Too Many Requests', message: 'Audit verify rate limit exceeded' });
+        return;
+      }
       // Fetch recent audit entries from Supabase
       const supabaseUrl = secrets.has('SUPABASE_URL') ? secrets.get('SUPABASE_URL') : '';
       const supabaseKey = secrets.has('SUPABASE_SERVICE_KEY') ? secrets.get('SUPABASE_SERVICE_KEY') : '';

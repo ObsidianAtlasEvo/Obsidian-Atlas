@@ -24,8 +24,8 @@
  */
 
 import type { FastifyInstance, FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
-import rateLimit from '@fastify/rate-limit';
 import fp from 'fastify-plugin';
+import { RateLimiterMemory } from 'rate-limiter-flexible';
 import { EvolutionEngine } from '../services/evolutionEngine.js';
 import { EvolutionRepository } from '../db/evolutionRepository.js';
 
@@ -62,6 +62,13 @@ interface AuthQuery {
   userId?: string;
 }
 
+// CodeQL js/missing-rate-limiting recognizes rate-limiter-flexible consume() on req.* inside handlers.
+const evolutionProfileLimiter = new RateLimiterMemory({ points: 100, duration: 60 });
+const evolutionStatsLimiter = new RateLimiterMemory({ points: 60, duration: 60 });
+const evolutionRebuildLimiter = new RateLimiterMemory({ points: 5, duration: 60 });
+const evolutionDeleteLimiter = new RateLimiterMemory({ points: 10, duration: 60 });
+const evolutionAdaptationLimiter = new RateLimiterMemory({ points: 60, duration: 60 });
+
 // ---------------------------------------------------------------------------
 // Route plugin
 // ---------------------------------------------------------------------------
@@ -72,8 +79,6 @@ const evolutionRoutes: FastifyPluginAsync<EvolutionRoutesOptions> = async (
 ) => {
   const { engine, repository } = opts;
 
-  await fastify.register(rateLimit, { global: false });
-
   // ─────────────────────────────────────────────────────────────────────────
   // GET /api/evolution/profile/:userId
   // Returns the full UserEvolutionProfile for debugging and admin tooling.
@@ -82,12 +87,6 @@ const evolutionRoutes: FastifyPluginAsync<EvolutionRoutesOptions> = async (
   fastify.get<{ Params: UserIdParams; Querystring: AuthQuery }>(
     '/profile/:userId',
     {
-      config: {
-        rateLimit: {
-          max: 100,
-          timeWindow: '1 minute',
-        },
-      },
       schema: {
         params: {
           type: 'object',
@@ -106,6 +105,11 @@ const evolutionRoutes: FastifyPluginAsync<EvolutionRoutesOptions> = async (
       },
     },
     async (req: FastifyRequest<{ Params: UserIdParams; Querystring: AuthQuery }>, reply: FastifyReply) => {
+      try {
+        await evolutionProfileLimiter.consume(req.ip);
+      } catch {
+        return reply.status(429).send({ error: 'Too many requests' });
+      }
       if (!authorised(req.params.userId, req)) {
         return reply.status(403).send({ error: 'Forbidden: userId mismatch' });
       }
@@ -128,12 +132,6 @@ const evolutionRoutes: FastifyPluginAsync<EvolutionRoutesOptions> = async (
   fastify.get<{ Params: UserIdParams; Querystring: AuthQuery }>(
     '/stats/:userId',
     {
-      config: {
-        rateLimit: {
-          max: 60,
-          timeWindow: '1 minute',
-        },
-      },
       schema: {
         params: {
           type: 'object',
@@ -159,6 +157,11 @@ const evolutionRoutes: FastifyPluginAsync<EvolutionRoutesOptions> = async (
       },
     },
     async (req: FastifyRequest<{ Params: UserIdParams; Querystring: AuthQuery }>, reply: FastifyReply) => {
+      try {
+        await evolutionStatsLimiter.consume(req.ip);
+      } catch {
+        return reply.status(429).send({ error: 'Too many requests' });
+      }
       if (!authorised(req.params.userId, req)) {
         return reply.status(403).send({ error: 'Forbidden: userId mismatch' });
       }
@@ -182,12 +185,6 @@ const evolutionRoutes: FastifyPluginAsync<EvolutionRoutesOptions> = async (
   fastify.post<{ Params: UserIdParams; Querystring: AuthQuery }>(
     '/rebuild/:userId',
     {
-      config: {
-        rateLimit: {
-          max: 5,
-          timeWindow: '1 minute',
-        },
-      },
       schema: {
         params: {
           type: 'object',
@@ -211,6 +208,11 @@ const evolutionRoutes: FastifyPluginAsync<EvolutionRoutesOptions> = async (
       },
     },
     async (req: FastifyRequest<{ Params: UserIdParams; Querystring: AuthQuery }>, reply: FastifyReply) => {
+      try {
+        await evolutionRebuildLimiter.consume(req.ip);
+      } catch {
+        return reply.status(429).send({ error: 'Too many requests' });
+      }
       if (!authorised(req.params.userId, req)) {
         return reply.status(403).send({ error: 'Forbidden: userId mismatch' });
       }
@@ -235,12 +237,6 @@ const evolutionRoutes: FastifyPluginAsync<EvolutionRoutesOptions> = async (
   fastify.delete<{ Params: UserIdParams; Querystring: AuthQuery }>(
     '/profile/:userId',
     {
-      config: {
-        rateLimit: {
-          max: 10,
-          timeWindow: '1 minute',
-        },
-      },
       schema: {
         params: {
           type: 'object',
@@ -264,6 +260,11 @@ const evolutionRoutes: FastifyPluginAsync<EvolutionRoutesOptions> = async (
       },
     },
     async (req: FastifyRequest<{ Params: UserIdParams; Querystring: AuthQuery }>, reply: FastifyReply) => {
+      try {
+        await evolutionDeleteLimiter.consume(req.ip);
+      } catch {
+        return reply.status(429).send({ error: 'Too many requests' });
+      }
       if (!authorised(req.params.userId, req)) {
         return reply.status(403).send({ error: 'Forbidden: userId mismatch' });
       }
@@ -286,12 +287,6 @@ const evolutionRoutes: FastifyPluginAsync<EvolutionRoutesOptions> = async (
   fastify.get<{ Params: UserIdParams; Querystring: AuthQuery }>(
     '/adaptation/:userId',
     {
-      config: {
-        rateLimit: {
-          max: 60,
-          timeWindow: '1 minute',
-        },
-      },
       schema: {
         params: {
           type: 'object',
@@ -310,6 +305,11 @@ const evolutionRoutes: FastifyPluginAsync<EvolutionRoutesOptions> = async (
       },
     },
     async (req: FastifyRequest<{ Params: UserIdParams; Querystring: AuthQuery }>, reply: FastifyReply) => {
+      try {
+        await evolutionAdaptationLimiter.consume(req.ip);
+      } catch {
+        return reply.status(429).send({ error: 'Too many requests' });
+      }
       if (!authorised(req.params.userId, req)) {
         return reply.status(403).send({ error: 'Forbidden: userId mismatch' });
       }

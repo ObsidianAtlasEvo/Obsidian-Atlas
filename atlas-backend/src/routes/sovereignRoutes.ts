@@ -14,8 +14,8 @@ import type {
   FastifyReply,
   FastifyRequest,
 } from 'fastify';
-import rateLimit from '@fastify/rate-limit';
 import { spawn } from 'child_process';
+import { RateLimiterMemory } from 'rate-limiter-flexible';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -37,6 +37,11 @@ const PROMPT_STORE_PATH = path.resolve(process.cwd(), 'data', 'system_prompt.jso
 const LOG_FILE_PATH =
   process.env.PM2_LOG_PATH ||
   path.resolve(process.cwd(), 'logs', 'atlas-out.log');
+
+// CodeQL js/missing-rate-limiting recognizes rate-limiter-flexible consume() on req.* inside handlers.
+const sovereignLogsLimiter = new RateLimiterMemory({ points: 5, duration: 60 });
+const sovereignDeployLimiter = new RateLimiterMemory({ points: 3, duration: 60 });
+const sovereignDeployStreamLimiter = new RateLimiterMemory({ points: 10, duration: 60 });
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -97,8 +102,6 @@ function sseWrite(reply: FastifyReply, data: string): void {
 const sovereignRoutes: FastifyPluginAsync = async (
   fastify: FastifyInstance
 ): Promise<void> => {
-  await fastify.register(rateLimit, { global: false });
-
   fastify.addHook('preHandler', async (request, reply) => {
     await attachAtlasSession(request);
     const user = await getAuthenticatedUser(request);
@@ -178,15 +181,13 @@ const sovereignRoutes: FastifyPluginAsync = async (
 
   fastify.get(
     '/logs',
-    {
-      config: {
-        rateLimit: {
-          max: 5,
-          timeWindow: '1 minute',
-        },
-      },
-    },
-    async (_request, reply) => {
+    async (request, reply) => {
+      try {
+        await sovereignLogsLimiter.consume(request.ip);
+      } catch {
+        reply.code(429).send({ error: 'Too many requests' });
+        return;
+      }
       sseHeaders(reply);
       reply.hijack();
 
@@ -738,15 +739,13 @@ const sovereignRoutes: FastifyPluginAsync = async (
 
   fastify.post<{ Body: { version?: string } }>(
     '/deploy',
-    {
-      config: {
-        rateLimit: {
-          max: 3,
-          timeWindow: '1 minute',
-        },
-      },
-    },
     async (request, reply) => {
+      try {
+        await sovereignDeployLimiter.consume(request.ip);
+      } catch {
+        reply.code(429).send({ error: 'Too many requests' });
+        return;
+      }
       if (deployRunning) {
         reply.code(409).send({ error: 'Deploy already in progress' });
         return;
@@ -796,15 +795,13 @@ const sovereignRoutes: FastifyPluginAsync = async (
 
   fastify.get(
     '/deploy/stream',
-    {
-      config: {
-        rateLimit: {
-          max: 10,
-          timeWindow: '1 minute',
-        },
-      },
-    },
-    async (_request, reply) => {
+    async (request, reply) => {
+      try {
+        await sovereignDeployStreamLimiter.consume(request.ip);
+      } catch {
+        reply.code(429).send({ error: 'Too many requests' });
+        return;
+      }
       sseHeaders(reply);
       reply.hijack();
 
