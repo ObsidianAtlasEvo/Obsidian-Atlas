@@ -142,7 +142,7 @@ export function registerStrategicModelingRoutes(app: FastifyInstance): void {
         kind: z.string(),
         label: z.string().min(1),
         summary: z.string().optional(),
-        metadata: z.record(z.unknown()).optional(),
+        metadata: z.record(z.string(), z.unknown()).optional(),
         ledgerRefType: z.string().nullable().optional(),
         ledgerRefId: z.string().nullable().optional(),
         id: z.string().optional(),
@@ -179,7 +179,7 @@ export function registerStrategicModelingRoutes(app: FastifyInstance): void {
         relation: z.string(),
         weight: z.number().optional(),
         rationale: z.string().optional(),
-        meta: z.record(z.unknown()).optional(),
+        meta: z.record(z.string(), z.unknown()).optional(),
       })
       .safeParse(request.body);
     if (!parsed.success) {

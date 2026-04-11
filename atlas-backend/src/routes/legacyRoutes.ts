@@ -30,7 +30,7 @@ export function registerLegacyRoutes(app: FastifyInstance): void {
         fleetingVsPrincipleNote: z.string().optional(),
         provenance: z.string(),
         extractionTrigger: z.string().optional(),
-        extractionContext: z.record(z.unknown()).optional(),
+        extractionContext: z.record(z.string(), z.unknown()).optional(),
         reviewCadenceHint: z.string().optional(),
       })
       .safeParse(request.body);

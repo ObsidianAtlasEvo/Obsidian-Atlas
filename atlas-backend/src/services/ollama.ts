@@ -89,7 +89,7 @@ async function withRetry<T>(
  * Stream chat completions from Ollama.
  * Returns a ReadableStream that yields raw NDJSON lines (each a ChatChunk).
  */
-export function streamChat(
+function streamChatOllama(
   messages: ChatMessage[],
   options: ChatOptions = {},
 ): ReadableStream<string> {
@@ -265,4 +265,109 @@ export async function ping(): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+// ── Groq fallback (when GROQ_API_KEY is set and Ollama is unavailable) ─────
+
+const GROQ_API_KEY = process.env.GROQ_API_KEY ?? '';
+const GROQ_BASE_URL = process.env.GROQ_BASE_URL ?? 'https://api.groq.com/openai/v1';
+const GROQ_MODEL = process.env.GROQ_DELEGATE_MODEL ?? 'llama-3.3-70b-versatile';
+const USE_GROQ = GROQ_API_KEY.length > 0 && (process.env.DISABLE_LOCAL_OLLAMA === 'true');
+
+function streamChatGroq(
+  messages: ChatMessage[],
+  options: ChatOptions = {},
+): ReadableStream<string> {
+  const {
+    temperature = 0.7,
+    timeoutMs = 60_000,
+  } = options;
+
+  return new ReadableStream<string>({
+    async start(controller) {
+      try {
+        const res = await fetch(`${GROQ_BASE_URL}/chat/completions`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${GROQ_API_KEY}`,
+          },
+          body: JSON.stringify({
+            model: GROQ_MODEL,
+            messages: messages.map(m => ({ role: m.role, content: m.content })),
+            temperature,
+            stream: true,
+          }),
+          signal: AbortSignal.timeout(timeoutMs),
+        });
+
+        if (!res.ok) {
+          const errText = await res.text();
+          controller.error(new OllamaError(`Groq returned ${res.status}: ${errText}`, res.status, 'server'));
+          return;
+        }
+
+        const reader = res.body?.getReader();
+        if (!reader) { controller.error(new OllamaError('No response body', undefined, 'server')); return; }
+
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let totalContent = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() ?? '';
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed || trimmed === 'data: [DONE]') continue;
+            if (!trimmed.startsWith('data: ')) continue;
+
+            try {
+              const json = JSON.parse(trimmed.slice(6));
+              const delta = json.choices?.[0]?.delta?.content ?? '';
+              if (delta) {
+                totalContent += delta;
+                // Emit in Ollama NDJSON format so the rest of the code works unchanged
+                controller.enqueue(JSON.stringify({
+                  model: GROQ_MODEL,
+                  message: { role: 'assistant', content: delta },
+                  done: false,
+                }));
+              }
+            } catch { /* skip malformed lines */ }
+          }
+        }
+
+        // Emit final done message in Ollama format
+        controller.enqueue(JSON.stringify({
+          model: GROQ_MODEL,
+          message: { role: 'assistant', content: '' },
+          done: true,
+          eval_count: totalContent.split(/\s+/).length * 2,
+          total_duration: 0,
+        }));
+
+        controller.close();
+      } catch (err) {
+        controller.error(new OllamaError(`Groq stream error: ${String(err)}`, undefined, 'network'));
+      }
+    },
+  });
+}
+
+// ── Unified streamChat — routes to Groq or Ollama based on config ──────────
+
+export function streamChat(
+  messages: ChatMessage[],
+  options: ChatOptions = {},
+): ReadableStream<string> {
+  if (USE_GROQ) {
+    return streamChatGroq(messages, options);
+  }
+  return streamChatOllama(messages, options);
 }

@@ -9,14 +9,21 @@
     "start": "node dist/server.js"
   },
   "dependencies": {
-    "fastify": "^5.0.0",
-    "@fastify/cors": "^10.0.0",
     "@fastify/cookie": "^10.0.0",
-    "undici": "^6.0.0"
+    "@fastify/cors": "^10.0.0",
+    "@fastify/rate-limit": "^10.3.0",
+    "@google/generative-ai": "^0.24.1",
+    "better-sqlite3": "^12.8.0",
+    "fastify": "^5.0.0",
+    "jose": "^6.2.2",
+    "undici": "^6.0.0",
+    "vectra": "^0.12.3",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
-    "typescript": "^5.5.0",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^22.19.17",
     "tsx": "^4.16.0",
-    "@types/node": "^22.0.0"
+    "typescript": "^5.5.0"
   }
 }
