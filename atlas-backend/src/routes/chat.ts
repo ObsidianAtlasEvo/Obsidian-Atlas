@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { routeQuery } from '../services/omniRouter.js';
+import { applyOverseerLens } from '../services/governance/overseerService.js';
 import { search, store_entry } from '../services/embeddings.js';
 import { streamChat, type ChatMessage } from '../services/ollama.js';
 import { analyzeDrift } from '../services/driftDetection.js';
@@ -194,6 +195,15 @@ async function handleOmniStream(
     }
 
     const durationMs = Date.now() - startedAt;
+
+    // ── 5b. Overseer lens: 4-step synthesis pipeline ────────────────────
+    const overseerResult = await applyOverseerLens('anonymous', fullResponse, {
+      query,
+      mode: routingResult.mode ?? 'default',
+      userId: 'anonymous',
+      modelOutputs: [],
+    });
+    fullResponse = overseerResult.response;
 
     // ── 6. Send done event ───────────────────────────────────────────────
     sseEvent(reply, 'done', {

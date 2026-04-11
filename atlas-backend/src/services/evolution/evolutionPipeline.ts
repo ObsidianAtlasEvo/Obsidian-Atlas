@@ -3,6 +3,13 @@ import { appendAtlasSftJsonl, appendApprovedSftExample } from './datasetWriter.j
 import { evaluateExchange } from './evalEngine.js';
 import { saveEvolutionGap } from './gapStore.js';
 import { evolvePolicyTelemetryFromEval } from '../autonomy/policyEvolver.js';
+import {
+  evolveMindProfile,
+  evolveSystemPrompt,
+  evolveFeatureFlags,
+  evolveResonanceModel,
+  evolveGoalMemory,
+} from './subsystemEvolvers.js';
 import { applyExplicitPolicyCorrections } from './policyStore.js';
 import { extractMemoryCandidates } from '../memory/memoryExtractor.js';
 import { saveMemory, saveTrace } from '../memory/memoryStore.js';
@@ -150,6 +157,16 @@ async function runEvolutionJob(job: EvolutionJobPayload): Promise<void> {
       /* ignore */
     }
   }
+
+  // Subsystem evolution: mind profile, system prompt, feature flags, resonance, goal memory
+  const subsystemCtx = { evalResult, userMessage };
+  await Promise.allSettled([
+    evolveMindProfile(userId, subsystemCtx),
+    evolveSystemPrompt(userId, subsystemCtx),
+    evolveFeatureFlags(userId, subsystemCtx),
+    evolveResonanceModel(userId, subsystemCtx),
+    evolveGoalMemory(userId, subsystemCtx),
+  ]);
 
   pipelineEvents.emit('complete', {
     traceId,

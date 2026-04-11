@@ -10,6 +10,7 @@ import { attachAtlasSession } from '../services/auth/authProvider.js';
 import { getVerifiedUserEmail } from '../services/auth/requestAuth.js';
 import { getPolicyProfile } from '../services/evolution/policyStore.js';
 import { CognitiveQuotaError, assertChatQuotaAllows, recordChatTokenUsage } from '../services/governance/quotaStore.js';
+import { applyOverseerLens } from '../services/governance/overseerService.js';
 import { enqueueGpuTask, newGpuRequestId } from '../services/inference/queueManager.js';
 import { runMaximumClarityTrack } from '../services/intelligence/maximumClarityPipeline.js';
 import {
@@ -60,6 +61,27 @@ const omniBodySchema = z.object({
     )
     .min(1),
 });
+
+function passesQualityGate(
+  query: string,
+  response: string
+): { pass: boolean; issues: string[] } {
+  const issues: string[] = [];
+  const wordCount = response.trim().split(/\s+/).length;
+  const queryWordCount = query.trim().split(/\s+/).length;
+  if (queryWordCount > 8 && wordCount < 60) {
+    issues.push(`Shallow response: ${wordCount} words for ${queryWordCount}-word query`);
+  }
+  const sycCount = [
+    /great (point|question)/i,
+    /you'?re (absolutely|totally) right/i,
+    /\bbrilliant\b/i,
+    /excellent (point|question)/i,
+    /couldn'?t agree more/i,
+  ].filter((p) => p.test(response)).length;
+  if (sycCount >= 2) issues.push(`Sycophancy: ${sycCount} flattery patterns detected`);
+  return { pass: issues.length === 0, issues };
+}
 
 function lastUserContent(messages: { role: string; content: string }[]): string {
   for (let i = messages.length - 1; i >= 0; i--) {
@@ -326,6 +348,23 @@ export function registerOmniStreamRoutes(app: FastifyInstance): void {
       }
 
       recordChatTokenUsage(userId, undefined, undefined);
+
+      // Quality gate: append note if issues detected (non-blocking)
+      const qg = passesQualityGate(userPrompt, result.fullText);
+      if (!qg.pass) {
+        result.fullText += `\n\n*[Quality note: ${qg.issues.join('; ')}]*`;
+      }
+
+      // Overseer lens: 4-step synthesis pipeline (synthesis → completeness → user lens → constitutional check)
+      const overseerResult = await applyOverseerLens(userId, result.fullText, {
+        query: userPrompt,
+        mode: routing.mode ?? 'default',
+        userId,
+        conversationId: traceId,
+        modelOutputs: [], // swarm outputs not yet exposed at this layer; Step 1 handles gracefully
+      });
+      // Always use overseer response (it synthesizes, personalizes, and may annotate)
+      result.fullText = overseerResult.response;
 
       const requestMessages = messages.filter(
         (m): m is { role: ChatRole; content: string } => m.role !== 'system'
