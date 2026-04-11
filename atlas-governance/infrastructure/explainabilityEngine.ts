@@ -7,6 +7,7 @@
  */
 
 import { AtlasEventBus, type AtlasEventType } from './eventBus';
+import { storeExplanation } from '../explainability/explanationStore';
 
 export type ExplainableAction =
   | 'trait_observed'
@@ -133,6 +134,20 @@ export function explain(
   };
 
   getStore(userId).push(explanation);
+
+  // Persist to IndexedDB-backed explanation store
+  storeExplanation({
+    eventType: action,
+    targetId: userId,
+    actorId: 'atlas-system',
+    timestamp: new Date(explanation.timestamp),
+    humanSummary: explanation.summary,
+    technicalDetail: explanation.rationale,
+    policyLayer: 'explainability-engine',
+  }).catch(() => {
+    // Best-effort persistence; do not block the synchronous return.
+  });
+
   return explanation;
 }
 
