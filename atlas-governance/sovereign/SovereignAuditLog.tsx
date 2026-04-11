@@ -7,6 +7,9 @@
  */
 
 import React, { useState, useMemo } from 'react';
+import ExplanationViewer from '../explainability/ExplanationViewer';
+import { getExplanation } from '../explainability/explanationStore';
+import type { ExplanationEntry } from '../explainability/explanationStore';
 
 export type AuditSeverity = 'info' | 'low' | 'medium' | 'high' | 'critical';
 
@@ -80,6 +83,19 @@ export const SovereignAuditLog: React.FC<SovereignAuditLogProps> = ({ initialEnt
   const [filterSeverity, setFilterSeverity] = useState<AuditSeverity | 'all'>('all');
   const [filterAction, setFilterAction] = useState('');
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [explainOpen, setExplainOpen] = useState(false);
+  const [explainEntries, setExplainEntries] = useState<ExplanationEntry[]>([]);
+
+  const handleExplain = async (entryId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const explanation = await getExplanation(entryId);
+    if (explanation) {
+      setExplainEntries([explanation]);
+    } else {
+      setExplainEntries([]);
+    }
+    setExplainOpen(true);
+  };
 
   const filtered = useMemo(() => {
     let result = entries;
@@ -151,11 +167,12 @@ export const SovereignAuditLog: React.FC<SovereignAuditLogProps> = ({ initialEnt
 
       <div style={{ border: '1px solid #1f2937' }}>
         {/* Header row */}
-        <div style={{ ...s.row, background: '#111', display: 'grid', gridTemplateColumns: '160px 1fr 120px 80px', gap: 12, cursor: 'default' }}>
+        <div style={{ ...s.row, background: '#111', display: 'grid', gridTemplateColumns: '160px 1fr 120px 80px 60px', gap: 12, cursor: 'default' }}>
           <span style={{ color: '#6b7280', textTransform: 'uppercase', fontSize: 10, letterSpacing: '0.1em' }}>Time</span>
           <span style={{ color: '#6b7280', textTransform: 'uppercase', fontSize: 10, letterSpacing: '0.1em' }}>Action</span>
           <span style={{ color: '#6b7280', textTransform: 'uppercase', fontSize: 10, letterSpacing: '0.1em' }}>Actor</span>
           <span style={{ color: '#6b7280', textTransform: 'uppercase', fontSize: 10, letterSpacing: '0.1em' }}>Severity</span>
+          <span style={{ color: '#6b7280', textTransform: 'uppercase', fontSize: 10, letterSpacing: '0.1em' }}></span>
         </div>
 
         {paginated.length === 0 && (
@@ -165,13 +182,19 @@ export const SovereignAuditLog: React.FC<SovereignAuditLogProps> = ({ initialEnt
         {paginated.map((entry) => (
           <div key={entry.id}>
             <div
-              style={{ ...s.row, display: 'grid', gridTemplateColumns: '160px 1fr 120px 80px', gap: 12, background: expandedId === entry.id ? '#111' : 'transparent' }}
+              style={{ ...s.row, display: 'grid', gridTemplateColumns: '160px 1fr 120px 80px 60px', gap: 12, background: expandedId === entry.id ? '#111' : 'transparent' }}
               onClick={() => setExpandedId(expandedId === entry.id ? null : entry.id)}
             >
               <span style={{ color: '#6b7280' }}>{new Date(entry.timestamp).toLocaleTimeString()}</span>
               <span style={{ color: '#e5e7eb' }}>{entry.action}</span>
               <span style={{ color: '#9ca3af', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>{entry.actor}</span>
               <span style={badge(entry.severity)}>{entry.severity}</span>
+              <button
+                style={{ ...s.btn, padding: '2px 8px', fontSize: 10, color: '#d4af37', borderColor: '#d4af3740' }}
+                onClick={(e) => handleExplain(entry.id, e)}
+              >
+                Explain
+              </button>
             </div>
             {expandedId === entry.id && (
               <div style={{ padding: '10px 12px 12px 12px', background: '#0d0d0d', borderTop: '1px solid #1a1a1a' }}>
@@ -194,6 +217,12 @@ export const SovereignAuditLog: React.FC<SovereignAuditLogProps> = ({ initialEnt
           <button style={s.btn} disabled={page === totalPages} onClick={() => setPage(page + 1)}>Next →</button>
         </div>
       )}
+
+      <ExplanationViewer
+        open={explainOpen}
+        onClose={() => setExplainOpen(false)}
+        entries={explainEntries}
+      />
     </div>
   );
 };

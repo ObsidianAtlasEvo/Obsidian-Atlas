@@ -24,6 +24,7 @@ import { registerAuthRoutes } from './routes/authRoutes.js';
 import { registerDegradedModeRoutes } from './routes/degradedModeRoutes.js';
 import { startPolling } from './services/governance/degraded/degradedModeOracle.js';
 import { initAutoRecovery } from './services/governance/degraded/recoveryOrchestrator.js';
+import { registerExplanationRoutes } from './routes/explanationRoutes.js';
 
 initSqlite();
 await initSemanticVectorIndex();
@@ -76,6 +77,7 @@ registerSovereignOverviewRoutes(app);
 registerIntelligenceChambersRoutes(app);
 registerMindMapRoutes(app);
 registerDegradedModeRoutes(app);
+registerExplanationRoutes(app);
 
 // POST /chat forwards to the handler registered as POST /v1/chat (same body, no model call here).
 app.post('/chat', async (request: FastifyRequest, reply: FastifyReply) => {
