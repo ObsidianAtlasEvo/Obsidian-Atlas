@@ -442,3 +442,20 @@ export async function executeRoutedDelegatorStream(
     }
   }
 }
+
+/* ────────────────────────────────────────────────────
+ *  Simple non-streaming completion for internal services
+ *  (governance console, evaluation harness, etc.)
+ * ──────────────────────────────────────────────────── */
+export async function complete(
+  prompt: string,
+  options?: { maxTokens?: number; temperature?: number; jsonMode?: boolean },
+): Promise<string> {
+  const msgs: DelegatorMessage[] = [{ role: 'user', content: prompt }];
+  const { text } = await groqChatNonStream(msgs, {
+    maxTokens: options?.maxTokens ?? 600,
+    temperature: options?.temperature ?? 0.3,
+    jsonMode: options?.jsonMode,
+  });
+  return text;
+}

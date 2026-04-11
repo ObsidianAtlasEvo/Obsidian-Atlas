@@ -73,9 +73,9 @@ export function registerGovernanceConsoleRoutes(app: FastifyInstance): void {
     }
 
     try {
-      const { llmDelegator } = await import('../services/intelligence/llmDelegator.js');
+      const { complete } = await import('../services/intelligence/llmDelegator.js');
       const prompt = buildGovernancePrompt(command, admin);
-      const raw = await llmDelegator.complete(prompt, { maxTokens: 400, temperature: 0.3 });
+      const raw = await complete(prompt, { maxTokens: 400, temperature: 0.3 });
 
       // Try to parse JSON response, fall back to raw text
       try {
@@ -115,9 +115,9 @@ export function registerGovernanceConsoleRoutes(app: FastifyInstance): void {
     }
 
     try {
-      const { llmDelegator } = await import('../services/intelligence/llmDelegator.js');
+      const { complete } = await import('../services/intelligence/llmDelegator.js');
       const prompt = buildGovernancePrompt(command, admin);
-      const raw = await llmDelegator.complete(prompt, { maxTokens: 600, temperature: 0.3 });
+      const raw = await complete(prompt, { maxTokens: 600, temperature: 0.3 });
 
       const fallback = {
         response: raw,
