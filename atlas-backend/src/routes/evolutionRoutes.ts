@@ -24,6 +24,7 @@
  */
 
 import type { FastifyInstance, FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
+import rateLimit from '@fastify/rate-limit';
 import fp from 'fastify-plugin';
 import { EvolutionEngine } from '../services/evolutionEngine.js';
 import { EvolutionRepository } from '../db/evolutionRepository.js';
@@ -71,6 +72,8 @@ const evolutionRoutes: FastifyPluginAsync<EvolutionRoutesOptions> = async (
 ) => {
   const { engine, repository } = opts;
 
+  await fastify.register(rateLimit, { global: false });
+
   // ─────────────────────────────────────────────────────────────────────────
   // GET /api/evolution/profile/:userId
   // Returns the full UserEvolutionProfile for debugging and admin tooling.
@@ -79,6 +82,12 @@ const evolutionRoutes: FastifyPluginAsync<EvolutionRoutesOptions> = async (
   fastify.get<{ Params: UserIdParams; Querystring: AuthQuery }>(
     '/profile/:userId',
     {
+      config: {
+        rateLimit: {
+          max: 100,
+          timeWindow: '1 minute',
+        },
+      },
       schema: {
         params: {
           type: 'object',
@@ -119,6 +128,12 @@ const evolutionRoutes: FastifyPluginAsync<EvolutionRoutesOptions> = async (
   fastify.get<{ Params: UserIdParams; Querystring: AuthQuery }>(
     '/stats/:userId',
     {
+      config: {
+        rateLimit: {
+          max: 60,
+          timeWindow: '1 minute',
+        },
+      },
       schema: {
         params: {
           type: 'object',
@@ -167,6 +182,12 @@ const evolutionRoutes: FastifyPluginAsync<EvolutionRoutesOptions> = async (
   fastify.post<{ Params: UserIdParams; Querystring: AuthQuery }>(
     '/rebuild/:userId',
     {
+      config: {
+        rateLimit: {
+          max: 5,
+          timeWindow: '1 minute',
+        },
+      },
       schema: {
         params: {
           type: 'object',
@@ -214,6 +235,12 @@ const evolutionRoutes: FastifyPluginAsync<EvolutionRoutesOptions> = async (
   fastify.delete<{ Params: UserIdParams; Querystring: AuthQuery }>(
     '/profile/:userId',
     {
+      config: {
+        rateLimit: {
+          max: 10,
+          timeWindow: '1 minute',
+        },
+      },
       schema: {
         params: {
           type: 'object',
@@ -259,6 +286,12 @@ const evolutionRoutes: FastifyPluginAsync<EvolutionRoutesOptions> = async (
   fastify.get<{ Params: UserIdParams; Querystring: AuthQuery }>(
     '/adaptation/:userId',
     {
+      config: {
+        rateLimit: {
+          max: 60,
+          timeWindow: '1 minute',
+        },
+      },
       schema: {
         params: {
           type: 'object',

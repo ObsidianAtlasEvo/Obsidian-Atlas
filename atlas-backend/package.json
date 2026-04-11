@@ -14,24 +14,25 @@
   "dependencies": {
     "@fastify/cookie": "^11.0.2",
     "@fastify/cors": "^11.0.0",
-    "@supabase/supabase-js": "^2.49.1",
+    "@fastify/rate-limit": "^10.3.0",
     "@google/genai": "^1.48.0",
+    "@supabase/supabase-js": "^2.49.1",
     "better-sqlite3": "^11.8.1",
     "dotenv": "^16.4.5",
     "fastify": "^5.2.1",
     "fastify-plugin": "^5.0.1",
-    "jsonwebtoken": "^9.0.2",
     "jose": "^6.0.0",
-    "uuid": "^11.1.0",
+    "jsonwebtoken": "^9.0.2",
     "undici": "^6.0.0",
+    "uuid": "^11.1.0",
     "vectra": "^0.14.0",
     "zod": "^3.24.2"
   },
   "devDependencies": {
-    "@types/jsonwebtoken": "^9.0.9",
-    "@types/uuid": "^10.0.0",
     "@types/better-sqlite3": "^7.6.13",
+    "@types/jsonwebtoken": "^9.0.9",
     "@types/node": "^22.14.0",
+    "@types/uuid": "^10.0.0",
     "tsx": "^4.19.3",
     "typescript": "~5.8.2"
   }

@@ -14,6 +14,7 @@ import type {
   FastifyReply,
   FastifyRequest,
 } from 'fastify';
+import rateLimit from '@fastify/rate-limit';
 import { spawn } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -96,6 +97,7 @@ function sseWrite(reply: FastifyReply, data: string): void {
 const sovereignRoutes: FastifyPluginAsync = async (
   fastify: FastifyInstance
 ): Promise<void> => {
+  await fastify.register(rateLimit, { global: false });
 
   fastify.addHook('preHandler', async (request, reply) => {
     await attachAtlasSession(request);
@@ -174,42 +176,53 @@ const sovereignRoutes: FastifyPluginAsync = async (
   // GET /api/sovereign/logs (SSE)
   // ──────────────────────────────────────────────────────────────────────────
 
-  fastify.get('/logs', async (_request, reply) => {
-    sseHeaders(reply);
-    reply.hijack();
+  fastify.get(
+    '/logs',
+    {
+      config: {
+        rateLimit: {
+          max: 5,
+          timeWindow: '1 minute',
+        },
+      },
+    },
+    async (_request, reply) => {
+      sseHeaders(reply);
+      reply.hijack();
 
-    const sendLine = (line: string) => {
-      sseWrite(reply, JSON.stringify({ line, ts: new Date().toISOString() }));
-    };
+      const sendLine = (line: string) => {
+        sseWrite(reply, JSON.stringify({ line, ts: new Date().toISOString() }));
+      };
 
-    // Tail the log file
-    if (fs.existsSync(LOG_FILE_PATH)) {
-      const tail = spawn('tail', ['-f', '-n', '100', LOG_FILE_PATH]);
+      // Tail the log file
+      if (fs.existsSync(LOG_FILE_PATH)) {
+        const tail = spawn('tail', ['-f', '-n', '100', LOG_FILE_PATH]);
 
-      tail.stdout.on('data', (chunk: Buffer) => {
-        const lines = chunk.toString().split('\n').filter(Boolean);
-        lines.forEach(sendLine);
-      });
+        tail.stdout.on('data', (chunk: Buffer) => {
+          const lines = chunk.toString().split('\n').filter(Boolean);
+          lines.forEach(sendLine);
+        });
 
-      tail.stderr.on('data', (chunk: Buffer) => {
-        sendLine(`[stderr] ${chunk.toString().trim()}`);
-      });
+        tail.stderr.on('data', (chunk: Buffer) => {
+          sendLine(`[stderr] ${chunk.toString().trim()}`);
+        });
 
-      reply.raw.on('close', () => {
-        tail.kill();
-      });
-    } else {
-      sendLine(`[sovereign] Log file not found: ${LOG_FILE_PATH}`);
-      sendLine('[sovereign] Emitting process events only...');
+        reply.raw.on('close', () => {
+          tail.kill();
+        });
+      } else {
+        sendLine(`[sovereign] Log file not found: ${LOG_FILE_PATH}`);
+        sendLine('[sovereign] Emitting process events only...');
 
-      // Fallback: emit a heartbeat every 5s
-      const interval = setInterval(() => {
-        sseWrite(reply, JSON.stringify({ line: '[heartbeat]', ts: new Date().toISOString() }));
-      }, 5000);
+        // Fallback: emit a heartbeat every 5s
+        const interval = setInterval(() => {
+          sseWrite(reply, JSON.stringify({ line: '[heartbeat]', ts: new Date().toISOString() }));
+        }, 5000);
 
-      reply.raw.on('close', () => clearInterval(interval));
-    }
-  });
+        reply.raw.on('close', () => clearInterval(interval));
+      }
+    },
+  );
 
   // ──────────────────────────────────────────────────────────────────────────
   // PROMPT FORGE
@@ -725,6 +738,14 @@ const sovereignRoutes: FastifyPluginAsync = async (
 
   fastify.post<{ Body: { version?: string } }>(
     '/deploy',
+    {
+      config: {
+        rateLimit: {
+          max: 3,
+          timeWindow: '1 minute',
+        },
+      },
+    },
     async (request, reply) => {
       if (deployRunning) {
         reply.code(409).send({ error: 'Deploy already in progress' });
@@ -761,29 +782,45 @@ const sovereignRoutes: FastifyPluginAsync = async (
       child.on('close', (code) => {
         deployRunning = false;
         broadcast(code === 0 ? '__DONE__' : `__ERROR__ exit code ${code}`);
-        setTimeout(() => { activeDeployListeners = new Set(); }, 5000);
+        setTimeout(() => {
+          activeDeployListeners = new Set();
+        }, 5000);
       });
 
-      reply.send({ success: true, message: `Deploy v${version} started. Connect to /api/sovereign/deploy/stream for output.` });
-    }
+      reply.send({
+        success: true,
+        message: `Deploy v${version} started. Connect to /api/sovereign/deploy/stream for output.`,
+      });
+    },
   );
 
-  fastify.get('/deploy/stream', async (_request, reply) => {
-    sseHeaders(reply);
-    reply.hijack();
+  fastify.get(
+    '/deploy/stream',
+    {
+      config: {
+        rateLimit: {
+          max: 10,
+          timeWindow: '1 minute',
+        },
+      },
+    },
+    async (_request, reply) => {
+      sseHeaders(reply);
+      reply.hijack();
 
-    const send = (line: string) => sseWrite(reply, line);
-    activeDeployListeners.add(send);
+      const send = (line: string) => sseWrite(reply, line);
+      activeDeployListeners.add(send);
 
-    if (!deployRunning) {
-      send('[sovereign] No deploy in progress.');
-      send('__DONE__');
-    }
+      if (!deployRunning) {
+        send('[sovereign] No deploy in progress.');
+        send('__DONE__');
+      }
 
-    reply.raw.on('close', () => {
-      activeDeployListeners.delete(send);
-    });
-  });
+      reply.raw.on('close', () => {
+        activeDeployListeners.delete(send);
+      });
+    },
+  );
 
   // ──────────────────────────────────────────────────────────────────────────
   // RELEASES
