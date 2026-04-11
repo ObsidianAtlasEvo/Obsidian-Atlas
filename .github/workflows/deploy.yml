@@ -1,0 +1,159 @@
+name: CD — Deploy to VPS
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      skip_tests:
+        description: 'Skip CI checks and deploy immediately'
+        required: false
+        default: 'false'
+        type: boolean
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false  # never cancel an in-flight deploy
+
+jobs:
+  # ── 1. CI gate (re-run lint/test/build before deploying) ──────────────────
+  ci:
+    name: CI gate
+    runs-on: ubuntu-latest
+    if: ${{ github.event.inputs.skip_tests != 'true' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            atlas-backend/package-lock.json
+
+      - name: Install frontend deps
+        run: npm ci
+
+      - name: Install backend deps
+        run: npm ci --prefix atlas-backend
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm run test
+
+      - name: Build frontend
+        run: npm run build
+        env:
+          VITE_ATLAS_SAME_ORIGIN: true
+
+      - name: Build backend
+        run: npm run build --prefix atlas-backend
+
+  # ── 2. Deploy to VPS via SSH ───────────────────────────────────────────────
+  deploy:
+    name: Deploy to obsidianatlastech.com
+    runs-on: ubuntu-latest
+    needs: [ci]
+    # Also run if skip_tests=true (ci job was skipped)
+    if: |
+      always() &&
+      (needs.ci.result == 'success' || needs.ci.result == 'skipped')
+    environment:
+      name: production
+      url: https://obsidianatlastech.com
+
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT || 22 }}
+          script_stop: true   # abort on first error
+          script: |
+            set -euo pipefail
+
+            DEPLOY_DIR="${{ secrets.VPS_APP_PATH }}"
+            TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S UTC')
+
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "  Obsidian Atlas — Deploy @ $TIMESTAMP"
+            echo "  Commit: ${{ github.sha }}"
+            echo "  Branch: ${{ github.ref_name }}"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+            cd "$DEPLOY_DIR"
+
+            # ── Pull latest code ────────────────────────────────────────────
+            echo "[1/6] Pulling latest code..."
+            git fetch origin main
+            git reset --hard origin/main
+            echo "      ✓ On commit $(git rev-parse --short HEAD)"
+
+            # ── Install frontend dependencies ───────────────────────────────
+            echo "[2/6] Installing frontend dependencies..."
+            npm ci --prefer-offline
+            echo "      ✓ Done"
+
+            # ── Build frontend (Vite → dist/) ───────────────────────────────
+            echo "[3/6] Building frontend..."
+            npm run build
+            echo "      ✓ dist/ ready"
+
+            # ── Install backend dependencies ────────────────────────────────
+            echo "[4/6] Installing backend dependencies..."
+            npm ci --prefix atlas-backend --prefer-offline
+            echo "      ✓ Done"
+
+            # ── Build backend (tsc → dist/) ─────────────────────────────────
+            echo "[5/6] Building backend..."
+            npm run build --prefix atlas-backend
+            echo "      ✓ atlas-backend/dist/ ready"
+
+            # ── Reload PM2 (zero-downtime) ──────────────────────────────────
+            echo "[6/6] Reloading PM2 process..."
+            if pm2 list | grep -q "atlas-backend"; then
+              pm2 reload atlas-backend --update-env
+            else
+              # First deploy — start the process
+              cd atlas-backend
+              pm2 start dist/index.js --name atlas-backend --env production
+              pm2 save
+              cd ..
+            fi
+            echo "      ✓ PM2 reloaded"
+
+            echo ""
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "  ✅ Deploy complete!"
+            echo "  Site: https://obsidianatlastech.com"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+      # ── Health check — confirm site is up after deploy ─────────────────────
+      - name: Post-deploy health check
+        run: |
+          echo "Waiting 10s for PM2 to stabilize..."
+          sleep 10
+          echo "Probing health endpoint..."
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            --max-time 15 \
+            https://obsidianatlastech.com/api/health || echo "000")
+          echo "HTTP status: $STATUS"
+          if [ "$STATUS" = "200" ] || [ "$STATUS" = "503" ]; then
+            # 503 = degraded but alive (deep health check) — still a successful deploy
+            echo "✅ Health check passed (status $STATUS)"
+          else
+            echo "❌ Health check failed — site returned HTTP $STATUS"
+            exit 1
+          fi
+
+      # ── Notify on failure ──────────────────────────────────────────────────
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "::error::Deploy to obsidianatlastech.com FAILED for commit ${{ github.sha }}"
+          echo "::error::Check the SSH deploy step above for the root cause."
