@@ -123,21 +123,34 @@ jobs:
             npm run build --prefix atlas-backend
             echo "      ✓ atlas-backend/dist/ ready"
 
-            # ── Reload PM2 (zero-downtime) ──────────────────────────────────
+            # ── Re-source .env so env var changes are picked up on every deploy ──
             echo "[6/6] Reloading PM2 process..."
+            ENV_FILE="$DEPLOY_DIR/atlas-backend/.env"
+            if [ -f "$ENV_FILE" ]; then
+              set -a && source "$ENV_FILE" && set +a
+              echo "      ✓ Sourced $ENV_FILE"
+            else
+              echo "      ⚠ No .env file found at $ENV_FILE — using existing PM2 env"
+            fi
+
+            # ── Reload PM2 (zero-downtime) ──────────────────────────────────
             if pm2 list | grep -q "atlas-api"; then
               pm2 reload atlas-api --update-env
             else
-              # First deploy — start via ecosystem config
+              # First deploy — start via ecosystem config or bare pm2 start
               if [ -f ecosystem.config.cjs ]; then
                 pm2 start ecosystem.config.cjs --env production
               else
                 cd atlas-backend
-                pm2 start dist/index.js --name atlas-api --node-args="--max-old-space-size=512" --env production
+                pm2 start dist/index.js --name atlas-api --node-args="--max-old-space-size=512"
                 cd ..
               fi
               pm2 save
             fi
+
+            # ── Ensure PM2 survives reboots ────────────────────────────────
+            pm2 save
+            echo "      ✓ PM2 process list saved"
             echo "      ✓ PM2 reloaded"
 
             echo ""
