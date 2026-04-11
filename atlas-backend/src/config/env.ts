@@ -25,11 +25,11 @@ const envSchema = z.object({
   DATASET_MIN_AXIS_SCORE: z.coerce.number().min(0).max(10),
   EVOLUTION_LLM_TIMEOUT_MS: z.coerce.number().int().positive(),
   SQLITE_PATH: z.string().min(1),
-  /** Enable background Chronos heartbeat (`true` / `1` to enable). */
+  /** Enable background Chronos heartbeat (defaults to true; set `false` / `0` to disable). */
   CHRONOS_ENABLED: z
     .string()
     .optional()
-    .transform((v) => v === 'true' || v === '1'),
+    .transform((v) => v !== 'false' && v !== '0'),
   CHRONOS_TICK_MS: z.coerce.number().int().positive().optional(),
   /** Skip heartbeat if user interacted within this window (ms). */
   CHRONOS_IDLE_MS: z.coerce.number().int().positive().optional(),

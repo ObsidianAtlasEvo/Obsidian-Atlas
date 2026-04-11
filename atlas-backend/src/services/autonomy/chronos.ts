@@ -82,16 +82,21 @@ export function isUserIdleForChronos(userId: string, idleMs: number): boolean {
 
 /** Pick one user who is idle; optional env filter for single-tenant installs. */
 export function nextIdleChronosUser(): string | null {
+  const idle = getIdleUserIds();
+  if (idle.length === 0) return null;
+  return idle[0] ?? null;
+}
+
+/** Return all idle user IDs (respects env filter). */
+export function getIdleUserIds(): string[] {
   const idle = [...lastUserActivityMs.keys()].filter((uid) =>
     isUserIdleForChronos(uid, env.chronosIdleMs)
   );
-  if (idle.length === 0) return null;
   const only = env.chronosUserId;
   if (only) {
-    const hit = idle.find((u) => u === only);
-    return hit ?? null;
+    return idle.filter((u) => u === only);
   }
-  return idle[0] ?? null;
+  return idle;
 }
 
 // ---------------------------------------------------------------------------
@@ -254,12 +259,69 @@ export async function runChronosHeartbeat(
   }
 }
 
-async function chronosTick(model: ModelProvider): Promise<void> {
-  const userId = nextIdleChronosUser();
-  if (!userId) return;
+async function dispatchChronosAction(userId: string, decision: string): Promise<void> {
+  try {
+    switch (decision) {
+      case 'refine_policy': {
+        const { scheduleEvolutionRun } = await import('../evolution/evolutionPipeline.js');
+        const { createOllamaModelProvider: createModel } = await import('../model/ollamaClient.js');
+        scheduleEvolutionRun({
+          traceId: `chronos-${Date.now()}`,
+          userId,
+          userMessage: '[Chronos scheduled policy refinement]',
+          assistantResponse: '',
+          systemPrompt: '',
+          requestMessages: [],
+          model: createModel(),
+          chatModelLabel: 'chronos_scheduled',
+        });
+        break;
+      }
+      case 'synthesize_graph': {
+        const { scheduleEvolutionRun: scheduleRun } = await import('../evolution/evolutionPipeline.js');
+        const { createOllamaModelProvider: createModel2 } = await import('../model/ollamaClient.js');
+        scheduleRun({
+          traceId: `chronos-graph-${Date.now()}`,
+          userId,
+          userMessage: '[Chronos graph synthesis]',
+          assistantResponse: '',
+          systemPrompt: '',
+          requestMessages: [],
+          model: createModel2(),
+          chatModelLabel: 'chronos_graph_synthesis',
+        });
+        break;
+      }
+      case 'deep_research': {
+        const { scheduleEvolutionRun: scheduleDeep } = await import('../evolution/evolutionPipeline.js');
+        const { createOllamaModelProvider: createModel3 } = await import('../model/ollamaClient.js');
+        scheduleDeep({
+          traceId: `chronos-research-${Date.now()}`,
+          userId,
+          userMessage: '[Chronos deep research]',
+          assistantResponse: '',
+          systemPrompt: '',
+          requestMessages: [],
+          model: createModel3(),
+          chatModelLabel: 'chronos_deep_research',
+        });
+        break;
+      }
+      case 'idle':
+      default:
+        break;
+    }
+  } catch (err) {
+    console.error(`[Chronos] dispatchChronosAction failed for user ${userId}:`, err);
+  }
+}
+
+async function processUserTick(model: ModelProvider, userId: string): Promise<void> {
   try {
     const result = await runChronosHeartbeat(model, userId);
-    if (!result.ok && result.reason !== 'chronos_busy') {
+    if (result.ok) {
+      await dispatchChronosAction(userId, result.decision.action);
+    } else if (result.reason !== 'chronos_busy') {
       console.warn('[chronos] heartbeat skipped or failed:', result.reason);
     }
   } catch (e) {
@@ -271,6 +333,13 @@ async function chronosTick(model: ModelProvider): Promise<void> {
       status: 'error',
     });
   }
+}
+
+async function chronosTick(model: ModelProvider): Promise<void> {
+  const idleUsers = getIdleUserIds();
+  const batch = idleUsers.slice(0, 3);
+  if (batch.length === 0) return;
+  await Promise.allSettled(batch.map((uid) => processUserTick(model, uid)));
 }
 
 /** Start interval worker; no overlap thanks to chronosInFlight + idle gate. */
