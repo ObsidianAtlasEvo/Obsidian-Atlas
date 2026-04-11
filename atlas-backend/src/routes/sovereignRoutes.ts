@@ -749,6 +749,12 @@ const sovereignRoutes: FastifyPluginAsync = async (
   fastify.route<{ Body: { version?: string } }>({
     method: 'POST',
     url: '/deploy',
+    config: {
+      rateLimit: {
+        max: 3,
+        timeWindow: '1 minute',
+      },
+    },
     preHandler: async (request, reply) => {
       try {
         await sovereignDeployLimiter.consume(request.ip);
