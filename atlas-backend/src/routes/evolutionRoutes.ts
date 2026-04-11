@@ -29,6 +29,14 @@ import { RateLimiterMemory } from 'rate-limiter-flexible';
 import { EvolutionEngine } from '../services/evolutionEngine.js';
 import { EvolutionRepository } from '../db/evolutionRepository.js';
 
+async function evolutionAdaptationRateLimit(request: FastifyRequest, reply: FastifyReply): Promise<void> {
+  try {
+    await evolutionAdaptationLimiter.consume(request.ip);
+  } catch {
+    return reply.status(429).send({ error: 'Too many requests' });
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Plugin options
 // ---------------------------------------------------------------------------
@@ -308,13 +316,7 @@ const evolutionRoutes: FastifyPluginAsync<EvolutionRoutesOptions> = async (
         403: { type: 'object', properties: { error: { type: 'string' } } },
       },
     },
-    preHandler: async (request, reply) => {
-      try {
-        await evolutionAdaptationLimiter.consume(request.ip);
-      } catch {
-        return reply.status(429).send({ error: 'Too many requests' });
-      }
-    },
+    preHandler: [evolutionAdaptationRateLimit],
     handler: async (req: FastifyRequest<{ Params: UserIdParams; Querystring: AuthQuery }>, reply: FastifyReply) => {
       if (!authorised(req.params.userId, req)) {
         return reply.status(403).send({ error: 'Forbidden: userId mismatch' });
