@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { AppState, EmergencyContainment, Gap, ChangeProposal, AuditLog } from '../types';
 import { db, auth, logAudit, handleFirestoreError, OperationType } from '../services/firebase';
-import { doc, getDoc, setDoc, updateDoc, onSnapshot, collection, query, orderBy, limit, Timestamp, addDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc, updateDoc, onSnapshot, collection, query, orderBy, limit, Timestamp, addDoc, where, getDocs } from 'firebase/firestore';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   ShieldAlert, 
@@ -58,6 +58,38 @@ export function ConsoleView({ state, setState }: CreatorConsoleProps) {
     { type: 'output', text: 'SECURE LINK ESTABLISHED. WELCOME, CREATOR.', timestamp: new Date().toISOString() },
   ]);
 
+  // Fix 8: live Firestore metrics for Overview tab
+  const [overviewMetrics, setOverviewMetrics] = useState<{ gaps: number | null; changes: number | null; audits: number | null }>({ gaps: null, changes: null, audits: null });
+
+  useEffect(() => {
+    if (activeTab !== 'overview') return;
+    let cancelled = false;
+
+    (async () => {
+      try {
+        // Active Gaps: gaps collection where status == 'open'
+        const gapsSnap = await getDocs(query(collection(db, 'gaps'), where('status', '==', 'open')));
+        const gapCount = gapsSnap.docs.length;
+
+        // Pending Changes: change_control collection where status == 'pending'
+        const changesSnap = await getDocs(query(collection(db, 'change_control'), where('status', '==', 'pending')));
+        const changeCount = changesSnap.docs.length;
+
+        // Audit Events: audit_log collection, total count
+        const auditSnap = await getDocs(query(collection(db, 'audit_log')));
+        const auditCount = auditSnap.docs.length;
+
+        if (!cancelled) {
+          setOverviewMetrics({ gaps: gapCount, changes: changeCount, audits: auditCount });
+        }
+      } catch {
+        // Firestore unavailable — leave as null
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [activeTab]);
+
   useEffect(() => {
     if (state.creatorConsoleState) {
       setActiveTab(state.creatorConsoleState.activeTab);
@@ -88,48 +120,41 @@ export function ConsoleView({ state, setState }: CreatorConsoleProps) {
     e.preventDefault();
     if (!consoleInput.trim()) return;
 
+    // Fix 10: auth check
+    if (!state.currentUser) {
+      setConsoleHistory(prev => [...prev, { type: 'error', text: 'Authentication required. Please sign in to use the Sovereign Console.', timestamp: new Date().toLocaleTimeString() }]);
+      return;
+    }
+
     const input = consoleInput.trim();
     setConsoleInput('');
-    
+
     // Add to history
     const timestamp = new Date().toLocaleTimeString();
     setConsoleHistory(prev => [...prev, { type: 'input', text: input, timestamp }]);
 
-    // Hard Command Parser
-    if (input.toLowerCase() === 'sys.status') {
-      setConsoleHistory(prev => [...prev, { 
-        type: 'output', 
-        text: 'SYSTEM STATUS: NOMINAL\nCOGNITIVE LOAD: 14%\nMEMORY INTEGRITY: 99.9%\nACTIVE THREADS: 4\nUPTIME: 156:24:12', 
-        timestamp 
-      }]);
+    // Fix 5: Route sys.status, vault.audit, atlas.reboot to backend like any other command.
+    // Only show simulated output when the backend is unavailable (offline mode).
+    const isSystemCommand = ['sys.status', 'vault.audit', 'atlas.reboot'].includes(input.toLowerCase());
+
+    if (!atlasHttpEnabled() && isSystemCommand) {
+      // Offline fallback: simulated output
+      const simulated: Record<string, string> = {
+        'sys.status': 'SYSTEM STATUS: NOMINAL\nCOGNITIVE LOAD: 14%\nMEMORY INTEGRITY: 99.9%\nACTIVE THREADS: 4\nUPTIME: 156:24:12\n(Simulated — backend offline)',
+        'vault.audit': 'INITIATING VAULT AUDIT...\nSCANNING ENCRYPTED SECTORS...\nNO ANOMALIES DETECTED.\nALL SOVEREIGN DATA SECURE.\n(Simulated — backend offline)',
+        'atlas.reboot': 'REBOOT COMMAND RECEIVED.\nWARM RESTART INITIATED...\nRELOADING COGNITIVE MODULES...\nSYSTEM RESTORED.\n(Simulated — backend offline)',
+      };
+      setConsoleHistory(prev => [...prev, { type: 'output', text: simulated[input.toLowerCase()] ?? '', timestamp }]);
       return;
     }
 
-    if (input.toLowerCase() === 'vault.audit') {
-      setConsoleHistory(prev => [...prev, { 
-        type: 'output', 
-        text: 'INITIATING VAULT AUDIT...\nSCANNING ENCRYPTED SECTORS...\nNO ANOMALIES DETECTED.\nALL SOVEREIGN DATA SECURE.', 
-        timestamp 
-      }]);
-      return;
-    }
-
-    if (input.toLowerCase() === 'atlas.reboot') {
-      setConsoleHistory(prev => [...prev, { 
-        type: 'output', 
-        text: 'REBOOT COMMAND RECEIVED.\nWARM RESTART INITIATED...\nRELOADING COGNITIVE MODULES...\nSYSTEM RESTORED.', 
-        timestamp 
-      }]);
-      return;
-    }
-
-    // Unknown command check for sys/vault/atlas prefixes
-    if (input.includes('.') && (input.startsWith('sys') || input.startsWith('vault') || input.startsWith('atlas'))) {
+    // Unknown command check for sys/vault/atlas prefixes (only non-system commands)
+    if (!isSystemCommand && input.includes('.') && (input.startsWith('sys') || input.startsWith('vault') || input.startsWith('atlas'))) {
       setConsoleHistory(prev => [...prev, { type: 'error', text: `COMMAND NOT RECOGNIZED: ${input}`, timestamp }]);
       return;
     }
 
-    // Route to Atlas backend (avoids localhost:11434 dependency)
+    // Route to Atlas backend
     try {
       if (atlasHttpEnabled()) {
         const res = await fetch(atlasApiUrl('/v1/governance/console-command'), {
@@ -175,6 +200,13 @@ export function ConsoleView({ state, setState }: CreatorConsoleProps) {
 
   const handleAiCommand = useCallback(async () => {
     if (!aiCommand.trim()) return;
+
+    // Fix 10: auth check
+    if (!state.currentUser) {
+      setAiResponse('Authentication required. Please sign in to use the Sovereign Console.');
+      return;
+    }
+
     setIsProcessingCommand(true);
     setAiResponse(null);
 
@@ -221,6 +253,7 @@ export function ConsoleView({ state, setState }: CreatorConsoleProps) {
 
     try {
       const result = await executeCommand();
+      // Fix 7: Display AI response immediately — Firestore write is best-effort
       setAiResponse(result.response);
 
       if (result.isImmediateUpgrade) {
@@ -240,7 +273,8 @@ export function ConsoleView({ state, setState }: CreatorConsoleProps) {
             ],
           },
         }));
-        const newProposal = {
+        // Firestore write is best-effort — never clobbers the displayed response
+        addDoc(collection(db, 'change_control'), {
           title: result.proposalTitle,
           description: result.proposalDescription,
           class: result.proposalClass,
@@ -249,14 +283,16 @@ export function ConsoleView({ state, setState }: CreatorConsoleProps) {
           approvedBy: state.currentUser?.uid || 'system',
           createdAt: Timestamp.now(),
           rollbackSafe: true,
-        };
-        await addDoc(collection(db, 'change_control'), newProposal);
+        }).catch((firestoreErr) => {
+          console.warn('[ConsoleView] Firestore write failed (non-fatal):', firestoreErr);
+        });
         logAudit('Governance Command Implemented', 'critical', {
           command: aiCommand,
           proposalTitle: result.proposalTitle,
         });
       } else {
-        const newProposal = {
+        // Firestore write is best-effort — never clobbers the displayed response
+        addDoc(collection(db, 'change_control'), {
           title: result.proposalTitle,
           description: result.proposalDescription,
           class: result.proposalClass,
@@ -264,8 +300,9 @@ export function ConsoleView({ state, setState }: CreatorConsoleProps) {
           proposedBy: state.currentUser?.uid || 'system',
           createdAt: Timestamp.now(),
           rollbackSafe: true,
-        };
-        await addDoc(collection(db, 'change_control'), newProposal);
+        }).catch((firestoreErr) => {
+          console.warn('[ConsoleView] Firestore write failed (non-fatal):', firestoreErr);
+        });
         logAudit('Governance Command Executed', 'high', {
           command: aiCommand,
           proposalTitle: result.proposalTitle,
@@ -404,11 +441,17 @@ export function ConsoleView({ state, setState }: CreatorConsoleProps) {
                         <Target size={16} className="text-gold" />
                       </div>
                       <div className="flex items-end gap-3">
-                        <span className="text-4xl font-serif text-ivory">12</span>
+                        <span className="text-4xl font-serif text-ivory">
+                          {overviewMetrics.gaps !== null ? overviewMetrics.gaps : (
+                            <RefreshCw size={24} className="animate-spin text-stone/40" />
+                          )}
+                        </span>
                         <span className="text-[10px] text-stone mb-1 uppercase tracking-widest">Identified</span>
                       </div>
                       <div className="pt-4 border-t border-titanium/10">
-                        <p className="text-[10px] text-stone leading-relaxed">3 critical structural gaps require immediate attention.</p>
+                        <p className="text-[10px] text-stone leading-relaxed">
+                          {overviewMetrics.gaps !== null ? `${overviewMetrics.gaps} open gaps in the ledger.` : 'Loading...'}
+                        </p>
                       </div>
                     </div>
                     <div className="p-8 bg-titanium/5 border border-titanium/10 rounded-sm space-y-6">
@@ -417,11 +460,17 @@ export function ConsoleView({ state, setState }: CreatorConsoleProps) {
                         <GitBranch size={16} className="text-gold" />
                       </div>
                       <div className="flex items-end gap-3">
-                        <span className="text-4xl font-serif text-ivory">4</span>
+                        <span className="text-4xl font-serif text-ivory">
+                          {overviewMetrics.changes !== null ? overviewMetrics.changes : (
+                            <RefreshCw size={24} className="animate-spin text-stone/40" />
+                          )}
+                        </span>
                         <span className="text-[10px] text-stone mb-1 uppercase tracking-widest">In Queue</span>
                       </div>
                       <div className="pt-4 border-t border-titanium/10">
-                        <p className="text-[10px] text-stone leading-relaxed">2 Class 3 changes awaiting creator approval.</p>
+                        <p className="text-[10px] text-stone leading-relaxed">
+                          {overviewMetrics.changes !== null ? `${overviewMetrics.changes} pending proposals awaiting review.` : 'Loading...'}
+                        </p>
                       </div>
                     </div>
                     <div className="p-8 bg-titanium/5 border border-titanium/10 rounded-sm space-y-6">
@@ -430,11 +479,17 @@ export function ConsoleView({ state, setState }: CreatorConsoleProps) {
                         <History size={16} className="text-gold" />
                       </div>
                       <div className="flex items-end gap-3">
-                        <span className="text-4xl font-serif text-ivory">156</span>
-                        <span className="text-[10px] text-stone mb-1 uppercase tracking-widest">Last 24h</span>
+                        <span className="text-4xl font-serif text-ivory">
+                          {overviewMetrics.audits !== null ? overviewMetrics.audits : (
+                            <RefreshCw size={24} className="animate-spin text-stone/40" />
+                          )}
+                        </span>
+                        <span className="text-[10px] text-stone mb-1 uppercase tracking-widest">Total</span>
                       </div>
                       <div className="pt-4 border-t border-titanium/10">
-                        <p className="text-[10px] text-stone leading-relaxed">No anomalies detected in the last audit cycle.</p>
+                        <p className="text-[10px] text-stone leading-relaxed">
+                          {overviewMetrics.audits !== null ? `${overviewMetrics.audits} events logged.` : 'Loading...'}
+                        </p>
                       </div>
                     </div>
                   </div>

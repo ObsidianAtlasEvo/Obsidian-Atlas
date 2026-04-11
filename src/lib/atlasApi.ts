@@ -29,6 +29,14 @@ export function isAtlasSameOriginApi(): boolean {
 
 /**
  * Use live Atlas HTTP (vs offline mock) when we have a direct URL, Vite dev proxy, or `VITE_ATLAS_SAME_ORIGIN`.
+ *
+ * PRODUCTION REQUIREMENT: In production builds, `import.meta.env.DEV` is false.
+ * You MUST set either `VITE_ATLAS_API_URL` (absolute backend origin) or
+ * `VITE_ATLAS_SAME_ORIGIN=true` (when frontend/backend share a host behind
+ * nginx or similar). Without one of these, this function returns false, and all
+ * governance console / AI commands will skip the backend entirely, falling
+ * through to the local Ollama path (which won't exist in production).
+ * See .env.example for configuration details.
  */
 export function atlasHttpEnabled(): boolean {
   return Boolean(getAtlasApiBase()) || import.meta.env.DEV || isAtlasSameOriginApi();

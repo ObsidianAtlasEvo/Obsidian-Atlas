@@ -26,6 +26,7 @@ import {
   MousePointer2,
   Clock
 } from 'lucide-react';
+import { get, set } from 'idb-keyval';
 import { AppState, BugEntry, BugSeverity, BugStatus, BugCategory } from '../types';
 import { coerceActiveMode } from '../lib/atlasWayfinding';
 import { cn } from '../lib/utils';
@@ -47,6 +48,7 @@ export const BugHunter: React.FC<BugHunterProps> = ({ state, setState, embedded 
   const [isScanning, setIsScanning] = useState(false);
   const [selectedBugId, setSelectedBugId] = useState<string | null>(null);
   const [view, setView] = useState<'ledger' | 'stress' | 'personas'>('ledger');
+  const [scanResults, setScanResults] = useState<Omit<BugEntry, 'id' | 'timestamp'>[]>([]);
 
   // Auto-activate monitoring when the panel opens or is embedded
   useEffect(() => {
@@ -89,6 +91,38 @@ export const BugHunter: React.FC<BugHunterProps> = ({ state, setState, embedded 
       }
     }));
   }, [setState]);
+
+  // ── IndexedDB persistence: hydrate ledger + scanResults on mount ────────
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const storedLedger = await get<BugEntry[]>('bugHunter:ledger');
+        const storedResults = await get<Omit<BugEntry, 'id' | 'timestamp'>[]>('bugHunter:scanResults');
+        if (cancelled) return;
+        if (storedLedger && storedLedger.length > 0) {
+          setState(prev => ({
+            ...prev,
+            bugHunter: { ...prev.bugHunter, ledger: storedLedger }
+          }));
+        }
+        if (storedResults) setScanResults(storedResults);
+      } catch {
+        // IndexedDB unavailable — ignore
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Persist ledger to IndexedDB on every change
+  useEffect(() => {
+    set('bugHunter:ledger', state.bugHunter.ledger).catch(() => {});
+  }, [state.bugHunter.ledger]);
+
+  // Persist scanResults to IndexedDB on every change
+  useEffect(() => {
+    set('bugHunter:scanResults', scanResults).catch(() => {});
+  }, [scanResults]);
 
   // Automated Scanning Logic & Real Error Capture
   useEffect(() => {
@@ -146,10 +180,15 @@ export const BugHunter: React.FC<BugHunterProps> = ({ state, setState, embedded 
 
   const runAutomatedScan = () => {
     setIsScanning(true);
-    
+    const persona = state.bugHunter.currentPersona;
+    // adversarial persona tightens thresholds by 50%
+    const thresholdMultiplier = persona === 'adversarial' ? 0.5 : 1;
+
     // Simulate scanning delay
-    setTimeout(() => {
+    setTimeout(async () => {
       const findings: Omit<BugEntry, 'id' | 'timestamp'>[] = [];
+
+      // ── Default 6 heuristic checks (always run) ──────────────────────────
 
       // 1. Check for empty states that might be confusing
       if (state.recentQuestions.length === 0 && state.activeMode !== 'onboarding') {
@@ -168,14 +207,15 @@ export const BugHunter: React.FC<BugHunterProps> = ({ state, setState, embedded 
         });
       }
 
-      // 2. Check for layout inconsistencies (Simulated)
-      if (window.innerWidth < 1200 && state.uiConfig.sidebarCollapsed === false) {
+      // 2. Check for layout inconsistencies
+      const sidebarThreshold = Math.floor(1200 * thresholdMultiplier);
+      if (window.innerWidth < sidebarThreshold && state.uiConfig.sidebarCollapsed === false) {
         findings.push({
           name: 'Sidebar Crowding on Small Desktop',
           category: 'layout',
           severity: 'medium',
           status: 'discovered',
-          reproducibility: 'Window width < 1200px',
+          reproducibility: `Window width < ${sidebarThreshold}px`,
           affectedSurface: 'Main Layout',
           likelyCause: 'Fixed sidebar width vs fluid content',
           visualImpact: 'Content overlap or excessive horizontal scroll',
@@ -203,7 +243,8 @@ export const BugHunter: React.FC<BugHunterProps> = ({ state, setState, embedded 
       }
 
       // 4. Check Resonance Data Integrity
-      const invalidThreads = state.resonance.threads.filter(t => t.strengthScore > 1 || t.strengthScore < 0);
+      const strengthCeiling = 1 * thresholdMultiplier;
+      const invalidThreads = state.resonance.threads.filter(t => t.strengthScore > strengthCeiling || t.strengthScore < 0);
       if (invalidThreads.length > 0) {
         findings.push({
           name: 'Resonance Thread Strength Out of Bounds',
@@ -254,6 +295,153 @@ export const BugHunter: React.FC<BugHunterProps> = ({ state, setState, embedded 
         });
       }
 
+      // ── Persona-specific checks ──────────────────────────────────────────
+
+      if (persona === 'developer') {
+        // Check for console.error in recent console output
+        const consoleErrors = (window as any).__atlasConsoleErrors as string[] | undefined;
+        if (consoleErrors && consoleErrors.length > 0) {
+          findings.push({
+            name: 'Console Errors Detected in Recent Output',
+            category: 'logic',
+            severity: 'medium',
+            status: 'discovered',
+            reproducibility: 'Check browser console',
+            affectedSurface: 'Application Runtime',
+            likelyCause: 'Uncaught errors or warnings in application code',
+            visualImpact: 'None visible to user',
+            functionalImpact: 'Potential hidden failures',
+            regressionRisk: true,
+            recommendedFix: 'Investigate and fix console.error calls'
+          });
+        }
+        // Check if running in dev mode
+        if (import.meta.env.DEV) {
+          findings.push({
+            name: 'Development Mode Active',
+            category: 'state',
+            severity: 'low',
+            status: 'discovered',
+            reproducibility: 'Always in dev builds',
+            affectedSurface: 'Build Configuration',
+            likelyCause: 'import.meta.env.DEV is true',
+            visualImpact: 'Dev-only UI elements may be visible',
+            functionalImpact: 'Performance not representative of production',
+            regressionRisk: false,
+            recommendedFix: 'Verify behavior matches production build'
+          });
+        }
+      }
+
+      if (persona === 'ux-tester') {
+        // Check if mobile breakpoint applies
+        if (window.innerWidth < 768) {
+          findings.push({
+            name: 'Mobile Viewport Detected — UX Review Needed',
+            category: 'usability',
+            severity: 'medium',
+            status: 'discovered',
+            reproducibility: 'Viewport width < 768px',
+            affectedSurface: 'Responsive Layout',
+            likelyCause: 'Mobile breakpoint active',
+            visualImpact: 'Layout may not be optimized for small screens',
+            functionalImpact: 'Touch targets may be too small',
+            regressionRisk: true,
+            recommendedFix: 'Review all interactive elements for mobile usability'
+          });
+        }
+        // Check for overflow:hidden elements clipping content
+        const clippedElements = document.querySelectorAll('[style*="overflow: hidden"], [style*="overflow:hidden"]');
+        const computedClipped = Array.from(document.querySelectorAll('*')).filter(el => {
+          const style = window.getComputedStyle(el);
+          return style.overflow === 'hidden' && el.scrollHeight > el.clientHeight;
+        });
+        if (clippedElements.length > 0 || computedClipped.length > 0) {
+          findings.push({
+            name: 'Content Clipped by overflow:hidden Elements',
+            category: 'layout',
+            severity: 'medium',
+            status: 'discovered',
+            reproducibility: 'Inspect DOM for overflow:hidden',
+            affectedSurface: 'Various UI containers',
+            likelyCause: 'CSS overflow:hidden hiding scrollable content',
+            visualImpact: 'Users cannot see or access clipped content',
+            functionalImpact: 'Data or controls may be inaccessible',
+            regressionRisk: true,
+            recommendedFix: 'Use overflow:auto or overflow:scroll where content may exceed container'
+          });
+        }
+      }
+
+      if (persona === 'adversarial') {
+        // Check localStorage quota usage
+        try {
+          let totalSize = 0;
+          for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (key) totalSize += (localStorage.getItem(key) || '').length;
+          }
+          const quotaUsageMb = totalSize / (1024 * 1024);
+          if (quotaUsageMb > 2.5) {
+            findings.push({
+              name: `localStorage Quota Pressure (${quotaUsageMb.toFixed(1)} MB)`,
+              category: 'performance',
+              severity: 'high',
+              status: 'discovered',
+              reproducibility: 'Check localStorage size',
+              affectedSurface: 'Client Storage',
+              likelyCause: 'Excessive data stored in localStorage',
+              visualImpact: 'None until quota exceeded',
+              functionalImpact: 'QuotaExceededError will break persistence',
+              regressionRisk: true,
+              recommendedFix: 'Migrate large data to IndexedDB or prune stale entries'
+            });
+          }
+        } catch {
+          // localStorage may be blocked
+        }
+      }
+
+      // ── Backend diagnostics (if available) ───────────────────────────────
+
+      try {
+        const { atlasApiUrl, atlasHttpEnabled } = await import('../lib/atlasApi');
+        if (atlasHttpEnabled()) {
+          const res = await fetch(atlasApiUrl('/v1/diagnostics/scan'), {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userEmail: state.currentUser?.email }),
+          });
+          if (res.ok) {
+            const data = await res.json() as {
+              checks?: Array<{ name: string; status: 'ok' | 'warn' | 'fail'; detail: string }>;
+            };
+            if (data.checks) {
+              for (const check of data.checks) {
+                if (check.status !== 'ok') {
+                  findings.push({
+                    name: `Backend: ${check.name}`,
+                    category: 'state',
+                    severity: check.status === 'fail' ? 'high' : 'medium',
+                    status: 'discovered',
+                    reproducibility: 'Backend diagnostics scan',
+                    affectedSurface: 'Atlas Backend',
+                    likelyCause: check.detail,
+                    visualImpact: 'None (backend issue)',
+                    functionalImpact: check.detail,
+                    regressionRisk: check.status === 'fail',
+                    recommendedFix: `Investigate backend: ${check.name}`
+                  });
+                }
+              }
+            }
+          }
+        }
+      } catch {
+        // Backend unreachable — skip backend checks silently
+      }
+
       // Add findings to ledger if they don't already exist (by name)
       findings.forEach(finding => {
         const exists = state.bugHunter.ledger.some(b => b.name === finding.name && b.status !== 'fixed');
@@ -262,6 +450,7 @@ export const BugHunter: React.FC<BugHunterProps> = ({ state, setState, embedded 
         }
       });
 
+      setScanResults(findings);
       setIsScanning(false);
       setState(prev => ({
         ...prev,
@@ -274,6 +463,8 @@ export const BugHunter: React.FC<BugHunterProps> = ({ state, setState, embedded 
   };
 
   const runStressTest = (type: 'rapid-nav' | 'click-storm' | 'input-flood') => {
+    if (!state.bugHunter.isActive) return;
+
     setState(prev => ({
       ...prev,
       bugHunter: {
@@ -282,48 +473,117 @@ export const BugHunter: React.FC<BugHunterProps> = ({ state, setState, embedded 
       }
     }));
 
-    // Simulate stress test
-    let iterations = 0;
-    const maxIterations = 20;
-    const interval = setInterval(() => {
-      if (type === 'rapid-nav') {
+    const finishTest = (errorsFound: number) => {
+      setState(prev => ({
+        ...prev,
+        bugHunter: {
+          ...prev.bugHunter,
+          activeStressTests: prev.bugHunter.activeStressTests.filter(t => t !== type)
+        }
+      }));
+      if (errorsFound > 0) {
+        addBug({
+          name: `Stress Test Failure: ${type} (${errorsFound} errors)`,
+          category: 'performance',
+          severity: errorsFound > 3 ? 'high' : 'medium',
+          status: 'discovered',
+          reproducibility: 'During rapid state transitions',
+          affectedSurface: type === 'rapid-nav' ? 'State Management / UI Sync' : type === 'click-storm' ? 'Event Handlers / DOM' : 'Input Parsers / DOM',
+          likelyCause: 'Race condition in concurrent state updates',
+          visualImpact: 'Flickering or stale UI elements',
+          functionalImpact: 'Temporary loss of UI responsiveness',
+          regressionRisk: true,
+          recommendedFix: 'Implement debouncing or state locking during transitions'
+        });
+      }
+    };
+
+    if (type === 'rapid-nav') {
+      let iterations = 0;
+      const maxIterations = 20;
+      const interval = setInterval(() => {
         const modes: AppState['activeMode'][] = ['atlas', 'salon', 'decisions', 'scenarios', 'journal', 'pulse'];
         const randomMode = modes[Math.floor(Math.random() * modes.length)];
         setState((prev) => ({
           ...prev,
           activeMode: coerceActiveMode(randomMode, prev.activeMode),
         }));
-      }
-      
-      iterations++;
-      if (iterations >= maxIterations) {
-        clearInterval(interval);
-        setState(prev => ({
-          ...prev,
-          bugHunter: {
-            ...prev.bugHunter,
-            activeStressTests: prev.bugHunter.activeStressTests.filter(t => t !== type)
-          }
-        }));
-        
-        // Randomly "find" a bug after stress test
-        if (Math.random() > 0.7) {
-          addBug({
-            name: `Stress Test Failure: ${type}`,
-            category: 'performance',
-            severity: 'medium',
-            status: 'discovered',
-            reproducibility: 'During rapid state transitions',
-            affectedSurface: 'State Management / UI Sync',
-            likelyCause: 'Race condition in concurrent state updates',
-            visualImpact: 'Flickering or stale UI elements',
-            functionalImpact: 'Temporary loss of UI responsiveness',
-            regressionRisk: true,
-            recommendedFix: 'Implement debouncing or state locking during transitions'
-          });
+        iterations++;
+        if (iterations >= maxIterations) {
+          clearInterval(interval);
+          finishTest(Math.random() > 0.7 ? 1 : 0);
         }
+      }, 100);
+    } else if (type === 'click-storm') {
+      // Dispatch 50 MouseEvent clicks on document.body at 30ms intervals
+      let clicks = 0;
+      const maxClicks = 50;
+      let errorsFound = 0;
+      const onError = () => { errorsFound++; };
+      window.addEventListener('error', onError);
+      const interval = setInterval(() => {
+        if (!state.bugHunter.isActive) {
+          clearInterval(interval);
+          window.removeEventListener('error', onError);
+          finishTest(errorsFound);
+          return;
+        }
+        const x = Math.floor(Math.random() * window.innerWidth);
+        const y = Math.floor(Math.random() * window.innerHeight);
+        const evt = new MouseEvent('click', { bubbles: true, clientX: x, clientY: y });
+        document.body.dispatchEvent(evt);
+        clicks++;
+        if (clicks >= maxClicks) {
+          clearInterval(interval);
+          window.removeEventListener('error', onError);
+          finishTest(errorsFound);
+        }
+      }, 30);
+    } else if (type === 'input-flood') {
+      // Find all <input> elements, dispatch 100 InputEvents to each at 20ms intervals
+      const inputs = Array.from(document.querySelectorAll('input'));
+      let dispatched = 0;
+      const maxPerInput = 100;
+      const totalMax = inputs.length > 0 ? inputs.length * maxPerInput : maxPerInput;
+      let errorsFound = 0;
+      const onError = () => { errorsFound++; };
+      window.addEventListener('error', onError);
+
+      if (inputs.length === 0) {
+        // No inputs in DOM — finish immediately
+        window.removeEventListener('error', onError);
+        finishTest(0);
+        return;
       }
-    }, 100);
+
+      const interval = setInterval(() => {
+        if (!state.bugHunter.isActive) {
+          clearInterval(interval);
+          window.removeEventListener('error', onError);
+          finishTest(errorsFound);
+          return;
+        }
+        const inputIdx = Math.floor(dispatched / maxPerInput);
+        if (inputIdx >= inputs.length) {
+          clearInterval(interval);
+          window.removeEventListener('error', onError);
+          finishTest(errorsFound);
+          return;
+        }
+        const target = inputs[inputIdx];
+        const randomPayload = Math.random().toString(36).substring(2, 15);
+        const nativeInputValueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+        nativeInputValueSetter?.call(target, randomPayload);
+        const evt = new Event('input', { bubbles: true });
+        target.dispatchEvent(evt);
+        dispatched++;
+        if (dispatched >= totalMax) {
+          clearInterval(interval);
+          window.removeEventListener('error', onError);
+          finishTest(errorsFound);
+        }
+      }, 20);
+    }
   };
 
   const clearLedger = () => {
@@ -622,10 +882,10 @@ export const BugHunter: React.FC<BugHunterProps> = ({ state, setState, embedded 
 
             <div className="grid grid-cols-2 gap-4">
               {[
-                { id: 'confused', label: 'Confused User', icon: AlertTriangle },
-                { id: 'expert', label: 'Power User', icon: Zap },
-                { id: 'impatient', label: 'Impatient User', icon: Clock },
-                { id: 'messy', label: 'Messy User', icon: Layout }
+                { id: 'developer', label: 'Developer', icon: Terminal },
+                { id: 'ux-tester', label: 'UX Tester', icon: Eye },
+                { id: 'adversarial', label: 'Adversarial', icon: AlertTriangle },
+                { id: 'default', label: 'Default', icon: Layout }
               ].map(persona => (
                 <button
                   key={persona.id}
