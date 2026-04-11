@@ -48,6 +48,32 @@ export const BugHunter: React.FC<BugHunterProps> = ({ state, setState, embedded 
   const [selectedBugId, setSelectedBugId] = useState<string | null>(null);
   const [view, setView] = useState<'ledger' | 'stress' | 'personas'>('ledger');
 
+  // Auto-activate monitoring when the panel opens or is embedded
+  useEffect(() => {
+    if ((embedded || state.bugHunter.isPanelOpen) && !state.bugHunter.isActive) {
+      setState(prev => ({
+        ...prev,
+        bugHunter: { ...prev.bugHunter, isActive: true },
+      }));
+    }
+    return () => {
+      // Deactivate monitoring when panel closes (only for overlay mode)
+      if (!embedded) {
+        setState(prev => ({
+          ...prev,
+          bugHunter: { ...prev.bugHunter, isActive: false },
+        }));
+      }
+    };
+  }, [embedded, state.bugHunter.isPanelOpen]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const toggleMonitoring = useCallback(() => {
+    setState(prev => ({
+      ...prev,
+      bugHunter: { ...prev.bugHunter, isActive: !prev.bugHunter.isActive },
+    }));
+  }, [setState]);
+
   const addBug = useCallback((bug: Omit<BugEntry, 'id' | 'timestamp'>) => {
     const newBug: BugEntry = {
       ...bug,
@@ -356,6 +382,21 @@ export const BugHunter: React.FC<BugHunterProps> = ({ state, setState, embedded 
               <X size={18} />
             </button>
           )}
+          {/* Live monitoring toggle */}
+          <button
+            type="button"
+            onClick={toggleMonitoring}
+            title={state.bugHunter.isActive ? 'Pause live error monitoring' : 'Start live error monitoring'}
+            className={cn(
+              'flex items-center gap-1.5 border px-3 py-2 text-[9px] font-bold uppercase tracking-widest transition-all sm:px-3 sm:text-[10px]',
+              state.bugHunter.isActive
+                ? 'border-teal/40 bg-teal/10 text-teal hover:bg-teal/20'
+                : 'border-gold-500/20 bg-gold-500/5 text-stone/60 hover:text-gold-500'
+            )}
+          >
+            {state.bugHunter.isActive ? <Pause size={12} /> : <Play size={12} />}
+            <span className="hidden min-[380px]:inline">{state.bugHunter.isActive ? 'Live' : 'Paused'}</span>
+          </button>
           <button
             type="button"
             onClick={runAutomatedScan}
@@ -363,7 +404,7 @@ export const BugHunter: React.FC<BugHunterProps> = ({ state, setState, embedded 
             className="flex items-center gap-2 border border-gold-500/20 bg-gold-500/10 px-3 py-2 text-[9px] font-bold uppercase tracking-widest text-gold-500 transition-all hover:bg-gold-500/20 disabled:opacity-50 sm:px-4 sm:text-[10px]"
           >
             <RefreshCw size={14} className={isScanning ? 'animate-spin' : ''} />
-            <span className="hidden min-[380px]:inline">{isScanning ? 'Scanning...' : 'Run Manual Scan'}</span>
+            <span className="hidden min-[380px]:inline">{isScanning ? 'Scanning...' : 'Scan'}</span>
             <span className="min-[380px]:hidden">{isScanning ? '…' : 'Scan'}</span>
           </button>
         </div>

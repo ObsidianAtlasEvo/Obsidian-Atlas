@@ -3,6 +3,7 @@ import { useAtlasStore } from '../store/useAtlasStore';
 import { streamChat, OllamaError, type OllamaMessage } from '../lib/ollama';
 import { buildAtlasSystemPrompt } from '../lib/atlasPrompt';
 import { generateId, nowISO } from '../lib/persistence';
+import { useChatRequestState, type ChatRequestStatus } from '../hooks/useChatRequestState';
 import type { UserQuestion, AnswerDepthTier, InquiryStyle } from '@/types';
 
 // ── Types ─────────────────────────────────────────────────────────────────
@@ -13,6 +14,7 @@ interface ChatMessage {
   content: string;
   timestamp: string;
   isStreaming?: boolean;
+  requestStatus?: ChatRequestStatus;
   error?: string;
   tokens?: number;
   durationMs?: number;
@@ -275,10 +277,10 @@ export default function AtlasChamber() {
   const [inputValue, setInputValue] = useState('');
   const [thinkingState, setThinkingState] = useState<ThinkingState>(null);
   const [isStreaming, setIsStreaming] = useState(false);
-  const abortRef = useRef<AbortController | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  const streamingIdRef = useRef<string | null>(null);
+  const thinkingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const request = useChatRequestState();
 
   // Scroll to bottom on new messages
   useEffect(() => {
@@ -289,6 +291,14 @@ export default function AtlasChamber() {
   useEffect(() => {
     inputRef.current?.focus();
   }, []);
+
+  // Cleanup watchdog and thinking interval on unmount
+  useEffect(() => {
+    return () => {
+      request.clearWatchdog();
+      if (thinkingIntervalRef.current) clearInterval(thinkingIntervalRef.current);
+    };
+  }, [request]);
 
   // Build conversation history for Ollama context
   const buildMessageHistory = useCallback((): OllamaMessage[] => {
@@ -308,16 +318,41 @@ export default function AtlasChamber() {
     return history;
   }, [store, messages]);
 
+  // Helper: finalize the assistant message in a terminal state
+  const finalizeMessage = useCallback(
+    (
+      assistantMsgId: string,
+      patch: Partial<ChatMessage>,
+    ) => {
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === assistantMsgId ? { ...m, ...patch, isStreaming: false } : m,
+        ),
+      );
+    },
+    [],
+  );
+
+  // Debounced persistence for streaming tokens: write to store at most every 500ms
+  const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingContentRef = useRef<string>('');
+
   const handleSubmit = useCallback(async () => {
     const text = inputValue.trim();
-    if (!text || isStreaming) return;
+    if (!text) return;
 
-    // Cancel any in-progress stream
-    abortRef.current?.abort();
+    // If already in flight, abort the old request first (prevents concurrency corruption)
+    if (request.stateRef.current.status === 'submitting' || request.stateRef.current.status === 'streaming') {
+      request.abortCurrent();
+      // Mark the old assistant message as aborted
+      const oldId = request.stateRef.current.assistantMsgId;
+      if (oldId) {
+        finalizeMessage(oldId, { requestStatus: 'aborted' });
+      }
+    }
 
     const userMsgId = generateId();
     const assistantMsgId = generateId();
-    streamingIdRef.current = assistantMsgId;
 
     const userMessage: ChatMessage = {
       id: userMsgId,
@@ -332,97 +367,237 @@ export default function AtlasChamber() {
       content: '',
       timestamp: nowISO(),
       isStreaming: true,
+      requestStatus: 'submitting',
     };
 
     setInputValue('');
     setMessages((prev) => [...prev, userMessage, assistantMessage]);
     setIsStreaming(true);
 
+    // Ensure a conversation thread exists for persistence
+    let convId = store.activeConversationId;
+    if (!convId) {
+      convId = store.createConversation();
+    }
+    // Persist user message immediately
+    store.addConversationMessage(convId, {
+      id: userMsgId,
+      role: 'user',
+      content: text,
+      timestamp: nowISO(),
+    });
+    // Persist assistant placeholder
+    store.addConversationMessage(convId, {
+      id: assistantMsgId,
+      role: 'assistant',
+      content: '',
+      timestamp: nowISO(),
+      requestStatus: 'submitting',
+    });
+
+    pendingContentRef.current = '';
+
+    // FSM: begin → submitting
+    const controller = request.begin(assistantMsgId);
+
     // Cycle thinking states for UX texture
     const thinkingStates: ThinkingState[] = ['RETRIEVING', 'WEIGHING CONTRADICTIONS', 'SYNTHESIZING'];
     let thinkingIdx = 0;
     setThinkingState(thinkingStates[0]);
-    const thinkingInterval = setInterval(() => {
+    if (thinkingIntervalRef.current) clearInterval(thinkingIntervalRef.current);
+    thinkingIntervalRef.current = setInterval(() => {
       thinkingIdx = (thinkingIdx + 1) % thinkingStates.length;
       setThinkingState(thinkingStates[thinkingIdx]);
     }, 1800);
 
+    const cleanupThinking = () => {
+      if (thinkingIntervalRef.current) {
+        clearInterval(thinkingIntervalRef.current);
+        thinkingIntervalRef.current = null;
+      }
+      setThinkingState(null);
+    };
+
+    // Watchdog timeout handler — fires if 30s pass with no token
+    const handleWatchdogTimeout = () => {
+      controller.abort();
+      cleanupThinking();
+      setIsStreaming(false);
+      request.transition('timed_out');
+      finalizeMessage(assistantMsgId, {
+        requestStatus: 'timed_out',
+        error: 'Request timed out — no response received within 30 seconds.',
+      });
+    };
+
+    // Start watchdog
+    request.startWatchdog(handleWatchdogTimeout);
+
     const history = buildMessageHistory();
     history.push({ role: 'user', content: text });
 
-    abortRef.current = streamChat(history, {
-      onToken: (token) => {
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === assistantMsgId
-              ? { ...m, content: m.content + token }
-              : m
-          )
-        );
-      },
-      onDone: (fullText, metrics) => {
-        clearInterval(thinkingInterval);
-        setThinkingState(null);
-        setIsStreaming(false);
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === assistantMsgId
-              ? {
-                  ...m,
-                  content: fullText,
-                  isStreaming: false,
-                  tokens: metrics?.tokens,
-                  durationMs: metrics?.duration,
-                }
-              : m
-          )
-        );
+    // Schedule a debounced write of partial content to the store
+    const flushToStore = (content: string) => {
+      if (convId) {
+        store.updateConversationMessage(convId, assistantMsgId, {
+          content,
+          requestStatus: 'streaming',
+        });
+      }
+    };
 
-        // Record in store's recent questions
-        const question: UserQuestion = {
-          id: userMsgId,
-          text,
-          timestamp: nowISO(),
-          analysis: {
-            style: 'diagnostic' as InquiryStyle,
-            depth: store.activePosture.depth,
-            dimensions: {},
-          },
-          response: {
-            synthesis: fullText,
-            latentPatterns: [],
-            strategicImplications: [],
-            suggestedChambers: [],
-            epistemicStatus: 'inference',
-            cognitiveSignatureImpact: '',
-          },
-        };
-        store.addQuestion(question);
-      },
-      onError: (err: OllamaError) => {
-        clearInterval(thinkingInterval);
-        setThinkingState(null);
-        setIsStreaming(false);
+    try {
+      streamChat(history, {
+        onToken: (token) => {
+          // FSM: submitting → streaming (on first token)
+          if (request.stateRef.current.status === 'submitting') {
+            request.transition('streaming');
+          }
+          // Reset watchdog on each token
+          request.resetWatchdog(handleWatchdogTimeout);
 
-        let errorMsg = err.message;
-        if (err.code === 'NETWORK') {
-          errorMsg = 'Cannot reach the local model. Make sure Ollama is running: `ollama serve`';
-        } else if (err.code === 'MODEL_NOT_FOUND') {
-          errorMsg = `Model not found. Pull it with: ollama pull ${process.env.OLLAMA_MODEL ?? 'llama3.1:70b'}`;
-        } else if (err.code === 'ABORTED') {
-          return; // User cancelled — don't show error
-        }
+          pendingContentRef.current += token;
 
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === assistantMsgId
-              ? { ...m, isStreaming: false, error: errorMsg, content: '' }
-              : m
-          )
-        );
-      },
-    });
-  }, [inputValue, isStreaming, buildMessageHistory, store]);
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === assistantMsgId
+                ? { ...m, content: m.content + token, requestStatus: 'streaming' }
+                : m,
+            ),
+          );
+
+          // Debounced persistence: write partial content every 500ms
+          if (!persistTimerRef.current) {
+            persistTimerRef.current = setTimeout(() => {
+              persistTimerRef.current = null;
+              flushToStore(pendingContentRef.current);
+            }, 500);
+          }
+        },
+        onDone: (fullText, metrics) => {
+          if (persistTimerRef.current) {
+            clearTimeout(persistTimerRef.current);
+            persistTimerRef.current = null;
+          }
+          cleanupThinking();
+          setIsStreaming(false);
+          request.transition('completed');
+          finalizeMessage(assistantMsgId, {
+            content: fullText,
+            requestStatus: 'completed',
+            tokens: metrics?.tokens,
+            durationMs: metrics?.duration,
+          });
+
+          // Persist final state
+          if (convId) {
+            store.updateConversationMessage(convId, assistantMsgId, {
+              content: fullText,
+              requestStatus: 'completed',
+              tokens: metrics?.tokens,
+              durationMs: metrics?.duration,
+            });
+          }
+
+          // Record in store's recent questions
+          const question: UserQuestion = {
+            id: userMsgId,
+            text,
+            timestamp: nowISO(),
+            analysis: {
+              style: 'diagnostic' as InquiryStyle,
+              depth: store.activePosture.depth,
+              dimensions: {},
+            },
+            response: {
+              synthesis: fullText,
+              latentPatterns: [],
+              strategicImplications: [],
+              suggestedChambers: [],
+              epistemicStatus: 'inference',
+              cognitiveSignatureImpact: '',
+            },
+          };
+          store.addQuestion(question);
+        },
+        onError: (err: OllamaError) => {
+          if (persistTimerRef.current) {
+            clearTimeout(persistTimerRef.current);
+            persistTimerRef.current = null;
+          }
+          cleanupThinking();
+          setIsStreaming(false);
+
+          if (err.code === 'ABORTED') {
+            request.transition('aborted');
+            finalizeMessage(assistantMsgId, { requestStatus: 'aborted' });
+            if (convId) {
+              store.updateConversationMessage(convId, assistantMsgId, {
+                content: pendingContentRef.current,
+                requestStatus: 'aborted',
+              });
+            }
+            return;
+          }
+
+          if (err.code === 'TIMEOUT') {
+            request.transition('timed_out');
+            finalizeMessage(assistantMsgId, {
+              requestStatus: 'timed_out',
+              error: 'Request timed out.',
+              content: '',
+            });
+            if (convId) {
+              store.updateConversationMessage(convId, assistantMsgId, {
+                requestStatus: 'timed_out',
+                error: 'Request timed out.',
+              });
+            }
+            return;
+          }
+
+          request.transition('failed');
+
+          let errorMsg = err.message;
+          if (err.code === 'NETWORK') {
+            errorMsg = 'Cannot reach the local model. Make sure Ollama is running: `ollama serve`';
+          } else if (err.code === 'MODEL_NOT_FOUND') {
+            errorMsg = `Model not found. Pull it with: ollama pull ${process.env.OLLAMA_MODEL ?? 'llama3.1:70b'}`;
+          }
+
+          finalizeMessage(assistantMsgId, {
+            requestStatus: 'failed',
+            error: errorMsg,
+            content: '',
+          });
+          if (convId) {
+            store.updateConversationMessage(convId, assistantMsgId, {
+              requestStatus: 'failed',
+              error: errorMsg,
+              content: '',
+            });
+          }
+        },
+      });
+    } catch {
+      // Catch any synchronous throw from streamChat setup
+      cleanupThinking();
+      setIsStreaming(false);
+      request.transition('failed');
+      finalizeMessage(assistantMsgId, {
+        requestStatus: 'failed',
+        error: 'Unexpected error starting chat request.',
+        content: '',
+      });
+      if (convId) {
+        store.updateConversationMessage(convId, assistantMsgId, {
+          requestStatus: 'failed',
+          error: 'Unexpected error starting chat request.',
+          content: '',
+        });
+      }
+    }
+  }, [inputValue, buildMessageHistory, store, request, finalizeMessage]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -432,13 +607,17 @@ export default function AtlasChamber() {
   };
 
   const handleAbort = () => {
-    abortRef.current?.abort();
+    request.abortCurrent();
     setIsStreaming(false);
     setThinkingState(null);
+    if (thinkingIntervalRef.current) {
+      clearInterval(thinkingIntervalRef.current);
+      thinkingIntervalRef.current = null;
+    }
     setMessages((prev) =>
       prev.map((m) =>
-        m.isStreaming ? { ...m, isStreaming: false } : m
-      )
+        m.isStreaming ? { ...m, isStreaming: false, requestStatus: 'aborted' as ChatRequestStatus } : m,
+      ),
     );
   };
 

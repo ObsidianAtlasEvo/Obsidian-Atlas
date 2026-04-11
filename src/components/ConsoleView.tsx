@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { AppState, EmergencyContainment, Gap, ChangeProposal, AuditLog } from '../types';
 import { db, auth, logAudit, handleFirestoreError, OperationType } from '../services/firebase';
 import { doc, getDoc, setDoc, updateDoc, onSnapshot, collection, query, orderBy, limit, Timestamp, addDoc } from 'firebase/firestore';
@@ -29,6 +29,7 @@ import {
   Bug
 } from 'lucide-react';
 import { ATLAS_TRACE_CHANNEL, atlasTraceUserId } from '../lib/atlasTraceContext';
+import { atlasApiUrl, atlasHttpEnabled } from '../lib/atlasApi';
 import { cn } from '../lib/utils';
 import { EmergencyActivationFlow } from './EmergencyActivationFlow';
 import { GapLedger } from './GapLedger';
@@ -128,37 +129,101 @@ export function ConsoleView({ state, setState }: CreatorConsoleProps) {
       return;
     }
 
-    // Route to AI
+    // Route to Atlas backend (avoids localhost:11434 dependency)
     try {
-      const { processGovernanceCommand } = await import('../services/ollamaService');
-      // Use a special context for console commands
-      const result = await processGovernanceCommand(
-        `[CONTEXT: system_console] ${input}`,
-        state.currentUser?.email || undefined,
-        { userId: atlasTraceUserId(state), channel: ATLAS_TRACE_CHANNEL.consoleTerminal }
-      );
-      setConsoleHistory(prev => [...prev, { type: 'output', text: result.response, timestamp }]);
-    } catch (error) {
-      setConsoleHistory(prev => [...prev, { type: 'error', text: 'COMMUNICATION ERROR: ATLAS UNREACHABLE', timestamp }]);
+      if (atlasHttpEnabled()) {
+        const res = await fetch(atlasApiUrl('/v1/governance/console-command'), {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            command: `[CONTEXT: system_console] ${input}`,
+            userId: atlasTraceUserId(state),
+            userEmail: state.currentUser?.email,
+            channel: ATLAS_TRACE_CHANNEL.consoleTerminal,
+          }),
+        });
+        if (res.ok) {
+          const data = await res.json() as { response?: string };
+          setConsoleHistory(prev => [...prev, { type: 'output', text: data.response ?? 'Command received.', timestamp }]);
+        } else {
+          // Fallback to local service if backend endpoint not yet deployed
+          throw new Error(`Backend returned ${res.status}`);
+        }
+      } else {
+        throw new Error('No backend available');
+      }
+    } catch {
+      // Graceful fallback: try ollamaService, then surface a clear error
+      try {
+        const { processGovernanceCommand } = await import('../services/ollamaService');
+        const result = await processGovernanceCommand(
+          `[CONTEXT: system_console] ${input}`,
+          state.currentUser?.email || undefined,
+          { userId: atlasTraceUserId(state), channel: ATLAS_TRACE_CHANNEL.consoleTerminal }
+        );
+        setConsoleHistory(prev => [...prev, { type: 'output', text: result.response, timestamp }]);
+      } catch {
+        setConsoleHistory(prev => [...prev, {
+          type: 'error',
+          text: 'COMMUNICATION ERROR: Backend unreachable. Ensure VITE_ATLAS_API_URL is set and the server is running.',
+          timestamp
+        }]);
+      }
     }
   };
 
-  const handleAiCommand = async () => {
+  const handleAiCommand = useCallback(async () => {
     if (!aiCommand.trim()) return;
     setIsProcessingCommand(true);
     setAiResponse(null);
-    
-    try {
+
+    const executeCommand = async (): Promise<{
+      response: string;
+      proposalTitle: string;
+      proposalDescription: string;
+      proposalClass: 0 | 1 | 2 | 3 | 4;
+      isImmediateUpgrade: boolean;
+      upgradeImpact: string;
+    }> => {
+      // Try Atlas backend first (works in production)
+      if (atlasHttpEnabled()) {
+        const res = await fetch(atlasApiUrl('/v1/governance/ai-command'), {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            command: aiCommand,
+            userId: atlasTraceUserId(state),
+            userEmail: state.currentUser?.email,
+            channel: ATLAS_TRACE_CHANNEL.consoleGovernance,
+          }),
+        });
+        if (res.ok) {
+          return res.json() as Promise<{
+            response: string;
+            proposalTitle: string;
+            proposalDescription: string;
+            proposalClass: 0 | 1 | 2 | 3 | 4;
+            isImmediateUpgrade: boolean;
+            upgradeImpact: string;
+          }>;
+        }
+        // Non-2xx: fall through to local service
+      }
+      // Fallback: local Ollama (dev only)
       const { processGovernanceCommand } = await import('../services/ollamaService');
-      const result = await processGovernanceCommand(aiCommand, state.currentUser?.email || undefined, {
+      return processGovernanceCommand(aiCommand, state.currentUser?.email || undefined, {
         userId: atlasTraceUserId(state),
         channel: ATLAS_TRACE_CHANNEL.consoleGovernance,
       });
-      
+    };
+
+    try {
+      const result = await executeCommand();
       setAiResponse(result.response);
-      
+
       if (result.isImmediateUpgrade) {
-        // Apply immediate upgrade to state
         setState(prev => ({
           ...prev,
           chrysalis: {
@@ -170,13 +235,11 @@ export function ConsoleView({ state, setState }: CreatorConsoleProps) {
                 title: result.proposalTitle,
                 description: result.proposalDescription,
                 timestamp: new Date().toISOString(),
-                impact: result.upgradeImpact
-              }
-            ]
-          }
+                impact: result.upgradeImpact,
+              },
+            ],
+          },
         }));
-        
-        // Also log it to change control as deployed
         const newProposal = {
           title: result.proposalTitle,
           description: result.proposalDescription,
@@ -185,12 +248,14 @@ export function ConsoleView({ state, setState }: CreatorConsoleProps) {
           proposedBy: state.currentUser?.uid || 'system',
           approvedBy: state.currentUser?.uid || 'system',
           createdAt: Timestamp.now(),
-          rollbackSafe: true
+          rollbackSafe: true,
         };
         await addDoc(collection(db, 'change_control'), newProposal);
-        logAudit('Governance Command Implemented', 'critical', { command: aiCommand, proposalTitle: result.proposalTitle });
+        logAudit('Governance Command Implemented', 'critical', {
+          command: aiCommand,
+          proposalTitle: result.proposalTitle,
+        });
       } else {
-        // Add the proposal to Firestore
         const newProposal = {
           title: result.proposalTitle,
           description: result.proposalDescription,
@@ -198,21 +263,24 @@ export function ConsoleView({ state, setState }: CreatorConsoleProps) {
           status: 'proposed',
           proposedBy: state.currentUser?.uid || 'system',
           createdAt: Timestamp.now(),
-          rollbackSafe: true
+          rollbackSafe: true,
         };
-        
         await addDoc(collection(db, 'change_control'), newProposal);
-        logAudit('Governance Command Executed', 'high', { command: aiCommand, proposalTitle: result.proposalTitle });
+        logAudit('Governance Command Executed', 'high', {
+          command: aiCommand,
+          proposalTitle: result.proposalTitle,
+        });
       }
-      
       setAiCommand('');
     } catch (error) {
-      console.error("Error executing governance command:", error);
-      setAiResponse("An error occurred while processing your command. Please try again.");
+      console.error('Error executing governance command:', error);
+      setAiResponse(
+        'Command could not be processed. Ensure the Atlas backend is reachable and your sovereign session is active.'
+      );
     } finally {
       setIsProcessingCommand(false);
     }
-  };
+  }, [aiCommand, state, setState]);
 
   return (
     <div className="h-full flex flex-col bg-obsidian overflow-hidden">

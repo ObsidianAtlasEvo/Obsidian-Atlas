@@ -7,6 +7,7 @@ import healthRoutes from './routes/health.js';
 import embeddingsRoutes from './routes/embeddings.js';
 import modelRoutes from './routes/models.js';
 import orchestrateRoutes from './routes/orchestrate.js';
+import { registerGovernanceConsoleRoutes } from './routes/governanceConsoleRoutes.js';
 
 const app = Fastify({
   logger: {
@@ -35,6 +36,7 @@ async function bootstrap(): Promise<void> {
   await app.register(embeddingsRoutes);
   await app.register(modelRoutes);
   await app.register(orchestrateRoutes);
+  registerGovernanceConsoleRoutes(app);
 
   // ── Global error handler ───────────────────────────────────────────────────
   app.setErrorHandler((error: FastifyError, _request, reply) => {

@@ -227,3 +227,19 @@ pre {
   font-size: 0.8em;
   margin-left: 1px;
 }
+
+/* ── Mobile responsive ─────────────────────────────────────────────────── */
+
+@media (max-width: 639px) {
+  html {
+    font-size: 13px;
+  }
+
+  body {
+    overflow-y: auto;
+  }
+
+  .atlas-desktop-nav {
+    display: none;
+  }
+}
