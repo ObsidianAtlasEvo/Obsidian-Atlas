@@ -55,10 +55,21 @@ export function parseChronosDecisionJson(raw: string): ChronosDecision | null {
 // Activity gate (in-memory): user must have hit the API at least once before Chronos runs
 // ---------------------------------------------------------------------------
 
+const MAX_ACTIVITY_ENTRIES = 1000;
 const lastUserActivityMs = new Map<string, number>();
 
 /** Mark recent user-driven API activity (e.g. chat) so Chronos skips while they work. */
 export function touchChronosActivity(userId: string): void {
+  // Evict oldest 10% when at capacity to prevent unbounded growth.
+  if (lastUserActivityMs.size >= MAX_ACTIVITY_ENTRIES) {
+    const toDelete = Math.floor(MAX_ACTIVITY_ENTRIES * 0.1);
+    let deleted = 0;
+    for (const k of lastUserActivityMs.keys()) {
+      if (deleted >= toDelete) break;
+      lastUserActivityMs.delete(k);
+      deleted++;
+    }
+  }
   lastUserActivityMs.set(userId, Date.now());
 }
 

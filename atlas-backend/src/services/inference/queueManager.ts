@@ -8,6 +8,9 @@ import type { FastifyReply } from 'fastify';
  * Client flow:
  * 1. Generate `requestId` (UUID) and open GET `/v1/inference/queue-stream?requestId=...&userId=...`
  * 2. POST `/v1/chat` with the same `requestId` + `userId` so waiters receive `queued` → `running` → `completed`.
+ *
+ * Persistence: pending jobs are written to the `atlas_inference_queue` Supabase table so
+ * they survive server restarts. On startup call `loadPersistedJobs()`.
  */
 
 export type GpuQueueEvent =
@@ -24,6 +27,9 @@ type JobRecord = {
   resolve: (v: unknown) => void;
   reject: (e: unknown) => void;
 };
+
+/** Maximum number of pending jobs allowed in the queue. */
+const MAX_PENDING_JOBS = 500;
 
 const queueOrder: string[] = [];
 const jobs = new Map<string, JobRecord>();
@@ -75,10 +81,12 @@ async function pump(): Promise<void> {
     const result = await job.execute();
     job.resolve(result);
     emit(requestId, { type: 'completed' });
+    void markJobComplete(requestId).catch(() => {});
   } catch (e) {
     job.reject(e);
     const message = e instanceof Error ? e.message : String(e);
     emit(requestId, { type: 'failed', message });
+    void markJobComplete(requestId, message).catch(() => {});
   } finally {
     queueOrder.shift();
     jobs.delete(requestId);
@@ -88,13 +96,110 @@ async function pump(): Promise<void> {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Supabase persistence helpers (best-effort — failures do not block the queue)
+// ---------------------------------------------------------------------------
+
+function getSupabaseClient(): { from: (table: string) => Record<string, unknown> } | null {
+  const url = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) return null;
+  // Dynamic import would be ideal but we keep it sync-friendly.
+  // We use global fetch to avoid a hard dependency on @supabase/supabase-js.
+  return null; // See REST helpers below.
+}
+
+async function supabaseRest(
+  method: string,
+  path: string,
+  body?: unknown
+): Promise<{ ok: boolean; data?: unknown }> {
+  const url = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) return { ok: false };
+
+  try {
+    const res = await fetch(`${url}/rest/v1/${path}`, {
+      method,
+      headers: {
+        apikey: key,
+        Authorization: `Bearer ${key}`,
+        'Content-Type': 'application/json',
+        Prefer: method === 'POST' ? 'return=representation' : 'return=minimal',
+      },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    if (!res.ok) return { ok: false };
+    const data = method === 'GET' || method === 'POST' ? await res.json() : undefined;
+    return { ok: true, data };
+  } catch {
+    return { ok: false };
+  }
+}
+
+/** Write a new job to Supabase `atlas_inference_queue`. */
+export async function persistJob(requestId: string, userId: string, payload: unknown): Promise<void> {
+  await supabaseRest('POST', 'atlas_inference_queue', {
+    id: requestId,
+    payload: payload ?? {},
+    status: 'pending',
+  });
+}
+
+/** Mark a job as completed (or failed) in Supabase. */
+export async function markJobComplete(requestId: string, error?: string): Promise<void> {
+  const status = error ? 'failed' : 'completed';
+  const body: Record<string, unknown> = {
+    status,
+    completed_at: new Date().toISOString(),
+  };
+  if (error) body.error = error.slice(0, 4000);
+  await supabaseRest('PATCH', `atlas_inference_queue?id=eq.${requestId}`, body);
+}
+
+/**
+ * Load persisted pending jobs from Supabase on startup.
+ * Because the original `execute` closure is lost on restart, we mark recovered jobs
+ * as `failed` with reason `server_restart` so operators/UI can retry them.
+ */
+export async function loadPersistedJobs(): Promise<number> {
+  const result = await supabaseRest(
+    'GET',
+    'atlas_inference_queue?status=in.%28pending%2Cin_progress%29&order=created_at.asc'
+  );
+  if (!result.ok || !Array.isArray(result.data)) return 0;
+
+  let recovered = 0;
+  for (const row of result.data as Array<{ id: string }>) {
+    await supabaseRest('PATCH', `atlas_inference_queue?id=eq.${row.id}`, {
+      status: 'failed',
+      error: 'server_restart',
+      completed_at: new Date().toISOString(),
+    });
+    recovered++;
+  }
+  return recovered;
+}
+
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
+
 /**
  * Enqueue a single Ollama (or other GPU-bound) task. FIFO per process; strictly serial execution.
+ * Returns a rejected promise with `queue_full` if the queue exceeds MAX_PENDING_JOBS.
  */
 export function enqueueGpuTask<T>(userId: string, requestId: string, execute: () => Promise<T>): Promise<T> {
   if (jobs.has(requestId) || queueOrder.includes(requestId)) {
     return Promise.reject(new Error(`duplicate requestId: ${requestId}`));
   }
+
+  if (queueOrder.length >= MAX_PENDING_JOBS) {
+    return Promise.reject(new Error('queue_full'));
+  }
+
+  // Best-effort persist
+  void persistJob(requestId, userId, { requestId, userId }).catch(() => {});
 
   return new Promise<T>((resolve, reject) => {
     jobs.set(requestId, {
@@ -216,4 +321,6 @@ export const gpuQueueManager = {
   subscribe: subscribeGpuQueue,
   newRequestId: newGpuRequestId,
   pipeSse: pipeGpuQueueSse,
+  loadPersistedJobs,
+  MAX_PENDING_JOBS,
 };

@@ -26,11 +26,27 @@ import { startPolling } from './services/governance/degraded/degradedModeOracle.
 import { initAutoRecovery } from './services/governance/degraded/recoveryOrchestrator.js';
 import { registerExplanationRoutes } from './routes/explanationRoutes.js';
 import { registerRetentionRoutes } from './routes/retentionRoutes.js';
+import { loadPersistedJobs } from './services/inference/queueManager.js';
 
 initSqlite();
 await initSemanticVectorIndex();
 
-const app = Fastify({ logger: true });
+// Rehydrate inference queue — mark any stale pending/in_progress jobs from prior run.
+const recoveredJobs = await loadPersistedJobs().catch(() => 0);
+if (recoveredJobs > 0) {
+  // eslint-disable-next-line no-console -- logged before Fastify instance exists
+  console.log(`[atlas] recovered ${recoveredJobs} stale inference queue job(s) from Supabase`);
+}
+
+const app = Fastify({
+  logger: {
+    level: process.env.LOG_LEVEL ?? 'info',
+    transport: process.env.NODE_ENV === 'development'
+      ? { target: 'pino-pretty', options: { colorize: true } }
+      : undefined,
+    redact: ['req.headers.authorization', 'req.headers["x-api-key"]'],
+  },
+});
 
 app.setErrorHandler((err, request, reply) => {
   request.log.error(err);
@@ -105,18 +121,19 @@ app
   .then(() => {
     if (env.chronosEnabled) {
       startChronosScheduler();
-      console.log(
-        `[atlas] chronos enabled  tick=${env.chronosTickMs}ms idle>=${env.chronosIdleMs}ms filterUser=${env.chronosUserId ?? 'any'}`
+      app.log.info(
+        { chronosTickMs: env.chronosTickMs, chronosIdleMs: env.chronosIdleMs, filterUser: env.chronosUserId ?? 'any' },
+        'chronos enabled'
       );
     }
-    console.log(
-      `[atlas] ready  http://${env.host === '0.0.0.0' ? '127.0.0.1' : env.host}:${env.port}  ` +
-        `GET /health  POST /chat  POST /v1/chat  (provider: ollama @ ${env.ollamaBaseUrl})`
+    app.log.info(
+      { host: env.host, port: env.port, ollamaBaseUrl: env.ollamaBaseUrl },
+      'atlas ready  GET /health  POST /chat  POST /v1/chat'
     );
-    console.log(`[atlas] cors origins: ${env.corsOrigins.join(', ')}`);
+    app.log.info({ corsOrigins: env.corsOrigins }, 'cors origins');
     startPolling();
     initAutoRecovery();
-    console.log('[atlas] degraded mode oracle started (30s poll interval)');
+    app.log.info('degraded mode oracle started (30s poll interval)');
   })
   .catch((err: unknown) => {
     app.log.error(err);
