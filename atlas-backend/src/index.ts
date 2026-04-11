@@ -27,10 +27,42 @@ import { initAutoRecovery } from './services/governance/degraded/recoveryOrchest
 import { registerExplanationRoutes } from './routes/explanationRoutes.js';
 import { registerRetentionRoutes } from './routes/retentionRoutes.js';
 
+// ---------------------------------------------------------------------------
+// Validate critical env vars BEFORE anything else touches secrets or DB.
+// ---------------------------------------------------------------------------
+function validateRequiredEnv(): void {
+  const required = ['AUTH_SECRET', 'SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY'];
+  const missing = required.filter((k) => !process.env[k]);
+  if (missing.length > 0) {
+    throw new Error(
+      `[FATAL] Missing required environment variables: ${missing.join(', ')}. Server cannot start without them.`,
+    );
+  }
+}
+validateRequiredEnv();
+
 initSqlite();
 await initSemanticVectorIndex();
 
 const app = Fastify({ logger: true });
+
+// ---------------------------------------------------------------------------
+// Strip spoofable identity headers — identity must come from verified JWT only.
+// x-atlas-verified-email is legitimately set by a trusted reverse-proxy when
+// ATLAS_TRUST_ROUTING_EMAIL_HEADER=true, but if the request reaches the server
+// directly (no proxy) those headers must not be trusted from arbitrary clients.
+// ---------------------------------------------------------------------------
+app.addHook('onRequest', async (request) => {
+  delete request.headers['x-user-email'];
+  delete request.headers['x-forwarded-user'];
+  delete request.headers['x-user-id'];
+  delete request.headers['x-actor-id'];
+  // Only strip the routing header when there is no trusted gateway configured —
+  // when the flag is on, the gateway is responsible for sanitising this header.
+  if (!env.trustAtlasRoutingEmailHeader) {
+    delete request.headers['x-atlas-verified-email'];
+  }
+});
 
 app.setErrorHandler((err, request, reply) => {
   request.log.error(err);

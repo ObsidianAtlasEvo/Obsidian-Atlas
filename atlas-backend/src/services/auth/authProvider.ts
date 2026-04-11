@@ -26,7 +26,9 @@ export type AuthenticatedAtlasUser = {
 
 function jwtKeyMaterial(): Uint8Array {
   const secret = env.authSecret?.trim();
-  if (!secret) return new Uint8Array();
+  if (!secret) {
+    throw new Error('[FATAL] AUTH_SECRET / NEXTAUTH_SECRET is not set. Cannot sign or verify JWTs.');
+  }
   return new Uint8Array(createHash('sha256').update(secret).digest());
 }
 
@@ -123,8 +125,7 @@ export async function signAtlasSessionJwt(user: AuthenticatedAtlasUser): Promise
 }
 
 export async function verifyAtlasSessionJwt(token: string): Promise<AuthenticatedAtlasUser | null> {
-  const key = jwtKeyMaterial();
-  if (key.length === 0) return null;
+  const key = jwtKeyMaterial(); // throws if AUTH_SECRET missing
   try {
     const { payload } = await jwtVerify(token, key, { algorithms: ['HS256'] });
     const sub = typeof payload.sub === 'string' ? payload.sub : '';
