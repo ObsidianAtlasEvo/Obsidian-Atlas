@@ -26,6 +26,7 @@ import { startPolling } from './services/governance/degraded/degradedModeOracle.
 import { initAutoRecovery } from './services/governance/degraded/recoveryOrchestrator.js';
 import { registerExplanationRoutes } from './routes/explanationRoutes.js';
 import { registerRetentionRoutes } from './routes/retentionRoutes.js';
+import { registerGovernanceConsoleRoutes } from './routes/governanceConsoleRoutes.js';
 import { loadPersistedJobs } from './services/inference/queueManager.js';
 
 initSqlite();
@@ -96,6 +97,7 @@ registerMindMapRoutes(app);
 registerDegradedModeRoutes(app);
 registerExplanationRoutes(app);
 registerRetentionRoutes(app);
+registerGovernanceConsoleRoutes(app);
 
 // POST /chat forwards to the handler registered as POST /v1/chat (same body, no model call here).
 app.post('/chat', async (request: FastifyRequest, reply: FastifyReply) => {
