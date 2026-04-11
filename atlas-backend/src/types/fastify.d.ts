@@ -1,6 +1,12 @@
 import 'fastify';
+import type { SupabaseClient } from '@supabase/supabase-js';
 
 declare module 'fastify' {
+  interface FastifyInstance {
+    /** Service-role Supabase client when Evolution / Sovereign persistence is enabled. */
+    supabase?: SupabaseClient;
+  }
+
   interface FastifyRequest {
     /**
      * Populated by server-side auth after OAuth/JWT verification.

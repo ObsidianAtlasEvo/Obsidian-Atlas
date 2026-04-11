@@ -98,6 +98,22 @@ const envSchema = z.object({
   AUTH_SUCCESS_REDIRECT: z.string().optional(),
   /** Comma-separated browser origins allowed for CORS with credentials (overrides defaults). */
   CORS_ORIGINS: z.string().optional(),
+
+  /** Supabase (Evolution Engine + Sovereign Console persistence). Optional — omit to disable those routes. */
+  SUPABASE_URL: z.string().optional(),
+  SUPABASE_SERVICE_KEY: z.string().optional(),
+  /** Reserved for future JWT plugins; Sovereign console uses OAuth session cookies today. */
+  JWT_SECRET: z.string().optional(),
+  /** Groq model for AtlasOverseer evaluation. */
+  OVERSEER_MODEL: z.string().optional(),
+  PM2_LOG_PATH: z.string().optional(),
+  OLLAMA_HEALTH_TIMEOUT_MS: z.coerce.number().int().positive().optional(),
+  OLLAMA_HEALTH_CACHE_TTL_MS: z.coerce.number().int().positive().optional(),
+  /** Opt-in Phase 3 CSRF / rate-limit middleware (can break SPA clients until X-Atlas-Request is wired). */
+  PHASE3_SECURITY: z
+    .string()
+    .optional()
+    .transform((v) => v === 'true' || v === '1'),
 });
 
 const raw = envSchema.parse({
@@ -156,6 +172,14 @@ const raw = envSchema.parse({
   AUTH_URL: process.env.AUTH_URL,
   AUTH_SUCCESS_REDIRECT: process.env.AUTH_SUCCESS_REDIRECT,
   CORS_ORIGINS: process.env.CORS_ORIGINS,
+  SUPABASE_URL: process.env.SUPABASE_URL,
+  SUPABASE_SERVICE_KEY: process.env.SUPABASE_SERVICE_KEY,
+  JWT_SECRET: process.env.JWT_SECRET,
+  OVERSEER_MODEL: process.env.OVERSEER_MODEL,
+  PM2_LOG_PATH: process.env.PM2_LOG_PATH,
+  OLLAMA_HEALTH_TIMEOUT_MS: process.env.OLLAMA_HEALTH_TIMEOUT_MS,
+  OLLAMA_HEALTH_CACHE_TTL_MS: process.env.OLLAMA_HEALTH_CACHE_TTL_MS,
+  PHASE3_SECURITY: process.env.PHASE3_SECURITY,
 });
 
 const sqlitePath = path.resolve(process.cwd(), raw.SQLITE_PATH);
@@ -254,6 +278,20 @@ export const env = {
   nextAuthUrl: raw.NEXTAUTH_URL?.trim() || raw.AUTH_URL?.trim() || undefined,
   authSuccessRedirect: raw.AUTH_SUCCESS_REDIRECT?.trim() || undefined,
   corsOrigins: parseCorsOrigins(raw.CORS_ORIGINS),
+
+  supabaseUrl: raw.SUPABASE_URL?.trim() || undefined,
+  supabaseServiceKey: raw.SUPABASE_SERVICE_KEY?.trim() || undefined,
+  jwtSecret: raw.JWT_SECRET?.trim() || undefined,
+  overseerModel: raw.OVERSEER_MODEL?.trim() || 'llama-3.3-70b-versatile',
+  pm2LogPath: raw.PM2_LOG_PATH?.trim() || undefined,
+  ollamaHealthTimeoutMs: raw.OLLAMA_HEALTH_TIMEOUT_MS ?? 2000,
+  ollamaHealthCacheTtlMs: raw.OLLAMA_HEALTH_CACHE_TTL_MS ?? 60_000,
+
+  /** Evolution + Overseer API when Supabase is configured. */
+  evolutionEnabled:
+    Boolean(raw.SUPABASE_URL?.trim()) && Boolean(raw.SUPABASE_SERVICE_KEY?.trim()),
+
+  phase3SecurityEnabled: raw.PHASE3_SECURITY ?? false,
 } as const;
 
 export type Env = typeof env;

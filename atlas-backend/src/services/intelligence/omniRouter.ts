@@ -3,6 +3,8 @@ import { env } from '../../config/env.js';
 import type { PolicyProfile } from '../../types/atlas.js';
 import { buildPrimedChatSystemPrompt } from './atlasIdentity.js';
 import { isSovereignOwnerEmail, LocalOllamaAdapter } from './router.js';
+import { assembleLayeredSystemPrompt } from '../../governance/chatPolicyAssembly.js';
+import type { UserEvolutionProfile } from '../../types/evolutionTypes.js';
 import { retrieveRelevantMemories } from '../memory/memoryVault.js';
 import {
   inferSovereignResponseMode,
@@ -259,6 +261,7 @@ export async function executeLocalOllama(input: {
   signal?: AbortSignal;
   timeoutMs?: number;
   routing?: OmniRoutingResolution;
+  evolutionProfile?: UserEvolutionProfile | null;
 }): Promise<StreamingOmniResult> {
   const adapter = new LocalOllamaAdapter();
   const rawLast =
@@ -288,7 +291,13 @@ export async function executeLocalOllama(input: {
     }
   }
 
-  const systemContent = `${primedSystem}\n\n${appendix}${vaultBlock}`;
+  const basePack = `${primedSystem}\n\n${appendix}${vaultBlock}`;
+  const systemContent = assembleLayeredSystemPrompt({
+    userId: input.userId,
+    baseSystemPrompt: basePack,
+    sessionMode: routing.mode,
+    evolutionProfile: input.evolutionProfile ?? null,
+  });
 
   const turns = input.messages
     .filter(
@@ -312,7 +321,7 @@ export async function executeLocalOllama(input: {
     },
     (chunk) => {
       if (chunk.textDelta) input.onDelta(chunk.textDelta);
-    }
+    },
   );
 
   return { fullText: out.text, surface: 'god_mode_local', model: out.model };

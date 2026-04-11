@@ -4,6 +4,8 @@ import { randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { env } from '../config/env.js';
+import { EvolutionRepository } from '../db/evolutionRepository.js';
+import { getFailureModeDoctrine } from '../resilience/failureModeDoctrine.js';
 import { touchChronosActivity } from '../services/autonomy/chronos.js';
 import { triggerEvolutionAfterOmniResponse } from '../services/autonomy/evolutionTrigger.js';
 import { attachAtlasSession } from '../services/auth/authProvider.js';
@@ -66,6 +68,20 @@ function lastUserContent(messages: { role: string; content: string }[]): string 
     if (messages[i]!.role === 'user') return messages[i]!.content;
   }
   return '';
+}
+
+async function loadEvolutionProfileForOmni(userId: string) {
+  if (!env.evolutionEnabled || !env.supabaseUrl || !env.supabaseServiceKey) {
+    return null;
+  }
+  const doctrine = getFailureModeDoctrine();
+  const repo = new EvolutionRepository(env.supabaseUrl, env.supabaseServiceKey);
+  return doctrine.withFallback(
+    'supabase',
+    () => repo.getProfile(userId),
+    async () => null,
+    { userId },
+  );
 }
 
 function sseWrite(raw: { write: (s: string) => boolean }, event: string, data: unknown): void {
@@ -150,6 +166,7 @@ export function registerOmniStreamRoutes(app: FastifyInstance): void {
         .join('\n');
 
       const policyProfile = getPolicyProfile(userId);
+      const evolutionProfile = await loadEvolutionProfileForOmni(userId);
 
       let fullText = '';
       const onDelta = (t: string) => {
@@ -183,6 +200,7 @@ export function registerOmniStreamRoutes(app: FastifyInstance): void {
             messages,
             onDelta,
             routing,
+            evolutionProfile,
             timeoutMs:
               maximumClarity === true
                 ? Math.max(env.omniLocalTimeoutMs, 300_000)

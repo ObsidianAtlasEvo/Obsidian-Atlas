@@ -1,4 +1,5 @@
 import { env } from '../../config/env.js';
+import { getFailureModeDoctrine } from '../../resilience/failureModeDoctrine.js';
 import type { GenerateInput, GenerateOutput, ModelProvider } from '../model/modelProvider.js';
 import { createOllamaModelProvider } from '../model/ollamaClient.js';
 import type { IntelligenceSurface, RoutedGenerateInput, StreamChunk } from './types.js';
@@ -387,6 +388,7 @@ export class IntelligenceRouter {
    * Non-owner → cloud.
    */
   async generateStructured(input: RoutedGenerateInput): Promise<GenerateOutput> {
+    const doctrine = getFailureModeDoctrine();
     if (isSovereignOwnerEmail(input.userEmail) && (await isLocalOllamaReachable(input.signal))) {
       try {
         return await this.local.generateStructured(input);
@@ -394,7 +396,16 @@ export class IntelligenceRouter {
         ollamaReachableCache = { at: Date.now(), ok: false };
       }
     }
-    return this.cloud.generateStructured(input);
+    return doctrine.withFallback(
+      'groq_api',
+      () => this.cloud.generateStructured(input),
+      async () => ({
+        text:
+          'Atlas cloud inference is temporarily unavailable. Please try again in a few minutes.',
+        model: 'atlas_cloud_fallback',
+      }),
+      { userId: input.userId },
+    );
   }
 
   async generateStreaming(
