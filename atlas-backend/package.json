@@ -4,19 +4,35 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/server.ts",
+    "dev": "tsx watch src/index.ts",
+    "dev:lite": "tsx watch src/server.ts",
     "build": "tsc",
-    "start": "node dist/server.js"
+    "start": "node dist/index.js",
+    "start:lite": "node dist/server.js",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "fastify": "^5.0.0",
-    "@fastify/cors": "^10.0.0",
-    "@fastify/cookie": "^10.0.0",
-    "undici": "^6.0.0"
+    "@fastify/cookie": "^11.0.2",
+    "@fastify/cors": "^11.0.0",
+    "@supabase/supabase-js": "^2.49.1",
+    "@google/genai": "^1.48.0",
+    "better-sqlite3": "^11.8.1",
+    "dotenv": "^16.4.5",
+    "fastify": "^5.2.1",
+    "fastify-plugin": "^5.0.1",
+    "jsonwebtoken": "^9.0.2",
+    "jose": "^6.0.0",
+    "uuid": "^11.1.0",
+    "undici": "^6.0.0",
+    "vectra": "^0.14.0",
+    "zod": "^3.24.2"
   },
   "devDependencies": {
-    "typescript": "^5.5.0",
-    "tsx": "^4.16.0",
-    "@types/node": "^22.0.0"
+    "@types/jsonwebtoken": "^9.0.9",
+    "@types/uuid": "^10.0.0",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^22.14.0",
+    "tsx": "^4.19.3",
+    "typescript": "~5.8.2"
   }
 }
