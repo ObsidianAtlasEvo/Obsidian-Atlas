@@ -37,6 +37,22 @@ async function evolutionAdaptationRateLimit(request: FastifyRequest, reply: Fast
   }
 }
 
+async function evolutionRebuildRateLimit(request: FastifyRequest, reply: FastifyReply): Promise<void> {
+  try {
+    await evolutionRebuildLimiter.consume(request.ip);
+  } catch {
+    return reply.status(429).send({ error: 'Too many requests' });
+  }
+}
+
+async function evolutionDeleteRateLimit(request: FastifyRequest, reply: FastifyReply): Promise<void> {
+  try {
+    await evolutionDeleteLimiter.consume(request.ip);
+  } catch {
+    return reply.status(429).send({ error: 'Too many requests' });
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Plugin options
 // ---------------------------------------------------------------------------
@@ -217,13 +233,7 @@ const evolutionRoutes: FastifyPluginAsync<EvolutionRoutesOptions> = async (
         403: { type: 'object', properties: { error: { type: 'string' } } },
       },
     },
-    preHandler: async (request, reply) => {
-      try {
-        await evolutionRebuildLimiter.consume(request.ip);
-      } catch {
-        return reply.status(429).send({ error: 'Too many requests' });
-      }
-    },
+    preHandler: evolutionRebuildRateLimit,
     handler: async (req: FastifyRequest<{ Params: UserIdParams; Querystring: AuthQuery }>, reply: FastifyReply) => {
       if (!authorised(req.params.userId, req)) {
         return reply.status(403).send({ error: 'Forbidden: userId mismatch' });
@@ -270,13 +280,7 @@ const evolutionRoutes: FastifyPluginAsync<EvolutionRoutesOptions> = async (
         403: { type: 'object', properties: { error: { type: 'string' } } },
       },
     },
-    preHandler: async (request, reply) => {
-      try {
-        await evolutionDeleteLimiter.consume(request.ip);
-      } catch {
-        return reply.status(429).send({ error: 'Too many requests' });
-      }
-    },
+    preHandler: evolutionDeleteRateLimit,
     handler: async (req: FastifyRequest<{ Params: UserIdParams; Querystring: AuthQuery }>, reply: FastifyReply) => {
       if (!authorised(req.params.userId, req)) {
         return reply.status(403).send({ error: 'Forbidden: userId mismatch' });
