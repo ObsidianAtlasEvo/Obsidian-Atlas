@@ -1035,6 +1035,18 @@ export const useAtlasStore = create<AtlasStore>()(
       activeMode: state.activeMode,
       activePosture: state.activePosture,
       uiConfig: state.uiConfig,
+      resonance: {
+        ...state.resonance,
+        graph: {
+          ...state.resonance.graph,
+          nodes: state.resonance.graph.nodes.slice(-200),
+          edges: state.resonance.graph.edges.slice(-500),
+        },
+      },
+      constitution: state.constitution,
+      memoryArchitecture: state.memoryArchitecture,
+      mirrorforge: state.mirrorforge,
+      realityEngine: state.realityEngine,
     } as unknown as AtlasStore),
     // On hydration: mark any in-flight requests as interrupted
     onRehydrateStorage: () => {

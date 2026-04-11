@@ -282,6 +282,27 @@ export default function AtlasChamber() {
   const thinkingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const request = useChatRequestState();
 
+  // Restore conversation history from persisted store on mount
+  useEffect(() => {
+    const activeConv = store.conversations.find(
+      (c) => c.id === store.activeConversationId
+    );
+    if (activeConv && activeConv.messages && activeConv.messages.length > 0) {
+      setMessages(
+        activeConv.messages.map((m) => ({
+          id: m.id,
+          role: m.role as 'user' | 'assistant',
+          content: m.content,
+          timestamp: m.timestamp,
+          requestStatus: (m.requestStatus ?? 'completed') as ChatRequestStatus,
+          error: m.error,
+          tokens: m.tokens,
+          durationMs: m.durationMs,
+        }))
+      );
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Scroll to bottom on new messages
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -519,6 +540,24 @@ export default function AtlasChamber() {
             },
           };
           store.addQuestion(question);
+
+          // Wire resonance observations from completed responses
+          if (store.resonance?.isLearning !== false) {
+            store.addResonanceObservation({
+              timestamp: nowISO(),
+              signal: fullText.slice(0, 200),
+              dimension: 'inquiry',
+              strength: 0.5,
+              context: text.slice(0, 100),
+              sessionId: convId ?? undefined,
+            });
+
+            store.addResonanceGraphNode({
+              label: text.slice(0, 40),
+              type: 'concept',
+              weight: 1,
+            });
+          }
         },
         onError: (err: OllamaError) => {
           if (persistTimerRef.current) {
@@ -760,6 +799,93 @@ export default function AtlasChamber() {
                 </button>
               ))}
             </div>
+
+            {/* Recent sessions */}
+            {store.conversations.length > 0 && (
+              <div style={{ marginTop: 32, width: '100%', maxWidth: 560 }}>
+                <p
+                  style={{
+                    fontSize: '0.6rem',
+                    color: 'rgba(226,232,240,0.2)',
+                    letterSpacing: '0.12em',
+                    textTransform: 'uppercase',
+                    fontWeight: 600,
+                    marginBottom: 10,
+                  }}
+                >
+                  Recent Sessions
+                </p>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {[...store.conversations]
+                    .sort(
+                      (a, b) =>
+                        new Date(b.updatedAt ?? b.createdAt).getTime() -
+                        new Date(a.updatedAt ?? a.createdAt).getTime(),
+                    )
+                    .slice(0, 5)
+                    .map((conv) => (
+                      <button
+                        key={conv.id}
+                        onClick={() => {
+                          store.setActiveConversationId(conv.id);
+                          setMessages(
+                            conv.messages.map((m) => ({
+                              id: m.id,
+                              role: m.role as 'user' | 'assistant',
+                              content: m.content,
+                              timestamp: m.timestamp,
+                              requestStatus: (m.requestStatus ?? 'completed') as ChatRequestStatus,
+                              error: m.error,
+                              tokens: m.tokens,
+                              durationMs: m.durationMs,
+                            })),
+                          );
+                        }}
+                        style={{
+                          width: '100%',
+                          textAlign: 'left',
+                          padding: '10px 14px',
+                          borderRadius: 6,
+                          background: 'rgba(15,10,30,0.5)',
+                          border: '1px solid rgba(88,28,135,0.15)',
+                          cursor: 'pointer',
+                          transition: 'all 140ms ease',
+                        }}
+                        onMouseEnter={(e) => {
+                          (e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(201,162,39,0.25)';
+                          (e.currentTarget as HTMLButtonElement).style.background = 'rgba(88,28,135,0.08)';
+                        }}
+                        onMouseLeave={(e) => {
+                          (e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(88,28,135,0.15)';
+                          (e.currentTarget as HTMLButtonElement).style.background = 'rgba(15,10,30,0.5)';
+                        }}
+                      >
+                        <p
+                          style={{
+                            fontSize: '0.8rem',
+                            color: 'rgba(226,232,240,0.55)',
+                            margin: 0,
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          {conv.messages[0]?.content?.slice(0, 80) ?? 'Untitled session'}
+                        </p>
+                        <p
+                          style={{
+                            fontSize: '0.6rem',
+                            color: 'rgba(226,232,240,0.2)',
+                            margin: '4px 0 0',
+                          }}
+                        >
+                          {conv.messages.length} messages
+                        </p>
+                      </button>
+                    ))}
+                </div>
+              </div>
+            )}
           </div>
         ) : (
           <>
