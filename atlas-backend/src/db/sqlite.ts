@@ -775,6 +775,75 @@ CREATE TABLE IF NOT EXISTS mind_map_snapshots (
 CREATE INDEX IF NOT EXISTS idx_mm_snap_user ON mind_map_snapshots(user_id, created_at DESC);
 `;
 
+/** Phase 4 §5 — Data Retention & Deletion tables. */
+const RETENTION_TABLES = `
+CREATE TABLE IF NOT EXISTS atlas_sovereign_audit (
+  id TEXT PRIMARY KEY NOT NULL,
+  user_id TEXT,
+  actor_id TEXT NOT NULL,
+  event_type TEXT NOT NULL,
+  table_name TEXT,
+  row_id TEXT,
+  detail TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_sovereign_audit_time ON atlas_sovereign_audit(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_sovereign_audit_type ON atlas_sovereign_audit(event_type, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS atlas_schema_migrations (
+  id TEXT PRIMARY KEY NOT NULL,
+  version TEXT NOT NULL,
+  description TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'completed',
+  applied_at TEXT NOT NULL,
+  completed_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_schema_mig_status ON atlas_schema_migrations(status, applied_at DESC);
+
+CREATE TABLE IF NOT EXISTS atlas_evolution_signals (
+  id TEXT PRIMARY KEY NOT NULL,
+  user_id TEXT NOT NULL,
+  signal_type TEXT NOT NULL,
+  payload_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_evolution_sig_time ON atlas_evolution_signals(created_at DESC);
+
+CREATE TABLE IF NOT EXISTS atlas_legal_holds (
+  id TEXT PRIMARY KEY NOT NULL,
+  table_name TEXT NOT NULL,
+  row_id TEXT,
+  user_id TEXT,
+  reason TEXT NOT NULL,
+  placed_by TEXT NOT NULL,
+  placed_at TEXT NOT NULL,
+  expires_at TEXT,
+  last_confirmed_at TEXT,
+  released_at TEXT,
+  released_by TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_legal_holds_active ON atlas_legal_holds(table_name, row_id) WHERE released_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS atlas_erasure_requests (
+  id TEXT PRIMARY KEY NOT NULL,
+  user_id TEXT NOT NULL,
+  email TEXT NOT NULL,
+  reason TEXT NOT NULL DEFAULT 'USER_REQUEST',
+  status TEXT NOT NULL DEFAULT 'PENDING',
+  requested_at TEXT NOT NULL,
+  completed_at TEXT,
+  certificate_json TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_erasure_status ON atlas_erasure_requests(status);
+
+CREATE TABLE IF NOT EXISTS atlas_deletion_runs (
+  id TEXT PRIMARY KEY NOT NULL,
+  run_date TEXT NOT NULL UNIQUE,
+  report_json TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+`;
+
 let _db: Database.Database | null = null;
 
 /**
@@ -795,6 +864,7 @@ export function initSqlite(): Database.Database {
   database.exec(SOVEREIGNTY_LAYER_V4);
   database.exec(SOVEREIGNTY_LAYER_V5);
   database.exec(SOVEREIGNTY_LAYER_V6);
+  database.exec(RETENTION_TABLES);
   migratePolicyProfileColumns(database);
   migrateSectionVIIIContinuity(database);
   migrateArchivedAtIndexes(database);

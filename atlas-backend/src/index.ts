@@ -21,6 +21,11 @@ import { registerIntelligenceChambersRoutes } from './routes/intelligenceChamber
 import { registerMindMapRoutes } from './routes/mindMapRoutes.js';
 import { registerSovereigntyRoutes } from './routes/sovereigntyRoutes.js';
 import { registerAuthRoutes } from './routes/authRoutes.js';
+import { registerDegradedModeRoutes } from './routes/degradedModeRoutes.js';
+import { startPolling } from './services/governance/degraded/degradedModeOracle.js';
+import { initAutoRecovery } from './services/governance/degraded/recoveryOrchestrator.js';
+import { registerExplanationRoutes } from './routes/explanationRoutes.js';
+import { registerRetentionRoutes } from './routes/retentionRoutes.js';
 
 initSqlite();
 await initSemanticVectorIndex();
@@ -72,6 +77,9 @@ registerLegacyRoutes(app);
 registerSovereignOverviewRoutes(app);
 registerIntelligenceChambersRoutes(app);
 registerMindMapRoutes(app);
+registerDegradedModeRoutes(app);
+registerExplanationRoutes(app);
+registerRetentionRoutes(app);
 
 // POST /chat forwards to the handler registered as POST /v1/chat (same body, no model call here).
 app.post('/chat', async (request: FastifyRequest, reply: FastifyReply) => {
@@ -106,6 +114,9 @@ app
         `GET /health  POST /chat  POST /v1/chat  (provider: ollama @ ${env.ollamaBaseUrl})`
     );
     console.log(`[atlas] cors origins: ${env.corsOrigins.join(', ')}`);
+    startPolling();
+    initAutoRecovery();
+    console.log('[atlas] degraded mode oracle started (30s poll interval)');
   })
   .catch((err: unknown) => {
     app.log.error(err);
