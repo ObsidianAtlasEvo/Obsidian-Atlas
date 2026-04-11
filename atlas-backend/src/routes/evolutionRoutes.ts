@@ -17,6 +17,9 @@
  * query param) must match the :userId path param. In production this should be
  * replaced with proper JWT / session verification.
  *
+ * Rate limits (CodeQL recognizes express-rate-limit via @fastify/middie; nested fp()
+ * preserves the outer fastify-plugin context for decorators).
+ *
  * TODO (production): Replace the userId cookie / query-param auth check with
  * a verified JWT claim extracted by a Fastify authentication plugin (e.g.
  * @fastify/jwt or a custom preHandler). The current check prevents the most
@@ -24,34 +27,11 @@
  */
 
 import type { FastifyInstance, FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
+import middie from '@fastify/middie';
+import rateLimit from 'express-rate-limit';
 import fp from 'fastify-plugin';
-import { RateLimiterMemory } from 'rate-limiter-flexible';
 import { EvolutionEngine } from '../services/evolutionEngine.js';
 import { EvolutionRepository } from '../db/evolutionRepository.js';
-
-async function evolutionAdaptationRateLimit(request: FastifyRequest, reply: FastifyReply): Promise<void> {
-  try {
-    await evolutionAdaptationLimiter.consume(request.ip);
-  } catch {
-    return reply.status(429).send({ error: 'Too many requests' });
-  }
-}
-
-async function evolutionRebuildRateLimit(request: FastifyRequest, reply: FastifyReply): Promise<void> {
-  try {
-    await evolutionRebuildLimiter.consume(request.ip);
-  } catch {
-    return reply.status(429).send({ error: 'Too many requests' });
-  }
-}
-
-async function evolutionDeleteRateLimit(request: FastifyRequest, reply: FastifyReply): Promise<void> {
-  try {
-    await evolutionDeleteLimiter.consume(request.ip);
-  } catch {
-    return reply.status(429).send({ error: 'Too many requests' });
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Plugin options
@@ -86,14 +66,6 @@ interface AuthQuery {
   userId?: string;
 }
 
-// CodeQL: consume() must run in a separate preHandler registered via fastify.route({ preHandler, handler })
-// — shorthand fastify.get/post only models the last handler, so same-function consume does not guard the route.
-const evolutionProfileLimiter = new RateLimiterMemory({ points: 100, duration: 60 });
-const evolutionStatsLimiter = new RateLimiterMemory({ points: 60, duration: 60 });
-const evolutionRebuildLimiter = new RateLimiterMemory({ points: 5, duration: 60 });
-const evolutionDeleteLimiter = new RateLimiterMemory({ points: 10, duration: 60 });
-const evolutionAdaptationLimiter = new RateLimiterMemory({ points: 60, duration: 60 });
-
 // ---------------------------------------------------------------------------
 // Route plugin
 // ---------------------------------------------------------------------------
@@ -106,237 +78,288 @@ const evolutionRoutes: FastifyPluginAsync<EvolutionRoutesOptions> = async (
 
   // ─────────────────────────────────────────────────────────────────────────
   // GET /api/evolution/profile/:userId
-  // Returns the full UserEvolutionProfile for debugging and admin tooling.
   // ─────────────────────────────────────────────────────────────────────────
 
-  fastify.route<{ Params: UserIdParams; Querystring: AuthQuery }>({
-    method: 'GET',
-    url: '/profile/:userId',
-    schema: {
-      params: {
-        type: 'object',
-        required: ['userId'],
-        properties: { userId: { type: 'string', minLength: 1 } },
-      },
-      querystring: {
-        type: 'object',
-        properties: { userId: { type: 'string' } },
-      },
-      response: {
-        200: { type: 'object', additionalProperties: true },
-        403: { type: 'object', properties: { error: { type: 'string' } } },
-        404: { type: 'object', properties: { error: { type: 'string' } } },
-      },
-    },
-    preHandler: async (request, reply) => {
-      try {
-        await evolutionProfileLimiter.consume(request.ip);
-      } catch {
-        return reply.status(429).send({ error: 'Too many requests' });
-      }
-    },
-    handler: async (req: FastifyRequest<{ Params: UserIdParams; Querystring: AuthQuery }>, reply: FastifyReply) => {
-      if (!authorised(req.params.userId, req)) {
-        return reply.status(403).send({ error: 'Forbidden: userId mismatch' });
-      }
+  await fastify.register(
+    fp(
+      async (r: FastifyInstance): Promise<void> => {
+        await r.register(middie);
+        r.use(
+          rateLimit({
+            windowMs: 60_000,
+            limit: 100,
+            validate: { trustProxy: false },
+          }),
+        );
+        r.route<{ Params: UserIdParams; Querystring: AuthQuery }>({
+          method: 'GET',
+          url: '/',
+          schema: {
+            params: {
+              type: 'object',
+              required: ['userId'],
+              properties: { userId: { type: 'string', minLength: 1 } },
+            },
+            querystring: {
+              type: 'object',
+              properties: { userId: { type: 'string' } },
+            },
+            response: {
+              200: { type: 'object', additionalProperties: true },
+              403: { type: 'object', properties: { error: { type: 'string' } } },
+              404: { type: 'object', properties: { error: { type: 'string' } } },
+            },
+          },
+          handler: async (req: FastifyRequest<{ Params: UserIdParams; Querystring: AuthQuery }>, reply: FastifyReply) => {
+            if (!authorised(req.params.userId, req)) {
+              return reply.status(403).send({ error: 'Forbidden: userId mismatch' });
+            }
 
-      const profile = await repository.getProfile(req.params.userId);
+            const profile = await repository.getProfile(req.params.userId);
 
-      if (!profile) {
-        return reply.status(404).send({ error: 'No evolution profile found for this user' });
-      }
+            if (!profile) {
+              return reply.status(404).send({ error: 'No evolution profile found for this user' });
+            }
 
-      return reply.status(200).send(profile);
-    },
-  });
+            return reply.status(200).send(profile);
+          },
+        });
+      },
+      { name: 'evolution-profile-get-rate-limit', fastify: '>=5.0.0' },
+    ),
+    { prefix: '/profile/:userId' },
+  );
 
   // ─────────────────────────────────────────────────────────────────────────
   // GET /api/evolution/stats/:userId
-  // Lightweight endpoint — returns only version, confidence, totalSignals.
   // ─────────────────────────────────────────────────────────────────────────
 
-  fastify.route<{ Params: UserIdParams; Querystring: AuthQuery }>({
-    method: 'GET',
-    url: '/stats/:userId',
-    schema: {
-      params: {
-        type: 'object',
-        required: ['userId'],
-        properties: { userId: { type: 'string', minLength: 1 } },
-      },
-      querystring: {
-        type: 'object',
-        properties: { userId: { type: 'string' } },
-      },
-      response: {
-        200: {
-          type: 'object',
-          properties: {
-            version:      { type: 'integer' },
-            confidence:   { type: 'number' },
-            totalSignals: { type: 'integer' },
+  await fastify.register(
+    fp(
+      async (r: FastifyInstance): Promise<void> => {
+        await r.register(middie);
+        r.use(
+          rateLimit({
+            windowMs: 60_000,
+            limit: 60,
+            validate: { trustProxy: false },
+          }),
+        );
+        r.route<{ Params: UserIdParams; Querystring: AuthQuery }>({
+          method: 'GET',
+          url: '/',
+          schema: {
+            params: {
+              type: 'object',
+              required: ['userId'],
+              properties: { userId: { type: 'string', minLength: 1 } },
+            },
+            querystring: {
+              type: 'object',
+              properties: { userId: { type: 'string' } },
+            },
+            response: {
+              200: {
+                type: 'object',
+                properties: {
+                  version:      { type: 'integer' },
+                  confidence:   { type: 'number' },
+                  totalSignals: { type: 'integer' },
+                },
+              },
+              403: { type: 'object', properties: { error: { type: 'string' } } },
+              404: { type: 'object', properties: { error: { type: 'string' } } },
+            },
           },
-        },
-        403: { type: 'object', properties: { error: { type: 'string' } } },
-        404: { type: 'object', properties: { error: { type: 'string' } } },
+          handler: async (req: FastifyRequest<{ Params: UserIdParams; Querystring: AuthQuery }>, reply: FastifyReply) => {
+            if (!authorised(req.params.userId, req)) {
+              return reply.status(403).send({ error: 'Forbidden: userId mismatch' });
+            }
+
+            const stats = await repository.getProfileStats(req.params.userId);
+
+            if (!stats) {
+              return reply.status(404).send({ error: 'No evolution profile found for this user' });
+            }
+
+            return reply.status(200).send(stats);
+          },
+        });
       },
-    },
-    preHandler: async (request, reply) => {
-      try {
-        await evolutionStatsLimiter.consume(request.ip);
-      } catch {
-        return reply.status(429).send({ error: 'Too many requests' });
-      }
-    },
-    handler: async (req: FastifyRequest<{ Params: UserIdParams; Querystring: AuthQuery }>, reply: FastifyReply) => {
-      if (!authorised(req.params.userId, req)) {
-        return reply.status(403).send({ error: 'Forbidden: userId mismatch' });
-      }
-
-      const stats = await repository.getProfileStats(req.params.userId);
-
-      if (!stats) {
-        return reply.status(404).send({ error: 'No evolution profile found for this user' });
-      }
-
-      return reply.status(200).send(stats);
-    },
-  });
+      { name: 'evolution-stats-rate-limit', fastify: '>=5.0.0' },
+    ),
+    { prefix: '/stats/:userId' },
+  );
 
   // ─────────────────────────────────────────────────────────────────────────
   // POST /api/evolution/rebuild/:userId
-  // Forces a full profile rebuild from scratch (clears cache, reprocesses all
-  // stored signals). Useful for admin overrides and integration tests.
   // ─────────────────────────────────────────────────────────────────────────
 
-  fastify.route<{ Params: UserIdParams; Querystring: AuthQuery }>({
-    method: 'POST',
-    url: '/rebuild/:userId',
-    schema: {
-      params: {
-        type: 'object',
-        required: ['userId'],
-        properties: { userId: { type: 'string', minLength: 1 } },
-      },
-      querystring: {
-        type: 'object',
-        properties: { userId: { type: 'string' } },
-      },
-      response: {
-        200: {
-          type: 'object',
-          properties: {
-            success: { type: 'boolean' },
-            message: { type: 'string' },
+  await fastify.register(
+    fp(
+      async (r: FastifyInstance): Promise<void> => {
+        await r.register(middie);
+        r.use(
+          rateLimit({
+            windowMs: 60_000,
+            limit: 5,
+            validate: { trustProxy: false },
+          }),
+        );
+        r.route<{ Params: UserIdParams; Querystring: AuthQuery }>({
+          method: 'POST',
+          url: '/',
+          schema: {
+            params: {
+              type: 'object',
+              required: ['userId'],
+              properties: { userId: { type: 'string', minLength: 1 } },
+            },
+            querystring: {
+              type: 'object',
+              properties: { userId: { type: 'string' } },
+            },
+            response: {
+              200: {
+                type: 'object',
+                properties: {
+                  success: { type: 'boolean' },
+                  message: { type: 'string' },
+                },
+              },
+              403: { type: 'object', properties: { error: { type: 'string' } } },
+            },
           },
-        },
-        403: { type: 'object', properties: { error: { type: 'string' } } },
+          handler: async (req: FastifyRequest<{ Params: UserIdParams; Querystring: AuthQuery }>, reply: FastifyReply) => {
+            if (!authorised(req.params.userId, req)) {
+              return reply.status(403).send({ error: 'Forbidden: userId mismatch' });
+            }
+
+            await engine.forceRebuild(req.params.userId);
+
+            return reply.status(200).send({
+              success: true,
+              message: `Evolution profile rebuilt for user ${req.params.userId}`,
+            });
+          },
+        });
       },
-    },
-    preHandler: evolutionRebuildRateLimit,
-    handler: async (req: FastifyRequest<{ Params: UserIdParams; Querystring: AuthQuery }>, reply: FastifyReply) => {
-      if (!authorised(req.params.userId, req)) {
-        return reply.status(403).send({ error: 'Forbidden: userId mismatch' });
-      }
-
-      // forceRebuild is async but we await it so the caller gets a definitive
-      // success/failure signal (unlike the fire-and-forget onInteraction path).
-      await engine.forceRebuild(req.params.userId);
-
-      return reply.status(200).send({
-        success: true,
-        message: `Evolution profile rebuilt for user ${req.params.userId}`,
-      });
-    },
-  });
+      { name: 'evolution-rebuild-rate-limit', fastify: '>=5.0.0' },
+    ),
+    { prefix: '/rebuild/:userId' },
+  );
 
   // ─────────────────────────────────────────────────────────────────────────
   // DELETE /api/evolution/profile/:userId
-  // Permanently deletes all evolution data for a user.
-  // Satisfies GDPR Article 17 "right to erasure".
   // ─────────────────────────────────────────────────────────────────────────
 
-  fastify.route<{ Params: UserIdParams; Querystring: AuthQuery }>({
-    method: 'DELETE',
-    url: '/profile/:userId',
-    schema: {
-      params: {
-        type: 'object',
-        required: ['userId'],
-        properties: { userId: { type: 'string', minLength: 1 } },
-      },
-      querystring: {
-        type: 'object',
-        properties: { userId: { type: 'string' } },
-      },
-      response: {
-        200: {
-          type: 'object',
-          properties: {
-            success: { type: 'boolean' },
-            message: { type: 'string' },
+  await fastify.register(
+    fp(
+      async (r: FastifyInstance): Promise<void> => {
+        await r.register(middie);
+        r.use(
+          rateLimit({
+            windowMs: 60_000,
+            limit: 10,
+            validate: { trustProxy: false },
+          }),
+        );
+        r.route<{ Params: UserIdParams; Querystring: AuthQuery }>({
+          method: 'DELETE',
+          url: '/',
+          schema: {
+            params: {
+              type: 'object',
+              required: ['userId'],
+              properties: { userId: { type: 'string', minLength: 1 } },
+            },
+            querystring: {
+              type: 'object',
+              properties: { userId: { type: 'string' } },
+            },
+            response: {
+              200: {
+                type: 'object',
+                properties: {
+                  success: { type: 'boolean' },
+                  message: { type: 'string' },
+                },
+              },
+              403: { type: 'object', properties: { error: { type: 'string' } } },
+            },
           },
-        },
-        403: { type: 'object', properties: { error: { type: 'string' } } },
+          handler: async (req: FastifyRequest<{ Params: UserIdParams; Querystring: AuthQuery }>, reply: FastifyReply) => {
+            if (!authorised(req.params.userId, req)) {
+              return reply.status(403).send({ error: 'Forbidden: userId mismatch' });
+            }
+
+            await repository.deleteUserData(req.params.userId);
+
+            return reply.status(200).send({
+              success: true,
+              message: `All evolution data deleted for user ${req.params.userId}`,
+            });
+          },
+        });
       },
-    },
-    preHandler: evolutionDeleteRateLimit,
-    handler: async (req: FastifyRequest<{ Params: UserIdParams; Querystring: AuthQuery }>, reply: FastifyReply) => {
-      if (!authorised(req.params.userId, req)) {
-        return reply.status(403).send({ error: 'Forbidden: userId mismatch' });
-      }
-
-      await repository.deleteUserData(req.params.userId);
-
-      return reply.status(200).send({
-        success: true,
-        message: `All evolution data deleted for user ${req.params.userId}`,
-      });
-    },
-  });
+      { name: 'evolution-profile-delete-rate-limit', fastify: '>=5.0.0' },
+    ),
+    { prefix: '/profile/:userId' },
+  );
 
   // ─────────────────────────────────────────────────────────────────────────
   // GET /api/evolution/adaptation/:userId
-  // Returns the AtlasAdaptationState for a user — consumed by the frontend
-  // and by atlasPrompt.ts to inject personalisation into the system prompt.
   // ─────────────────────────────────────────────────────────────────────────
 
-  fastify.route<{ Params: UserIdParams; Querystring: AuthQuery }>({
-    method: 'GET',
-    url: '/adaptation/:userId',
-    schema: {
-      params: {
-        type: 'object',
-        required: ['userId'],
-        properties: { userId: { type: 'string', minLength: 1 } },
-      },
-      querystring: {
-        type: 'object',
-        properties: { userId: { type: 'string' } },
-      },
-      response: {
-        200: { type: 'object', additionalProperties: true },
-        204: { type: 'null', description: 'Not enough data yet — no adaptation state available' },
-        403: { type: 'object', properties: { error: { type: 'string' } } },
-      },
-    },
-    preHandler: [evolutionAdaptationRateLimit],
-    handler: async (req: FastifyRequest<{ Params: UserIdParams; Querystring: AuthQuery }>, reply: FastifyReply) => {
-      if (!authorised(req.params.userId, req)) {
-        return reply.status(403).send({ error: 'Forbidden: userId mismatch' });
-      }
+  await fastify.register(
+    fp(
+      async (r: FastifyInstance): Promise<void> => {
+        await r.register(middie);
+        r.use(
+          rateLimit({
+            windowMs: 60_000,
+            limit: 60,
+            validate: { trustProxy: false },
+          }),
+        );
+        r.route<{ Params: UserIdParams; Querystring: AuthQuery }>({
+          method: 'GET',
+          url: '/',
+          schema: {
+            params: {
+              type: 'object',
+              required: ['userId'],
+              properties: { userId: { type: 'string', minLength: 1 } },
+            },
+            querystring: {
+              type: 'object',
+              properties: { userId: { type: 'string' } },
+            },
+            response: {
+              200: { type: 'object', additionalProperties: true },
+              204: { type: 'null', description: 'Not enough data yet — no adaptation state available' },
+              403: { type: 'object', properties: { error: { type: 'string' } } },
+            },
+          },
+          handler: async (req: FastifyRequest<{ Params: UserIdParams; Querystring: AuthQuery }>, reply: FastifyReply) => {
+            if (!authorised(req.params.userId, req)) {
+              return reply.status(403).send({ error: 'Forbidden: userId mismatch' });
+            }
 
-      const adaptationState = await engine.getAdaptationState(req.params.userId);
+            const adaptationState = await engine.getAdaptationState(req.params.userId);
 
-      if (!adaptationState) {
-        // Not enough signal data yet — return 204 so callers can treat as
-        // "use defaults" without treating it as an error.
-        return reply.status(204).send();
-      }
+            if (!adaptationState) {
+              return reply.status(204).send();
+            }
 
-      return reply.status(200).send(adaptationState);
-    },
-  });
+            return reply.status(200).send(adaptationState);
+          },
+        });
+      },
+      { name: 'evolution-adaptation-rate-limit', fastify: '>=5.0.0' },
+    ),
+    { prefix: '/adaptation/:userId' },
+  );
 };
 
 // ---------------------------------------------------------------------------

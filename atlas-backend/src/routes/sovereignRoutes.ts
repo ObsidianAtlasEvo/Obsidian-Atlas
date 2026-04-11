@@ -15,7 +15,8 @@ import type {
   FastifyRequest,
 } from 'fastify';
 import { spawn } from 'child_process';
-import { RateLimiterMemory } from 'rate-limiter-flexible';
+import middie from '@fastify/middie';
+import rateLimit from 'express-rate-limit';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -24,6 +25,7 @@ import {
   getAuthenticatedUser,
 } from '../services/auth/authProvider.js';
 import { isSovereignOwnerEmail } from '../services/intelligence/router.js';
+import fp from 'fastify-plugin';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -37,11 +39,6 @@ const PROMPT_STORE_PATH = path.resolve(process.cwd(), 'data', 'system_prompt.jso
 const LOG_FILE_PATH =
   process.env.PM2_LOG_PATH ||
   path.resolve(process.cwd(), 'logs', 'atlas-out.log');
-
-// CodeQL js/missing-rate-limiting recognizes rate-limiter-flexible consume() on req.* inside handlers.
-const sovereignLogsLimiter = new RateLimiterMemory({ points: 5, duration: 60 });
-const sovereignDeployLimiter = new RateLimiterMemory({ points: 3, duration: 60 });
-const sovereignDeployStreamLimiter = new RateLimiterMemory({ points: 10, duration: 60 });
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -118,6 +115,9 @@ const sovereignRoutes: FastifyPluginAsync = async (
     }
   });
 
+  let activeDeployListeners: Set<(line: string) => void> = new Set();
+  let deployRunning = false;
+
   // ──────────────────────────────────────────────────────────────────────────
   // STATUS
   // GET /api/sovereign/status
@@ -176,63 +176,64 @@ const sovereignRoutes: FastifyPluginAsync = async (
 
   // ──────────────────────────────────────────────────────────────────────────
   // LIVE LOG STREAM
-  // GET /api/sovereign/logs (SSE)
+  // GET /api/sovereign/logs (SSE) — express-rate-limit via middie (CodeQL recognizes it).
+  // fp() keeps parent preHandler (auth) applied to these routes.
   // ──────────────────────────────────────────────────────────────────────────
 
-  fastify.route({
-    method: 'GET',
-    url: '/logs',
-    config: {
-      rateLimit: {
-        max: 10,
-        timeWindow: '1 minute',
+  await fastify.register(
+    fp(
+      async (r: FastifyInstance): Promise<void> => {
+        await r.register(middie);
+        r.use(
+          rateLimit({
+            windowMs: 60_000,
+            limit: 5,
+            validate: { trustProxy: false },
+          }),
+        );
+        r.route({
+          method: 'GET',
+          url: '/',
+          handler: async (request, reply) => {
+            sseHeaders(reply);
+            reply.hijack();
+
+            const sendLine = (line: string) => {
+              sseWrite(reply, JSON.stringify({ line, ts: new Date().toISOString() }));
+            };
+
+            if (fs.existsSync(LOG_FILE_PATH)) {
+              const tail = spawn('tail', ['-f', '-n', '100', LOG_FILE_PATH]);
+
+              tail.stdout.on('data', (chunk: Buffer) => {
+                const lines = chunk.toString().split('\n').filter(Boolean);
+                lines.forEach(sendLine);
+              });
+
+              tail.stderr.on('data', (chunk: Buffer) => {
+                sendLine(`[stderr] ${chunk.toString().trim()}`);
+              });
+
+              reply.raw.on('close', () => {
+                tail.kill();
+              });
+            } else {
+              sendLine(`[sovereign] Log file not found: ${LOG_FILE_PATH}`);
+              sendLine('[sovereign] Emitting process events only...');
+
+              const interval = setInterval(() => {
+                sseWrite(reply, JSON.stringify({ line: '[heartbeat]', ts: new Date().toISOString() }));
+              }, 5000);
+
+              reply.raw.on('close', () => clearInterval(interval));
+            }
+          },
+        });
       },
-    },
-    preHandler: async (request, reply) => {
-      try {
-        await sovereignLogsLimiter.consume(request.ip);
-      } catch {
-        reply.code(429).send({ error: 'Too many requests' });
-        return;
-      }
-    },
-    handler: async (request, reply) => {
-      sseHeaders(reply);
-      reply.hijack();
-
-      const sendLine = (line: string) => {
-        sseWrite(reply, JSON.stringify({ line, ts: new Date().toISOString() }));
-      };
-
-      // Tail the log file
-      if (fs.existsSync(LOG_FILE_PATH)) {
-        const tail = spawn('tail', ['-f', '-n', '100', LOG_FILE_PATH]);
-
-        tail.stdout.on('data', (chunk: Buffer) => {
-          const lines = chunk.toString().split('\n').filter(Boolean);
-          lines.forEach(sendLine);
-        });
-
-        tail.stderr.on('data', (chunk: Buffer) => {
-          sendLine(`[stderr] ${chunk.toString().trim()}`);
-        });
-
-        reply.raw.on('close', () => {
-          tail.kill();
-        });
-      } else {
-        sendLine(`[sovereign] Log file not found: ${LOG_FILE_PATH}`);
-        sendLine('[sovereign] Emitting process events only...');
-
-        // Fallback: emit a heartbeat every 5s
-        const interval = setInterval(() => {
-          sseWrite(reply, JSON.stringify({ line: '[heartbeat]', ts: new Date().toISOString() }));
-        }, 5000);
-
-        reply.raw.on('close', () => clearInterval(interval));
-      }
-    },
-  });
+      { name: 'sovereign-logs-rate-limit', fastify: '>=5.0.0' },
+    ),
+    { prefix: '/logs' },
+  );
 
   // ──────────────────────────────────────────────────────────────────────────
   // PROMPT FORGE
@@ -740,105 +741,112 @@ const sovereignRoutes: FastifyPluginAsync = async (
   // DEPLOY
   // POST /api/sovereign/deploy  — triggers deploy.sh and returns job ID
   // GET  /api/sovereign/deploy/stream — SSE stream of the active deploy
+  // (express-rate-limit + middie in fp-wrapped sub-plugins for CodeQL.)
   // ──────────────────────────────────────────────────────────────────────────
 
-  // In-memory deploy state (single concurrent deploy)
-  let activeDeployListeners: Set<(line: string) => void> = new Set();
-  let deployRunning = false;
+  await fastify.register(
+    fp(
+      async (r: FastifyInstance): Promise<void> => {
+        await r.register(middie);
+        r.use(
+          rateLimit({
+            windowMs: 60_000,
+            limit: 3,
+            validate: { trustProxy: false },
+          }),
+        );
+        r.route<{ Body: { version?: string } }>({
+          method: 'POST',
+          url: '/',
+          handler: async (request, reply) => {
+            if (deployRunning) {
+              reply.code(409).send({ error: 'Deploy already in progress' });
+              return;
+            }
 
-  fastify.route<{ Body: { version?: string } }>({
-    method: 'POST',
-    url: '/deploy',
-    config: {
-      rateLimit: {
-        max: 3,
-        timeWindow: '1 minute',
+            if (!fs.existsSync(DEPLOY_SCRIPT)) {
+              reply.code(500).send({ error: `deploy.sh not found at ${DEPLOY_SCRIPT}` });
+              return;
+            }
+
+            deployRunning = true;
+            const version = request.body?.version ?? process.env.ATLAS_VERSION ?? '1.0.0';
+
+            fastify.log.info(`[Sovereign] Starting deploy v${version}`);
+
+            const child = spawn('bash', [DEPLOY_SCRIPT], {
+              cwd: path.dirname(DEPLOY_SCRIPT),
+              env: { ...process.env, ATLAS_VERSION: version },
+            });
+
+            const broadcast = (line: string) => {
+              activeDeployListeners.forEach((fn) => fn(line));
+            };
+
+            child.stdout.on('data', (chunk: Buffer) => {
+              chunk.toString().split('\n').filter(Boolean).forEach(broadcast);
+            });
+
+            child.stderr.on('data', (chunk: Buffer) => {
+              chunk.toString().split('\n').filter(Boolean).forEach((l) => broadcast(`[stderr] ${l}`));
+            });
+
+            child.on('close', (code) => {
+              deployRunning = false;
+              broadcast(code === 0 ? '__DONE__' : `__ERROR__ exit code ${code}`);
+              setTimeout(() => {
+                activeDeployListeners = new Set();
+              }, 5000);
+            });
+
+            reply.send({
+              success: true,
+              message: `Deploy v${version} started. Connect to /api/sovereign/deploy/stream for output.`,
+            });
+          },
+        });
       },
-    },
-    preHandler: async (request, reply) => {
-      try {
-        await sovereignDeployLimiter.consume(request.ip);
-      } catch {
-        reply.code(429).send({ error: 'Too many requests' });
-        return;
-      }
-    },
-    handler: async (request, reply) => {
-      if (deployRunning) {
-        reply.code(409).send({ error: 'Deploy already in progress' });
-        return;
-      }
+      { name: 'sovereign-deploy-rate-limit', fastify: '>=5.0.0' },
+    ),
+    { prefix: '/deploy' },
+  );
 
-      if (!fs.existsSync(DEPLOY_SCRIPT)) {
-        reply.code(500).send({ error: `deploy.sh not found at ${DEPLOY_SCRIPT}` });
-        return;
-      }
+  await fastify.register(
+    fp(
+      async (r: FastifyInstance): Promise<void> => {
+        await r.register(middie);
+        r.use(
+          rateLimit({
+            windowMs: 60_000,
+            limit: 10,
+            validate: { trustProxy: false },
+          }),
+        );
+        r.route({
+          method: 'GET',
+          url: '/',
+          handler: async (request, reply) => {
+            sseHeaders(reply);
+            reply.hijack();
 
-      deployRunning = true;
-      const version = request.body?.version ?? process.env.ATLAS_VERSION ?? '1.0.0';
+            const send = (line: string) => sseWrite(reply, line);
+            activeDeployListeners.add(send);
 
-      fastify.log.info(`[Sovereign] Starting deploy v${version}`);
+            if (!deployRunning) {
+              send('[sovereign] No deploy in progress.');
+              send('__DONE__');
+            }
 
-      const child = spawn('bash', [DEPLOY_SCRIPT], {
-        cwd: path.dirname(DEPLOY_SCRIPT),
-        env: { ...process.env, ATLAS_VERSION: version },
-      });
-
-      const broadcast = (line: string) => {
-        activeDeployListeners.forEach((fn) => fn(line));
-      };
-
-      child.stdout.on('data', (chunk: Buffer) => {
-        chunk.toString().split('\n').filter(Boolean).forEach(broadcast);
-      });
-
-      child.stderr.on('data', (chunk: Buffer) => {
-        chunk.toString().split('\n').filter(Boolean).forEach((l) => broadcast(`[stderr] ${l}`));
-      });
-
-      child.on('close', (code) => {
-        deployRunning = false;
-        broadcast(code === 0 ? '__DONE__' : `__ERROR__ exit code ${code}`);
-        setTimeout(() => {
-          activeDeployListeners = new Set();
-        }, 5000);
-      });
-
-      reply.send({
-        success: true,
-        message: `Deploy v${version} started. Connect to /api/sovereign/deploy/stream for output.`,
-      });
-    },
-  });
-
-  fastify.route({
-    method: 'GET',
-    url: '/deploy/stream',
-    preHandler: async (request, reply) => {
-      try {
-        await sovereignDeployStreamLimiter.consume(request.ip);
-      } catch {
-        reply.code(429).send({ error: 'Too many requests' });
-        return;
-      }
-    },
-    handler: async (request, reply) => {
-      sseHeaders(reply);
-      reply.hijack();
-
-      const send = (line: string) => sseWrite(reply, line);
-      activeDeployListeners.add(send);
-
-      if (!deployRunning) {
-        send('[sovereign] No deploy in progress.');
-        send('__DONE__');
-      }
-
-      reply.raw.on('close', () => {
-        activeDeployListeners.delete(send);
-      });
-    },
-  });
+            reply.raw.on('close', () => {
+              activeDeployListeners.delete(send);
+            });
+          },
+        });
+      },
+      { name: 'sovereign-deploy-stream-rate-limit', fastify: '>=5.0.0' },
+    ),
+    { prefix: '/deploy/stream' },
+  );
 
   // ──────────────────────────────────────────────────────────────────────────
   // RELEASES
