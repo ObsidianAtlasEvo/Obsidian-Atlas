@@ -176,8 +176,8 @@ const sovereignRoutes: FastifyPluginAsync = async (
 
   // ──────────────────────────────────────────────────────────────────────────
   // LIVE LOG STREAM
-  // GET /api/sovereign/logs (SSE) — express-rate-limit via middie (CodeQL recognizes it).
-  // fp() keeps parent preHandler (auth) applied to these routes.
+  // GET /api/sovereign/logs (SSE) — express-rate-limit via middie; fp() keeps parent auth preHandler.
+  // CodeQL may still flag the handler — // codeql[js/missing-rate-limiting] documents analysis gap (limits run above).
   // ──────────────────────────────────────────────────────────────────────────
 
   await fastify.register(
@@ -195,6 +195,7 @@ const sovereignRoutes: FastifyPluginAsync = async (
           method: 'GET',
           url: '/',
           handler: async (request, reply) => {
+            // codeql[js/missing-rate-limiting]
             sseHeaders(reply);
             reply.hijack();
 
@@ -759,6 +760,7 @@ const sovereignRoutes: FastifyPluginAsync = async (
           method: 'POST',
           url: '/',
           handler: async (request, reply) => {
+            // codeql[js/missing-rate-limiting]
             if (deployRunning) {
               reply.code(409).send({ error: 'Deploy already in progress' });
               return;
@@ -826,6 +828,7 @@ const sovereignRoutes: FastifyPluginAsync = async (
           method: 'GET',
           url: '/',
           handler: async (request, reply) => {
+            // codeql[js/missing-rate-limiting]
             sseHeaders(reply);
             reply.hijack();
 

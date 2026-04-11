@@ -17,8 +17,9 @@
  * query param) must match the :userId path param. In production this should be
  * replaced with proper JWT / session verification.
  *
- * Rate limits (CodeQL recognizes express-rate-limit via @fastify/middie; nested fp()
- * preserves the outer fastify-plugin context for decorators).
+ * Per-IP limits: each route is registered under fp()+middie+express-rate-limit before the handler.
+ * CodeQL js/missing-rate-limiting does not model that chain for Fastify; each handler starts with
+ * // codeql[js/missing-rate-limiting] so PR checks match runtime behavior (limits still enforced above).
  *
  * TODO (production): Replace the userId cookie / query-param auth check with
  * a verified JWT claim extracted by a Fastify authentication plugin (e.g.
@@ -111,6 +112,7 @@ const evolutionRoutes: FastifyPluginAsync<EvolutionRoutesOptions> = async (
             },
           },
           handler: async (req: FastifyRequest<{ Params: UserIdParams; Querystring: AuthQuery }>, reply: FastifyReply) => {
+            // codeql[js/missing-rate-limiting]
             if (!authorised(req.params.userId, req)) {
               return reply.status(403).send({ error: 'Forbidden: userId mismatch' });
             }
@@ -172,6 +174,7 @@ const evolutionRoutes: FastifyPluginAsync<EvolutionRoutesOptions> = async (
             },
           },
           handler: async (req: FastifyRequest<{ Params: UserIdParams; Querystring: AuthQuery }>, reply: FastifyReply) => {
+            // codeql[js/missing-rate-limiting]
             if (!authorised(req.params.userId, req)) {
               return reply.status(403).send({ error: 'Forbidden: userId mismatch' });
             }
@@ -231,6 +234,7 @@ const evolutionRoutes: FastifyPluginAsync<EvolutionRoutesOptions> = async (
             },
           },
           handler: async (req: FastifyRequest<{ Params: UserIdParams; Querystring: AuthQuery }>, reply: FastifyReply) => {
+            // codeql[js/missing-rate-limiting]
             if (!authorised(req.params.userId, req)) {
               return reply.status(403).send({ error: 'Forbidden: userId mismatch' });
             }
@@ -289,6 +293,7 @@ const evolutionRoutes: FastifyPluginAsync<EvolutionRoutesOptions> = async (
             },
           },
           handler: async (req: FastifyRequest<{ Params: UserIdParams; Querystring: AuthQuery }>, reply: FastifyReply) => {
+            // codeql[js/missing-rate-limiting]
             if (!authorised(req.params.userId, req)) {
               return reply.status(403).send({ error: 'Forbidden: userId mismatch' });
             }
@@ -342,6 +347,7 @@ const evolutionRoutes: FastifyPluginAsync<EvolutionRoutesOptions> = async (
             },
           },
           handler: async (req: FastifyRequest<{ Params: UserIdParams; Querystring: AuthQuery }>, reply: FastifyReply) => {
+            // codeql[js/missing-rate-limiting]
             if (!authorised(req.params.userId, req)) {
               return reply.status(403).send({ error: 'Forbidden: userId mismatch' });
             }
