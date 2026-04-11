@@ -62,7 +62,8 @@ interface AuthQuery {
   userId?: string;
 }
 
-// CodeQL js/missing-rate-limiting recognizes rate-limiter-flexible consume() on req.* inside handlers.
+// CodeQL: consume() must run in a separate preHandler registered via fastify.route({ preHandler, handler })
+// — shorthand fastify.get/post only models the last handler, so same-function consume does not guard the route.
 const evolutionProfileLimiter = new RateLimiterMemory({ points: 100, duration: 60 });
 const evolutionStatsLimiter = new RateLimiterMemory({ points: 60, duration: 60 });
 const evolutionRebuildLimiter = new RateLimiterMemory({ points: 5, duration: 60 });
@@ -84,32 +85,33 @@ const evolutionRoutes: FastifyPluginAsync<EvolutionRoutesOptions> = async (
   // Returns the full UserEvolutionProfile for debugging and admin tooling.
   // ─────────────────────────────────────────────────────────────────────────
 
-  fastify.get<{ Params: UserIdParams; Querystring: AuthQuery }>(
-    '/profile/:userId',
-    {
-      schema: {
-        params: {
-          type: 'object',
-          required: ['userId'],
-          properties: { userId: { type: 'string', minLength: 1 } },
-        },
-        querystring: {
-          type: 'object',
-          properties: { userId: { type: 'string' } },
-        },
-        response: {
-          200: { type: 'object', additionalProperties: true },
-          403: { type: 'object', properties: { error: { type: 'string' } } },
-          404: { type: 'object', properties: { error: { type: 'string' } } },
-        },
+  fastify.route<{ Params: UserIdParams; Querystring: AuthQuery }>({
+    method: 'GET',
+    url: '/profile/:userId',
+    schema: {
+      params: {
+        type: 'object',
+        required: ['userId'],
+        properties: { userId: { type: 'string', minLength: 1 } },
+      },
+      querystring: {
+        type: 'object',
+        properties: { userId: { type: 'string' } },
+      },
+      response: {
+        200: { type: 'object', additionalProperties: true },
+        403: { type: 'object', properties: { error: { type: 'string' } } },
+        404: { type: 'object', properties: { error: { type: 'string' } } },
       },
     },
-    async (req: FastifyRequest<{ Params: UserIdParams; Querystring: AuthQuery }>, reply: FastifyReply) => {
+    preHandler: async (request, reply) => {
       try {
-        await evolutionProfileLimiter.consume(req.ip);
+        await evolutionProfileLimiter.consume(request.ip);
       } catch {
         return reply.status(429).send({ error: 'Too many requests' });
       }
+    },
+    handler: async (req: FastifyRequest<{ Params: UserIdParams; Querystring: AuthQuery }>, reply: FastifyReply) => {
       if (!authorised(req.params.userId, req)) {
         return reply.status(403).send({ error: 'Forbidden: userId mismatch' });
       }
@@ -122,46 +124,47 @@ const evolutionRoutes: FastifyPluginAsync<EvolutionRoutesOptions> = async (
 
       return reply.status(200).send(profile);
     },
-  );
+  });
 
   // ─────────────────────────────────────────────────────────────────────────
   // GET /api/evolution/stats/:userId
   // Lightweight endpoint — returns only version, confidence, totalSignals.
   // ─────────────────────────────────────────────────────────────────────────
 
-  fastify.get<{ Params: UserIdParams; Querystring: AuthQuery }>(
-    '/stats/:userId',
-    {
-      schema: {
-        params: {
+  fastify.route<{ Params: UserIdParams; Querystring: AuthQuery }>({
+    method: 'GET',
+    url: '/stats/:userId',
+    schema: {
+      params: {
+        type: 'object',
+        required: ['userId'],
+        properties: { userId: { type: 'string', minLength: 1 } },
+      },
+      querystring: {
+        type: 'object',
+        properties: { userId: { type: 'string' } },
+      },
+      response: {
+        200: {
           type: 'object',
-          required: ['userId'],
-          properties: { userId: { type: 'string', minLength: 1 } },
-        },
-        querystring: {
-          type: 'object',
-          properties: { userId: { type: 'string' } },
-        },
-        response: {
-          200: {
-            type: 'object',
-            properties: {
-              version:      { type: 'integer' },
-              confidence:   { type: 'number' },
-              totalSignals: { type: 'integer' },
-            },
+          properties: {
+            version:      { type: 'integer' },
+            confidence:   { type: 'number' },
+            totalSignals: { type: 'integer' },
           },
-          403: { type: 'object', properties: { error: { type: 'string' } } },
-          404: { type: 'object', properties: { error: { type: 'string' } } },
         },
+        403: { type: 'object', properties: { error: { type: 'string' } } },
+        404: { type: 'object', properties: { error: { type: 'string' } } },
       },
     },
-    async (req: FastifyRequest<{ Params: UserIdParams; Querystring: AuthQuery }>, reply: FastifyReply) => {
+    preHandler: async (request, reply) => {
       try {
-        await evolutionStatsLimiter.consume(req.ip);
+        await evolutionStatsLimiter.consume(request.ip);
       } catch {
         return reply.status(429).send({ error: 'Too many requests' });
       }
+    },
+    handler: async (req: FastifyRequest<{ Params: UserIdParams; Querystring: AuthQuery }>, reply: FastifyReply) => {
       if (!authorised(req.params.userId, req)) {
         return reply.status(403).send({ error: 'Forbidden: userId mismatch' });
       }
@@ -174,7 +177,7 @@ const evolutionRoutes: FastifyPluginAsync<EvolutionRoutesOptions> = async (
 
       return reply.status(200).send(stats);
     },
-  );
+  });
 
   // ─────────────────────────────────────────────────────────────────────────
   // POST /api/evolution/rebuild/:userId
@@ -182,37 +185,38 @@ const evolutionRoutes: FastifyPluginAsync<EvolutionRoutesOptions> = async (
   // stored signals). Useful for admin overrides and integration tests.
   // ─────────────────────────────────────────────────────────────────────────
 
-  fastify.post<{ Params: UserIdParams; Querystring: AuthQuery }>(
-    '/rebuild/:userId',
-    {
-      schema: {
-        params: {
+  fastify.route<{ Params: UserIdParams; Querystring: AuthQuery }>({
+    method: 'POST',
+    url: '/rebuild/:userId',
+    schema: {
+      params: {
+        type: 'object',
+        required: ['userId'],
+        properties: { userId: { type: 'string', minLength: 1 } },
+      },
+      querystring: {
+        type: 'object',
+        properties: { userId: { type: 'string' } },
+      },
+      response: {
+        200: {
           type: 'object',
-          required: ['userId'],
-          properties: { userId: { type: 'string', minLength: 1 } },
-        },
-        querystring: {
-          type: 'object',
-          properties: { userId: { type: 'string' } },
-        },
-        response: {
-          200: {
-            type: 'object',
-            properties: {
-              success: { type: 'boolean' },
-              message: { type: 'string' },
-            },
+          properties: {
+            success: { type: 'boolean' },
+            message: { type: 'string' },
           },
-          403: { type: 'object', properties: { error: { type: 'string' } } },
         },
+        403: { type: 'object', properties: { error: { type: 'string' } } },
       },
     },
-    async (req: FastifyRequest<{ Params: UserIdParams; Querystring: AuthQuery }>, reply: FastifyReply) => {
+    preHandler: async (request, reply) => {
       try {
-        await evolutionRebuildLimiter.consume(req.ip);
+        await evolutionRebuildLimiter.consume(request.ip);
       } catch {
         return reply.status(429).send({ error: 'Too many requests' });
       }
+    },
+    handler: async (req: FastifyRequest<{ Params: UserIdParams; Querystring: AuthQuery }>, reply: FastifyReply) => {
       if (!authorised(req.params.userId, req)) {
         return reply.status(403).send({ error: 'Forbidden: userId mismatch' });
       }
@@ -226,7 +230,7 @@ const evolutionRoutes: FastifyPluginAsync<EvolutionRoutesOptions> = async (
         message: `Evolution profile rebuilt for user ${req.params.userId}`,
       });
     },
-  );
+  });
 
   // ─────────────────────────────────────────────────────────────────────────
   // DELETE /api/evolution/profile/:userId
@@ -234,37 +238,38 @@ const evolutionRoutes: FastifyPluginAsync<EvolutionRoutesOptions> = async (
   // Satisfies GDPR Article 17 "right to erasure".
   // ─────────────────────────────────────────────────────────────────────────
 
-  fastify.delete<{ Params: UserIdParams; Querystring: AuthQuery }>(
-    '/profile/:userId',
-    {
-      schema: {
-        params: {
+  fastify.route<{ Params: UserIdParams; Querystring: AuthQuery }>({
+    method: 'DELETE',
+    url: '/profile/:userId',
+    schema: {
+      params: {
+        type: 'object',
+        required: ['userId'],
+        properties: { userId: { type: 'string', minLength: 1 } },
+      },
+      querystring: {
+        type: 'object',
+        properties: { userId: { type: 'string' } },
+      },
+      response: {
+        200: {
           type: 'object',
-          required: ['userId'],
-          properties: { userId: { type: 'string', minLength: 1 } },
-        },
-        querystring: {
-          type: 'object',
-          properties: { userId: { type: 'string' } },
-        },
-        response: {
-          200: {
-            type: 'object',
-            properties: {
-              success: { type: 'boolean' },
-              message: { type: 'string' },
-            },
+          properties: {
+            success: { type: 'boolean' },
+            message: { type: 'string' },
           },
-          403: { type: 'object', properties: { error: { type: 'string' } } },
         },
+        403: { type: 'object', properties: { error: { type: 'string' } } },
       },
     },
-    async (req: FastifyRequest<{ Params: UserIdParams; Querystring: AuthQuery }>, reply: FastifyReply) => {
+    preHandler: async (request, reply) => {
       try {
-        await evolutionDeleteLimiter.consume(req.ip);
+        await evolutionDeleteLimiter.consume(request.ip);
       } catch {
         return reply.status(429).send({ error: 'Too many requests' });
       }
+    },
+    handler: async (req: FastifyRequest<{ Params: UserIdParams; Querystring: AuthQuery }>, reply: FastifyReply) => {
       if (!authorised(req.params.userId, req)) {
         return reply.status(403).send({ error: 'Forbidden: userId mismatch' });
       }
@@ -276,7 +281,7 @@ const evolutionRoutes: FastifyPluginAsync<EvolutionRoutesOptions> = async (
         message: `All evolution data deleted for user ${req.params.userId}`,
       });
     },
-  );
+  });
 
   // ─────────────────────────────────────────────────────────────────────────
   // GET /api/evolution/adaptation/:userId
@@ -284,32 +289,33 @@ const evolutionRoutes: FastifyPluginAsync<EvolutionRoutesOptions> = async (
   // and by atlasPrompt.ts to inject personalisation into the system prompt.
   // ─────────────────────────────────────────────────────────────────────────
 
-  fastify.get<{ Params: UserIdParams; Querystring: AuthQuery }>(
-    '/adaptation/:userId',
-    {
-      schema: {
-        params: {
-          type: 'object',
-          required: ['userId'],
-          properties: { userId: { type: 'string', minLength: 1 } },
-        },
-        querystring: {
-          type: 'object',
-          properties: { userId: { type: 'string' } },
-        },
-        response: {
-          200: { type: 'object', additionalProperties: true },
-          204: { type: 'null', description: 'Not enough data yet — no adaptation state available' },
-          403: { type: 'object', properties: { error: { type: 'string' } } },
-        },
+  fastify.route<{ Params: UserIdParams; Querystring: AuthQuery }>({
+    method: 'GET',
+    url: '/adaptation/:userId',
+    schema: {
+      params: {
+        type: 'object',
+        required: ['userId'],
+        properties: { userId: { type: 'string', minLength: 1 } },
+      },
+      querystring: {
+        type: 'object',
+        properties: { userId: { type: 'string' } },
+      },
+      response: {
+        200: { type: 'object', additionalProperties: true },
+        204: { type: 'null', description: 'Not enough data yet — no adaptation state available' },
+        403: { type: 'object', properties: { error: { type: 'string' } } },
       },
     },
-    async (req: FastifyRequest<{ Params: UserIdParams; Querystring: AuthQuery }>, reply: FastifyReply) => {
+    preHandler: async (request, reply) => {
       try {
-        await evolutionAdaptationLimiter.consume(req.ip);
+        await evolutionAdaptationLimiter.consume(request.ip);
       } catch {
         return reply.status(429).send({ error: 'Too many requests' });
       }
+    },
+    handler: async (req: FastifyRequest<{ Params: UserIdParams; Querystring: AuthQuery }>, reply: FastifyReply) => {
       if (!authorised(req.params.userId, req)) {
         return reply.status(403).send({ error: 'Forbidden: userId mismatch' });
       }
@@ -324,7 +330,7 @@ const evolutionRoutes: FastifyPluginAsync<EvolutionRoutesOptions> = async (
 
       return reply.status(200).send(adaptationState);
     },
-  );
+  });
 };
 
 // ---------------------------------------------------------------------------

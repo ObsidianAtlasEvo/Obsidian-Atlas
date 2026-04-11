@@ -179,15 +179,18 @@ const sovereignRoutes: FastifyPluginAsync = async (
   // GET /api/sovereign/logs (SSE)
   // ──────────────────────────────────────────────────────────────────────────
 
-  fastify.get(
-    '/logs',
-    async (request, reply) => {
+  fastify.route({
+    method: 'GET',
+    url: '/logs',
+    preHandler: async (request, reply) => {
       try {
         await sovereignLogsLimiter.consume(request.ip);
       } catch {
         reply.code(429).send({ error: 'Too many requests' });
         return;
       }
+    },
+    handler: async (request, reply) => {
       sseHeaders(reply);
       reply.hijack();
 
@@ -223,7 +226,7 @@ const sovereignRoutes: FastifyPluginAsync = async (
         reply.raw.on('close', () => clearInterval(interval));
       }
     },
-  );
+  });
 
   // ──────────────────────────────────────────────────────────────────────────
   // PROMPT FORGE
@@ -737,15 +740,18 @@ const sovereignRoutes: FastifyPluginAsync = async (
   let activeDeployListeners: Set<(line: string) => void> = new Set();
   let deployRunning = false;
 
-  fastify.post<{ Body: { version?: string } }>(
-    '/deploy',
-    async (request, reply) => {
+  fastify.route<{ Body: { version?: string } }>({
+    method: 'POST',
+    url: '/deploy',
+    preHandler: async (request, reply) => {
       try {
         await sovereignDeployLimiter.consume(request.ip);
       } catch {
         reply.code(429).send({ error: 'Too many requests' });
         return;
       }
+    },
+    handler: async (request, reply) => {
       if (deployRunning) {
         reply.code(409).send({ error: 'Deploy already in progress' });
         return;
@@ -791,17 +797,20 @@ const sovereignRoutes: FastifyPluginAsync = async (
         message: `Deploy v${version} started. Connect to /api/sovereign/deploy/stream for output.`,
       });
     },
-  );
+  });
 
-  fastify.get(
-    '/deploy/stream',
-    async (request, reply) => {
+  fastify.route({
+    method: 'GET',
+    url: '/deploy/stream',
+    preHandler: async (request, reply) => {
       try {
         await sovereignDeployStreamLimiter.consume(request.ip);
       } catch {
         reply.code(429).send({ error: 'Too many requests' });
         return;
       }
+    },
+    handler: async (request, reply) => {
       sseHeaders(reply);
       reply.hijack();
 
@@ -817,7 +826,7 @@ const sovereignRoutes: FastifyPluginAsync = async (
         activeDeployListeners.delete(send);
       });
     },
-  );
+  });
 
   // ──────────────────────────────────────────────────────────────────────────
   // RELEASES

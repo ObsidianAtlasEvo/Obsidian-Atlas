@@ -57,6 +57,12 @@ interface FastifyInstance {
     opts: { preHandler?: HandlerFn[] },
     handler: HandlerFn
   ): void;
+  route(opts: {
+    method: string;
+    url: string;
+    preHandler?: HandlerFn | HandlerFn[];
+    handler: HandlerFn;
+  }): void;
   // Typed overloads for hooks used in this file
   addHook(
     event: 'onRequest',
@@ -103,7 +109,7 @@ function parsePaginationQuery(query: Record<string, string | undefined>): {
   return { limit, offset };
 }
 
-/** CodeQL js/missing-rate-limiting recognizes rate-limiter-flexible consume() on req.* inside handlers. */
+/** CodeQL: rate limit in fastify.route preHandler so it guards the main handler (not shorthand get/post). */
 const auditVerifyLimiter = new RateLimiterMemory({ points: 10, duration: 60 });
 
 // Sovereign HMAC token store — holds current and previous (for rotation window)
@@ -497,16 +503,24 @@ export const securityRoutes: FastifyPlugin = (
   // GET /api/security/audit/verify
   // Run audit chain integrity check
   // ---------------------------------------------------------------------------
-  fastify.get(
-    '/audit/verify',
-    { preHandler: guard('sovereign.audit.verify') },
-    async (req: FastifyRequest, reply: FastifyReply): Promise<void> => {
-      try {
-        await auditVerifyLimiter.consume(req.ip);
-      } catch {
-        reply.status(429).send({ error: 'Too Many Requests', message: 'Audit verify rate limit exceeded' });
-        return;
-      }
+  fastify.route({
+    method: 'GET',
+    url: '/audit/verify',
+    preHandler: [
+      async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
+        try {
+          await auditVerifyLimiter.consume(request.ip);
+        } catch {
+          reply.status(429).send({
+            error: 'Too Many Requests',
+            message: 'Audit verify rate limit exceeded',
+          });
+          return;
+        }
+      },
+      ...guard('sovereign.audit.verify'),
+    ],
+    handler: async (req: FastifyRequest, reply: FastifyReply): Promise<void> => {
       // Fetch recent audit entries from Supabase
       const supabaseUrl = secrets.has('SUPABASE_URL') ? secrets.get('SUPABASE_URL') : '';
       const supabaseKey = secrets.has('SUPABASE_SERVICE_KEY') ? secrets.get('SUPABASE_SERVICE_KEY') : '';
@@ -558,8 +572,8 @@ export const securityRoutes: FastifyPlugin = (
         firstCorruptedEntry: result.firstCorruptedEntry ?? null,
         checkedAt: new Date().toISOString(),
       });
-    }
-  );
+    },
+  });
 
   // ---------------------------------------------------------------------------
   // GET /api/security/export-log
