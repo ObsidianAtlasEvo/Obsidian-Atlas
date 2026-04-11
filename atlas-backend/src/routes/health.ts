@@ -42,15 +42,14 @@ export default async function healthRoutes(app: FastifyInstance): Promise<void> 
         const url = process.env.SUPABASE_URL;
         const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
         if (!url || !key) throw new Error('SUPABASE credentials not set');
-        const res = await fetch(
-          `${url}/rest/v1/atlas_feature_flags?select=id&limit=1`,
-          {
-            headers: {
-              apikey: key,
-              Authorization: `Bearer ${key}`,
-            },
+        // Use the PostgREST root endpoint — returns 200 with API metadata
+        // regardless of which tables exist. Avoids 400s from missing tables.
+        const res = await fetch(`${url}/rest/v1/`, {
+          headers: {
+            apikey: key,
+            Authorization: `Bearer ${key}`,
           },
-        );
+        });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
       }),
 
