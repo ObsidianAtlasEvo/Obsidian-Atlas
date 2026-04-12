@@ -28,10 +28,11 @@ export function isAtlasSameOriginApi(): boolean {
 }
 
 /**
- * Use live Atlas HTTP (vs offline mock) when we have a direct URL, Vite dev proxy, or `VITE_ATLAS_SAME_ORIGIN`.
+ * Use live Atlas HTTP (vs offline mock) when we have a direct URL, Vite dev proxy,
+ * `VITE_ATLAS_SAME_ORIGIN`, or a production build (Caddy/nginx proxies `/api` to backend).
  */
 export function atlasHttpEnabled(): boolean {
-  return Boolean(getAtlasApiBase()) || import.meta.env.DEV || isAtlasSameOriginApi();
+  return Boolean(getAtlasApiBase()) || import.meta.env.DEV || isAtlasSameOriginApi() || import.meta.env.PROD;
 }
 
 /**
@@ -50,6 +51,22 @@ export function atlasChatUseHttpBackend(): boolean {
 }
 
 const PROXY_API_PREFIX = '/api';
+
+/**
+ * Standard headers for omni-stream and other authenticated backend calls.
+ * In dev, sends `X-Atlas-Verified-Email` so the backend routes to local Ollama
+ * without requiring full OAuth (backend must set ATLAS_TRUST_ROUTING_EMAIL_HEADER=true).
+ */
+export function atlasStreamHeaders(): Record<string, string> {
+  const h: Record<string, string> = {
+    'Content-Type': 'application/json',
+    Accept: 'text/event-stream',
+  };
+  if (import.meta.env.DEV) {
+    h['X-Atlas-Verified-Email'] = 'crowleyrc62@gmail.com';
+  }
+  return h;
+}
 
 /** Backend paths like `/v1/auth/session`, `/v1/chat/omni-stream`. */
 export function atlasApiUrl(path: string): string {

@@ -19,7 +19,7 @@ import {
 } from '../types';
 import { AtlasGraph } from './AtlasGraph';
 import { ATLAS_TRACE_CHANNEL, atlasTraceUserId } from '../lib/atlasTraceContext';
-import { atlasApiUrl, atlasHttpEnabled } from '../lib/atlasApi';
+import { atlasApiUrl, atlasChatUseHttpBackend, atlasStreamHeaders } from '../lib/atlasApi';
 import { LayeredResponse } from './LayeredResponse';
 import { DirectiveIntake } from './DirectiveIntake';
 import { ResonanceEngine } from '../resonance/engine';
@@ -199,7 +199,7 @@ export function HomeView({ state, setState, onInteraction }: HomeViewProps) {
 
       const res = await fetch(atlasApiUrl('/v1/chat/omni-stream'), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+        headers: atlasStreamHeaders(),
         credentials: 'include',
         signal: ac.signal,
         body: JSON.stringify(streamBody),
@@ -407,7 +407,7 @@ export function HomeView({ state, setState, onInteraction }: HomeViewProps) {
         new Promise<null>((resolve) => setTimeout(() => resolve(null), 8_000)),
       ]).catch(() => null);
 
-      const analysis = await (atlasHttpEnabled()
+      const analysis = await (atlasChatUseHttpBackend()
         ? synthesizeViaAtlasStream(searchVal, controller.signal)
         : Promise.reject(
             new Error('Atlas API is not enabled. Start backend and use /api proxy for inquiries.')
