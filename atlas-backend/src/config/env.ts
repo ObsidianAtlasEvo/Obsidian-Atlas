@@ -55,6 +55,8 @@ const envSchema = z.object({
   GROQ_BASE_URL: z.string().optional(),
   GROQ_ROUTER_MODEL: z.string().optional(),
   GROQ_DELEGATE_MODEL: z.string().optional(),
+  /** Skip swarm planner — single direct Groq streaming call per inquiry (saves tokens on free tier). */
+  DIRECT_GROQ_MODE: z.coerce.boolean().default(false),
   /** Google GenAI (Gemini) for `gemini_pro` / `multi_agent` expansion. */
   GEMINI_API_KEY: z.string().optional(),
   GEMINI_MODEL: z.string().optional(),
@@ -145,6 +147,7 @@ const raw = envSchema.parse({
   GROQ_BASE_URL: process.env.GROQ_BASE_URL,
   GROQ_ROUTER_MODEL: process.env.GROQ_ROUTER_MODEL,
   GROQ_DELEGATE_MODEL: process.env.GROQ_DELEGATE_MODEL,
+  DIRECT_GROQ_MODE: process.env.DIRECT_GROQ_MODE,
   GEMINI_API_KEY: process.env.GEMINI_API_KEY,
   GEMINI_MODEL: process.env.GEMINI_MODEL,
   OMNI_ROUTER_TIMEOUT_MS: process.env.OMNI_ROUTER_TIMEOUT_MS,
@@ -252,6 +255,7 @@ export const env = {
   groqBaseUrl: raw.GROQ_BASE_URL?.trim() || undefined,
   groqRouterModel: raw.GROQ_ROUTER_MODEL?.trim() || undefined,
   groqDelegateModel: raw.GROQ_DELEGATE_MODEL?.trim() || undefined,
+  directGroqMode: raw.DIRECT_GROQ_MODE === true,
   geminiApiKey: raw.GEMINI_API_KEY?.trim() || undefined,
   geminiModel: raw.GEMINI_MODEL?.trim() || undefined,
   omniRouterTimeoutMs: raw.OMNI_ROUTER_TIMEOUT_MS ?? 12_000,

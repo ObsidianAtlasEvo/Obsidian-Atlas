@@ -27,6 +27,7 @@ import {
   planUsesLocalOllama,
   swarmPlanToGroqRoutingDecision,
 } from '../services/intelligence/swarmOrchestrator.js';
+import { streamGroqChat } from '../services/intelligence/universalAdapter.js';
 import {
   QuotaExceededError,
   SystemDeepResearchUnavailableError,
@@ -307,6 +308,21 @@ export function registerOmniStreamRoutes(app: FastifyInstance): void {
             onSwarmTicker: (evt) => sseWrite(raw, 'swarm_ticker', evt),
             timeoutMs: 240_000,
           });
+        } else if (env.directGroqMode) {
+          sseWrite(raw, 'route', {
+            strategy: 'direct',
+            legacyTarget: 'groq',
+            rationale: 'direct_groq_mode',
+            plan: null,
+          });
+
+          const directOut = await streamGroqChat({
+            model: env.cloudChatModel,
+            messages: messagesWithRouting as { role: 'system' | 'user' | 'assistant'; content: string }[],
+            onDelta,
+            timeoutMs: 120_000,
+          });
+          result = { ...directOut, surface: 'direct_groq' };
         } else {
           const plan = await planSwarmExecution({
             userPrompt,
