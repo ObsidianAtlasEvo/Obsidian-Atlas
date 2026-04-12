@@ -4,7 +4,7 @@ import { streamChat, OllamaError, type OllamaMessage } from '../lib/ollama';
 import { buildAtlasSystemPrompt } from '../lib/atlasPrompt';
 import { generateId, nowISO } from '../lib/persistence';
 import type { UserQuestion, AnswerDepthTier, InquiryStyle } from '@/types';
-import { atlasApiUrl, atlasChatUseHttpBackend } from '../lib/atlasApi';
+import { atlasApiUrl, atlasChatUseHttpBackend, atlasStreamHeaders } from '../lib/atlasApi';
 import { atlasTraceUserId } from '../lib/atlasTraceContext';
 import type { ChatRequestState } from '../db/atlasEntities';
 import {
@@ -556,7 +556,7 @@ export default function AtlasChamber() {
         try {
           const res = await fetch(atlasApiUrl('/v1/chat/omni-stream'), {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+            headers: atlasStreamHeaders(),
             credentials: 'include',
             signal: ac.signal,
             body: JSON.stringify({

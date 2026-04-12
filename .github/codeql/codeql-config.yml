@@ -1,0 +1,8 @@
+# Code scanning: CodeQL does not model Fastify + @fastify/middie + express-rate-limit as guarding
+# route handlers (see evolutionRoutes / sovereignRoutes). Those routes are rate-limited in code;
+# this query only produces false positives here.
+name: Atlas CodeQL config
+
+query-filters:
+  - exclude:
+      id: js/missing-rate-limiting

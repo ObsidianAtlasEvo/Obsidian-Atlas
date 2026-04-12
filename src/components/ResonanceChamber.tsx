@@ -34,7 +34,7 @@ import { ThemeEvolutionView } from '../resonance/ui/ThemeEvolutionView';
 import { ResonanceThread } from '../resonance/types';
 import { QuietPowerQuotaModal } from './Settings/SovereigntyControls';
 import { atlasTraceUserId } from '../lib/atlasTraceContext';
-import { atlasApiUrl, atlasHttpEnabled } from '../lib/atlasApi';
+import { atlasApiUrl, atlasHttpEnabled, atlasStreamHeaders } from '../lib/atlasApi';
 
 function atlasPostureFromAdaptiveDepth(depth: number): 1 | 2 | 3 | 4 | 5 {
   const n = Math.round(Number.isFinite(depth) ? depth : 3);
@@ -125,7 +125,7 @@ export function ResonanceChamber({ state, setState }: ResonanceChamberProps) {
     try {
       const res = await fetch(atlasApiUrl('/v1/chat/omni-stream'), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+        headers: atlasStreamHeaders(),
         credentials: 'include',
         signal: ac.signal,
         body: JSON.stringify(payload),
