@@ -100,6 +100,31 @@ export function getSovereignOverview(userId: string) {
     db.prepare(`SELECT COUNT(1) as c FROM traces WHERE user_id = ?`).get(userId) as { c: number }
   ).c;
 
+  let sovereignConsoleGapsOpen = 0;
+  let sovereignConsoleChangesPending = 0;
+  let sovereignConsoleAuditEvents = 0;
+  try {
+    sovereignConsoleGapsOpen = (
+      db
+        .prepare(
+          `SELECT COUNT(1) as c FROM governance_gaps WHERE user_id = ? AND status NOT IN ('repaired', 'failed_repair')`
+        )
+        .get(userId) as { c: number }
+    ).c;
+    sovereignConsoleChangesPending = (
+      db
+        .prepare(
+          `SELECT COUNT(1) as c FROM governance_changes WHERE user_id = ? AND status IN ('proposed', 'pending', 'approved', 'testing')`
+        )
+        .get(userId) as { c: number }
+    ).c;
+    sovereignConsoleAuditEvents = (
+      db.prepare(`SELECT COUNT(1) as c FROM governance_audit_logs WHERE user_id = ?`).get(userId) as { c: number }
+    ).c;
+  } catch {
+    /* governance console tables not present on legacy DB */
+  }
+
   return {
     userId,
     constitutionalClausesActive: constitutionActive,
@@ -121,5 +146,9 @@ export function getSovereignOverview(userId: string) {
     distortionObservationsActive: distortions,
     /** Raw dialogue turns stored separately from structured cognition. */
     chatTracesStored: traces,
+    /** Sovereign Console tabs (SQLite governance_*), when tables exist. */
+    sovereignConsoleGapsOpen,
+    sovereignConsoleChangesPending,
+    sovereignConsoleAuditEvents,
   };
 }

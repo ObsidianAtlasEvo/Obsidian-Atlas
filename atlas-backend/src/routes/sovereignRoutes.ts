@@ -15,8 +15,7 @@ import type {
   FastifyRequest,
 } from 'fastify';
 import { spawn } from 'child_process';
-import middie from '@fastify/middie';
-import rateLimit from 'express-rate-limit';
+import rateLimitPlugin from '@fastify/rate-limit';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -176,26 +175,23 @@ const sovereignRoutes: FastifyPluginAsync = async (
 
   // ──────────────────────────────────────────────────────────────────────────
   // LIVE LOG STREAM
-  // GET /api/sovereign/logs (SSE) — express-rate-limit via middie; fp() keeps parent auth preHandler.
-  // CodeQL may still flag the handler — // codeql[js/missing-rate-limiting] documents analysis gap (limits run above).
+  // GET /api/sovereign/logs (SSE) — @fastify/rate-limit; fp() keeps parent auth preHandler.
   // ──────────────────────────────────────────────────────────────────────────
 
   await fastify.register(
     fp(
       async (r: FastifyInstance): Promise<void> => {
-        await r.register(middie);
-        r.use(
-          rateLimit({
-            windowMs: 60_000,
-            limit: 5,
-            validate: { trustProxy: false },
-          }),
-        );
+        await r.register(rateLimitPlugin, { global: false });
         r.route({
           method: 'GET',
           url: '/',
+          config: {
+            rateLimit: {
+              max: 5,
+              timeWindow: '1 minute',
+            },
+          },
           handler: async (request, reply) => {
-            // codeql[js/missing-rate-limiting]
             sseHeaders(reply);
             reply.hijack();
 
@@ -742,25 +738,23 @@ const sovereignRoutes: FastifyPluginAsync = async (
   // DEPLOY
   // POST /api/sovereign/deploy  — triggers deploy.sh and returns job ID
   // GET  /api/sovereign/deploy/stream — SSE stream of the active deploy
-  // (express-rate-limit + middie in fp-wrapped sub-plugins for CodeQL.)
+  // (@fastify/rate-limit + config.rateLimit on each fp-wrapped route.)
   // ──────────────────────────────────────────────────────────────────────────
 
   await fastify.register(
     fp(
       async (r: FastifyInstance): Promise<void> => {
-        await r.register(middie);
-        r.use(
-          rateLimit({
-            windowMs: 60_000,
-            limit: 3,
-            validate: { trustProxy: false },
-          }),
-        );
+        await r.register(rateLimitPlugin, { global: false });
         r.route<{ Body: { version?: string } }>({
           method: 'POST',
           url: '/',
+          config: {
+            rateLimit: {
+              max: 3,
+              timeWindow: '1 minute',
+            },
+          },
           handler: async (request, reply) => {
-            // codeql[js/missing-rate-limiting]
             if (deployRunning) {
               reply.code(409).send({ error: 'Deploy already in progress' });
               return;
@@ -816,19 +810,17 @@ const sovereignRoutes: FastifyPluginAsync = async (
   await fastify.register(
     fp(
       async (r: FastifyInstance): Promise<void> => {
-        await r.register(middie);
-        r.use(
-          rateLimit({
-            windowMs: 60_000,
-            limit: 10,
-            validate: { trustProxy: false },
-          }),
-        );
+        await r.register(rateLimitPlugin, { global: false });
         r.route({
           method: 'GET',
           url: '/',
+          config: {
+            rateLimit: {
+              max: 10,
+              timeWindow: '1 minute',
+            },
+          },
           handler: async (request, reply) => {
-            // codeql[js/missing-rate-limiting]
             sseHeaders(reply);
             reply.hijack();
 

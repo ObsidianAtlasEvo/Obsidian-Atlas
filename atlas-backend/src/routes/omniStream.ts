@@ -349,6 +349,25 @@ export function registerOmniStreamRoutes(app: FastifyInstance): void {
         (m): m is { role: ChatRole; content: string } => m.role !== 'system'
       );
 
+      if (!result.fullText.trim()) {
+        request.log.warn(
+          {
+            userId,
+            surface: result.surface,
+            model: result.model,
+            promptPreview: userPrompt.slice(0, 200),
+          },
+          'omni_stream_empty_reply',
+        );
+        sseWrite(raw, 'error', {
+          code: 'empty_reply',
+          message:
+            'Atlas returned no text. Often: Ollama hit context/token limits after a long thread, model unloaded, or OLLAMA_BASE_URL misconfigured (use http://host:11434/api). Try a fresh question, shorter thread, or restart Ollama; check pm2 logs for omni_stream_empty_reply.',
+        });
+        raw.end();
+        return;
+      }
+
       triggerEvolutionAfterOmniResponse({
         traceId,
         userId,

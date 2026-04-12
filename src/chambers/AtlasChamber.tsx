@@ -4,11 +4,25 @@ import { streamChat, OllamaError, type OllamaMessage } from '../lib/ollama';
 import { buildAtlasSystemPrompt } from '../lib/atlasPrompt';
 import { generateId, nowISO } from '../lib/persistence';
 import type { UserQuestion, AnswerDepthTier, InquiryStyle } from '@/types';
+import { atlasApiUrl, atlasChatUseHttpBackend } from '../lib/atlasApi';
+import { atlasTraceUserId } from '../lib/atlasTraceContext';
+import type { ChatRequestState } from '../db/atlasEntities';
+import {
+  createThread,
+  appendMessage,
+  saveStreamingChunk,
+  finalizeMessage,
+  getThreadMessages,
+  recoverInterruptedRequests,
+  savePromptHistory,
+} from '../db/chatPersistence';
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
 interface ChatMessage {
   id: string;
+  /** Dexie row id for incremental saves; undefined if not yet persisted. */
+  dbId?: number;
   role: 'user' | 'assistant';
   content: string;
   timestamp: string;
@@ -16,6 +30,7 @@ interface ChatMessage {
   error?: string;
   tokens?: number;
   durationMs?: number;
+  requestState?: ChatRequestState;
 }
 
 type ThinkingState = 'WEIGHING CONTRADICTIONS' | 'RETRIEVING' | 'SYNTHESIZING' | null;
@@ -276,9 +291,25 @@ export default function AtlasChamber() {
   const [thinkingState, setThinkingState] = useState<ThinkingState>(null);
   const [isStreaming, setIsStreaming] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+  const requestSeqRef = useRef(0);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const streamingIdRef = useRef<string | null>(null);
+  const activeThreadIdRef = useRef<string | null>(null);
+  /** Debounced streaming content save interval handle. */
+  const streamSaveTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Hydrate: recover interrupted requests + load last thread from IndexedDB
+  useEffect(() => {
+    const uid = store.currentUser?.uid;
+    if (!uid) return;
+    void (async () => {
+      const recovered = await recoverInterruptedRequests(uid);
+      if (recovered > 0) {
+        console.log(`[Atlas] recovered ${recovered} interrupted request(s) from IndexedDB`);
+      }
+    })();
+  }, [store.currentUser?.uid]);
 
   // Scroll to bottom on new messages
   useEffect(() => {
@@ -310,20 +341,45 @@ export default function AtlasChamber() {
 
   const handleSubmit = useCallback(async () => {
     const text = inputValue.trim();
-    if (!text || isStreaming) return;
+    if (!text) return;
 
-    // Cancel any in-progress stream
+    const seq = ++requestSeqRef.current;
     abortRef.current?.abort();
+
+    if (isStreaming) {
+      setThinkingState(null);
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.role === 'assistant' && m.isStreaming
+            ? {
+                ...m,
+                isStreaming: false,
+                content: m.content.trim(),
+              }
+            : m
+        )
+      );
+    }
 
     const userMsgId = generateId();
     const assistantMsgId = generateId();
     streamingIdRef.current = assistantMsgId;
+
+    const uid = store.currentUser?.uid ?? 'anon';
+
+    // Ensure a thread exists for this session
+    if (!activeThreadIdRef.current) {
+      const thread = await createThread(uid, 'atlas-chamber', text.slice(0, 80));
+      activeThreadIdRef.current = thread.threadId;
+    }
+    const tid = activeThreadIdRef.current;
 
     const userMessage: ChatMessage = {
       id: userMsgId,
       role: 'user',
       content: text,
       timestamp: nowISO(),
+      requestState: 'idle',
     };
 
     const assistantMessage: ChatMessage = {
@@ -332,11 +388,41 @@ export default function AtlasChamber() {
       content: '',
       timestamp: nowISO(),
       isStreaming: true,
+      requestState: 'submitting',
     };
 
     setInputValue('');
     setMessages((prev) => [...prev, userMessage, assistantMessage]);
     setIsStreaming(true);
+
+    // Persist user message + placeholder assistant to IndexedDB
+    const now = Date.now();
+    void savePromptHistory(uid, text, 'atlas-chamber');
+    void appendMessage({
+      threadId: tid,
+      userId: uid,
+      role: 'user',
+      content: text,
+      requestState: 'idle',
+      createdAt: now,
+      updatedAt: now,
+      isPartial: false,
+    });
+    const assistantDbId = await appendMessage({
+      threadId: tid,
+      userId: uid,
+      role: 'assistant',
+      content: '',
+      requestState: 'submitting',
+      createdAt: now,
+      updatedAt: now,
+      isPartial: true,
+    });
+    setMessages((prev) =>
+      prev.map((m) =>
+        m.id === assistantMsgId ? { ...m, dbId: assistantDbId } : m,
+      ),
+    );
 
     // Cycle thinking states for UX texture
     const thinkingStates: ThinkingState[] = ['RETRIEVING', 'WEIGHING CONTRADICTIONS', 'SYNTHESIZING'];
@@ -350,6 +436,248 @@ export default function AtlasChamber() {
     const history = buildMessageHistory();
     history.push({ role: 'user', content: text });
 
+    const finishOk = (fullText: string, metrics?: { tokens?: number; duration?: number }) => {
+      clearInterval(thinkingInterval);
+      if (streamSaveTimerRef.current) {
+        clearInterval(streamSaveTimerRef.current);
+        streamSaveTimerRef.current = null;
+      }
+      if (seq !== requestSeqRef.current) return;
+      setThinkingState(null);
+      setIsStreaming(false);
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === assistantMsgId
+            ? {
+                ...m,
+                content: fullText,
+                isStreaming: false,
+                tokens: metrics?.tokens,
+                durationMs: metrics?.duration,
+                requestState: 'completed' as ChatRequestState,
+              }
+            : m
+        )
+      );
+
+      void finalizeMessage(assistantDbId, 'completed', fullText, {
+        tokens: metrics?.tokens,
+        durationMs: metrics?.duration,
+      });
+
+      const question: UserQuestion = {
+        id: userMsgId,
+        text,
+        timestamp: nowISO(),
+        analysis: {
+          style: 'diagnostic' as InquiryStyle,
+          depth: store.activePosture.depth,
+          dimensions: {},
+        },
+        response: {
+          synthesis: fullText,
+          latentPatterns: [],
+          strategicImplications: [],
+          suggestedChambers: [],
+          epistemicStatus: 'inference',
+          cognitiveSignatureImpact: '',
+        },
+      };
+      store.addQuestion(question);
+    };
+
+    const finishErr = (err: OllamaError) => {
+      clearInterval(thinkingInterval);
+      if (streamSaveTimerRef.current) {
+        clearInterval(streamSaveTimerRef.current);
+        streamSaveTimerRef.current = null;
+      }
+      if (seq !== requestSeqRef.current) return;
+      setThinkingState(null);
+      setIsStreaming(false);
+
+      let errorMsg = err.message;
+      const terminalState: ChatRequestState =
+        err.code === 'TIMEOUT' ? 'timed_out'
+          : err.code === 'ABORTED' ? 'aborted'
+          : 'failed';
+
+      if (err.code === 'NETWORK') {
+        errorMsg = 'Cannot reach the local model. Make sure Ollama is running: `ollama serve`';
+      } else if (err.code === 'MODEL_NOT_FOUND') {
+        errorMsg = `Model not found. Pull it with: ollama pull ${process.env.OLLAMA_MODEL ?? 'llama3.1:70b'}`;
+      } else if (err.code === 'TIMEOUT') {
+        errorMsg = 'Atlas stream timed out. Check backend and API keys.';
+      } else if (err.code === 'ABORTED') {
+        void finalizeMessage(assistantDbId, 'aborted', '', { error: 'Request cancelled' });
+        return;
+      }
+
+      void finalizeMessage(assistantDbId, terminalState, '', { error: errorMsg });
+
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === assistantMsgId
+            ? { ...m, isStreaming: false, error: errorMsg, content: '', requestState: terminalState }
+            : m
+        )
+      );
+    };
+
+    if (atlasChatUseHttpBackend()) {
+      const ac = new AbortController();
+      abortRef.current = ac;
+      const OMNI_STREAM_MS = 300_000;
+      const STREAM_STALL_MS = 30_000;
+      let timedOut = false;
+      let stallAborted = false;
+      const timeout = setTimeout(() => {
+        timedOut = true;
+        ac.abort();
+      }, OMNI_STREAM_MS);
+      let stallTimer: ReturnType<typeof setTimeout> | null = null;
+      const bumpStall = () => {
+        if (stallTimer) clearTimeout(stallTimer);
+        stallTimer = setTimeout(() => {
+          stallAborted = true;
+          ac.abort();
+        }, STREAM_STALL_MS);
+      };
+      bumpStall();
+      const t0 = performance.now();
+      const posture = Math.min(5, Math.max(1, Math.round(Number(store.activePosture.depth) || 3))) as
+        | 1
+        | 2
+        | 3
+        | 4
+        | 5;
+
+      void (async () => {
+        try {
+          const res = await fetch(atlasApiUrl('/v1/chat/omni-stream'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+            credentials: 'include',
+            signal: ac.signal,
+            body: JSON.stringify({
+              userId: atlasTraceUserId(store),
+              messages: history,
+              posture,
+              lineOfInquiry: 'atlas-chamber',
+            }),
+          });
+          if (!res.ok) {
+            const errBody = await res.text().catch(() => '');
+            throw new OllamaError(errBody || `HTTP ${res.status}`, 'SERVER_ERROR');
+          }
+          const reader = res.body?.getReader();
+          if (!reader) throw new OllamaError('No response body', 'SERVER_ERROR');
+
+          const dec = new TextDecoder();
+          let buffer = '';
+          let full = '';
+          let streamError: string | null = null;
+
+          // Periodically persist partial streaming content to IndexedDB
+          streamSaveTimerRef.current = setInterval(() => {
+            if (full.length > 0) {
+              void saveStreamingChunk(assistantDbId, full);
+            }
+          }, 2000);
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            bumpStall();
+            buffer += dec.decode(value, { stream: true });
+            let sep: number;
+            while ((sep = buffer.indexOf('\n\n')) !== -1) {
+              const block = buffer.slice(0, sep);
+              buffer = buffer.slice(sep + 2);
+              let eventName = 'message';
+              const dataLines: string[] = [];
+              for (const line of block.split('\n')) {
+                if (line.startsWith('event:')) eventName = line.slice(6).trim();
+                else if (line.startsWith('data:')) dataLines.push(line.slice(5).trim());
+              }
+              const dataRaw = dataLines.join('');
+              let data: Record<string, unknown> | null = null;
+              if (dataRaw) {
+                try {
+                  data = JSON.parse(dataRaw) as Record<string, unknown>;
+                } catch {
+                  data = { raw: dataRaw };
+                }
+              }
+              if (eventName === 'delta' && typeof data?.text === 'string') {
+                bumpStall();
+                const piece = data.text;
+                full += piece;
+                setMessages((prev) =>
+                  prev.map((m) => (m.id === assistantMsgId ? { ...m, content: m.content + piece } : m))
+                );
+              }
+              if (eventName === 'done' && data && typeof data === 'object') {
+                const d = data as { reply?: string };
+                if (typeof d.reply === 'string' && !full.trim()) {
+                  full = d.reply;
+                  setMessages((prev) =>
+                    prev.map((m) => (m.id === assistantMsgId ? { ...m, content: d.reply as string } : m))
+                  );
+                }
+              }
+              if (eventName === 'error') {
+                streamError = String(data?.message ?? 'Atlas stream failed');
+              }
+            }
+          }
+
+          if (streamError) throw new OllamaError(streamError, 'SERVER_ERROR');
+          if (!full.trim()) {
+            throw new OllamaError(
+              'Atlas returned no content. Confirm POST /api/v1/chat/omni-stream reaches the backend (proxy must forward /api).',
+              'SERVER_ERROR',
+            );
+          }
+          finishOk(full.trim(), { duration: performance.now() - t0 });
+        } catch (e) {
+          if (e instanceof DOMException && e.name === 'AbortError') {
+            if (timedOut) {
+              finishErr(new OllamaError('Atlas stream timed out. Check backend and API keys.', 'TIMEOUT'));
+            } else if (stallAborted) {
+              finishErr(
+                new OllamaError(
+                  'Stream stalled (no tokens for 30s). Check backend, model, or network.',
+                  'TIMEOUT',
+                ),
+              );
+            } else {
+              finishErr(new OllamaError('Request was cancelled', 'ABORTED'));
+            }
+          } else if (e instanceof OllamaError) {
+            finishErr(e);
+          } else {
+            const message = e instanceof Error ? e.message : String(e);
+            const isNetwork =
+              message.includes('fetch') ||
+              message.includes('network') ||
+              message.includes('ECONNREFUSED');
+            finishErr(
+              new OllamaError(
+                isNetwork ? 'Cannot reach the Atlas API. Is the backend running?' : message,
+                isNetwork ? 'NETWORK' : 'SERVER_ERROR',
+              ),
+            );
+          }
+        } finally {
+          clearTimeout(timeout);
+          if (stallTimer) clearTimeout(stallTimer);
+          if (abortRef.current === ac) abortRef.current = null;
+        }
+      })();
+      return;
+    }
+
     abortRef.current = streamChat(history, {
       onToken: (token) => {
         setMessages((prev) =>
@@ -361,65 +689,10 @@ export default function AtlasChamber() {
         );
       },
       onDone: (fullText, metrics) => {
-        clearInterval(thinkingInterval);
-        setThinkingState(null);
-        setIsStreaming(false);
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === assistantMsgId
-              ? {
-                  ...m,
-                  content: fullText,
-                  isStreaming: false,
-                  tokens: metrics?.tokens,
-                  durationMs: metrics?.duration,
-                }
-              : m
-          )
-        );
-
-        // Record in store's recent questions
-        const question: UserQuestion = {
-          id: userMsgId,
-          text,
-          timestamp: nowISO(),
-          analysis: {
-            style: 'diagnostic' as InquiryStyle,
-            depth: store.activePosture.depth,
-            dimensions: {},
-          },
-          response: {
-            synthesis: fullText,
-            latentPatterns: [],
-            strategicImplications: [],
-            suggestedChambers: [],
-            epistemicStatus: 'inference',
-            cognitiveSignatureImpact: '',
-          },
-        };
-        store.addQuestion(question);
+        finishOk(fullText, metrics);
       },
       onError: (err: OllamaError) => {
-        clearInterval(thinkingInterval);
-        setThinkingState(null);
-        setIsStreaming(false);
-
-        let errorMsg = err.message;
-        if (err.code === 'NETWORK') {
-          errorMsg = 'Cannot reach the local model. Make sure Ollama is running: `ollama serve`';
-        } else if (err.code === 'MODEL_NOT_FOUND') {
-          errorMsg = `Model not found. Pull it with: ollama pull ${process.env.OLLAMA_MODEL ?? 'llama3.1:70b'}`;
-        } else if (err.code === 'ABORTED') {
-          return; // User cancelled — don't show error
-        }
-
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === assistantMsgId
-              ? { ...m, isStreaming: false, error: errorMsg, content: '' }
-              : m
-          )
-        );
+        finishErr(err);
       },
     });
   }, [inputValue, isStreaming, buildMessageHistory, store]);

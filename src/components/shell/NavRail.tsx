@@ -65,6 +65,8 @@ const CHAMBERS: ChamberDef[] = [
   { id: 'mirrorforge',    label: 'MirrorForge',    icon: 'forge',        group: 'Adaptive' },
   { id: 'reality-engine', label: 'Reality Engine',  icon: 'topology',     group: 'Adaptive' },
   { id: 'chrysalis',      label: 'Chrysalis',      icon: 'settings',     group: 'Adaptive' },
+  { id: 'evolution-layer', label: 'Evolution',     icon: 'topology',     group: 'Adaptive' },
+  { id: 'explainability',  label: 'Why',           icon: 'signals',      group: 'Adaptive' },
 
   // ── Memory ───────────────────────────────────────────────────────────
   { id: 'memory-vault',    label: 'Memory Vault',  icon: 'memory',       group: 'Memory' },
@@ -104,9 +106,11 @@ function Icon({ path, size = 18 }: { path: string; size?: number }) {
 interface NavRailProps {
   expanded: boolean;
   onToggle: () => void;
+  /** Bottom icon bar layout; desktop rail is hidden via CSS when this is true. */
+  isMobile?: boolean;
 }
 
-export default function NavRail({ expanded, onToggle }: NavRailProps) {
+export default function NavRail({ expanded, onToggle, isMobile }: NavRailProps) {
   const activeMode = useAtlasStore((s) => s.activeMode);
   const setActiveMode = useAtlasStore((s) => s.setActiveMode);
   const currentUser = useAtlasStore((s) => s.currentUser);
@@ -119,8 +123,77 @@ export default function NavRail({ expanded, onToggle }: NavRailProps) {
 
   const width = expanded ? 'var(--atlas-nav-expanded)' : 'var(--atlas-nav-collapsed)';
 
+  if (isMobile) {
+    return (
+      <nav
+        className="atlas-nav-rail atlas-nav-rail--mobile"
+        aria-label="Primary navigation"
+        style={{
+          position: 'fixed',
+          left: 0,
+          right: 0,
+          bottom: 0,
+          zIndex: 40,
+          minHeight: 'calc(52px + env(safe-area-inset-bottom, 0px))',
+          paddingBottom: 'env(safe-area-inset-bottom, 0px)',
+          background: 'var(--atlas-surface-rail)',
+          borderTop: '1px solid var(--border-structural)',
+          display: 'flex',
+          alignItems: 'stretch',
+          flexShrink: 0,
+        }}
+      >
+        <div
+          style={{
+            display: 'flex',
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 2,
+            overflowX: 'auto',
+            overflowY: 'hidden',
+            flex: 1,
+            padding: '6px 8px',
+            WebkitOverflowScrolling: 'touch',
+          }}
+        >
+          {visibleChambers.map((chamber) => {
+            const isActive = activeMode === chamber.id;
+            return (
+              <button
+                key={chamber.id}
+                type="button"
+                onClick={() => setActiveMode(chamber.id)}
+                title={chamber.label}
+                aria-label={chamber.label}
+                aria-current={isActive ? 'page' : undefined}
+                style={{
+                  flex: '0 0 auto',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  width: 44,
+                  height: 44,
+                  padding: 0,
+                  border: 'none',
+                  borderRadius: 10,
+                  cursor: 'pointer',
+                  background: isActive ? 'rgba(88, 28, 135, 0.22)' : 'transparent',
+                  color: isActive ? 'rgba(226, 232, 240, 0.95)' : 'rgba(226, 232, 240, 0.42)',
+                  transition: 'background 160ms ease, color 160ms ease',
+                }}
+              >
+                <Icon path={ICONS[chamber.icon] ?? ICONS.atlas} size={20} />
+              </button>
+            );
+          })}
+        </div>
+      </nav>
+    );
+  }
+
   return (
     <nav
+      className="atlas-nav-rail atlas-nav-rail--desktop"
       style={{
         width,
         minWidth: width,

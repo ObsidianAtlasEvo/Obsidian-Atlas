@@ -14,12 +14,11 @@
   "dependencies": {
     "@fastify/cookie": "^11.0.2",
     "@fastify/cors": "^11.0.0",
-    "@fastify/middie": "^9.3.1",
+    "@fastify/rate-limit": "^10.3.0",
     "@google/genai": "^1.48.0",
     "@supabase/supabase-js": "^2.49.1",
     "better-sqlite3": "^11.8.1",
     "dotenv": "^16.4.5",
-    "express-rate-limit": "^8.3.2",
     "fastify": "^5.2.1",
     "fastify-plugin": "^5.0.1",
     "jose": "^6.0.0",

@@ -34,6 +34,10 @@ import { runMigrationsOnStartup } from './persistence/schemaVersioning.js';
 import { doctrineMiddleware, getFailureModeDoctrine } from './resilience/failureModeDoctrine.js';
 import { registerExplainabilityRoutes } from './explainability/explainabilityRoutes.js';
 import { registerRetentionRoutes } from './privacy/dataRetention.js';
+import embeddingsRoutes from './routes/embeddings.js';
+import modelRoutes from './routes/models.js';
+import orchestrateRoutes from './routes/orchestrate.js';
+import { registerGovernanceConsoleRoutes } from './routes/governanceConsoleRoutes.js';
 
 initSqlite();
 await runMigrationsOnStartup();
@@ -94,6 +98,10 @@ registerLegacyRoutes(app);
 registerSovereignOverviewRoutes(app);
 registerIntelligenceChambersRoutes(app);
 registerMindMapRoutes(app);
+registerGovernanceConsoleRoutes(app);
+await app.register(embeddingsRoutes);
+await app.register(modelRoutes);
+await app.register(orchestrateRoutes);
 
 if (env.evolutionEnabled && env.supabaseUrl && env.supabaseServiceKey) {
   const supabaseUrl = env.supabaseUrl;

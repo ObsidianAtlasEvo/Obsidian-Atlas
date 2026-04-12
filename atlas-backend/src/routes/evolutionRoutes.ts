@@ -17,9 +17,7 @@
  * query param) must match the :userId path param. In production this should be
  * replaced with proper JWT / session verification.
  *
- * Per-IP limits: each route is registered under fp()+middie+express-rate-limit before the handler.
- * CodeQL js/missing-rate-limiting does not model that chain for Fastify; each handler starts with
- * // codeql[js/missing-rate-limiting] so PR checks match runtime behavior (limits still enforced above).
+ * Per-IP limits: @fastify/rate-limit with `global: false` and `config.rateLimit` on each route.
  *
  * TODO (production): Replace the userId cookie / query-param auth check with
  * a verified JWT claim extracted by a Fastify authentication plugin (e.g.
@@ -28,8 +26,7 @@
  */
 
 import type { FastifyInstance, FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
-import middie from '@fastify/middie';
-import rateLimit from 'express-rate-limit';
+import rateLimitPlugin from '@fastify/rate-limit';
 import fp from 'fastify-plugin';
 import { EvolutionEngine } from '../services/evolutionEngine.js';
 import { EvolutionRepository } from '../db/evolutionRepository.js';
@@ -84,17 +81,16 @@ const evolutionRoutes: FastifyPluginAsync<EvolutionRoutesOptions> = async (
   await fastify.register(
     fp(
       async (r: FastifyInstance): Promise<void> => {
-        await r.register(middie);
-        r.use(
-          rateLimit({
-            windowMs: 60_000,
-            limit: 100,
-            validate: { trustProxy: false },
-          }),
-        );
+        await r.register(rateLimitPlugin, { global: false });
         r.route<{ Params: UserIdParams; Querystring: AuthQuery }>({
           method: 'GET',
           url: '/',
+          config: {
+            rateLimit: {
+              max: 100,
+              timeWindow: '1 minute',
+            },
+          },
           schema: {
             params: {
               type: 'object',
@@ -112,7 +108,6 @@ const evolutionRoutes: FastifyPluginAsync<EvolutionRoutesOptions> = async (
             },
           },
           handler: async (req: FastifyRequest<{ Params: UserIdParams; Querystring: AuthQuery }>, reply: FastifyReply) => {
-            // codeql[js/missing-rate-limiting]
             if (!authorised(req.params.userId, req)) {
               return reply.status(403).send({ error: 'Forbidden: userId mismatch' });
             }
@@ -139,17 +134,16 @@ const evolutionRoutes: FastifyPluginAsync<EvolutionRoutesOptions> = async (
   await fastify.register(
     fp(
       async (r: FastifyInstance): Promise<void> => {
-        await r.register(middie);
-        r.use(
-          rateLimit({
-            windowMs: 60_000,
-            limit: 60,
-            validate: { trustProxy: false },
-          }),
-        );
+        await r.register(rateLimitPlugin, { global: false });
         r.route<{ Params: UserIdParams; Querystring: AuthQuery }>({
           method: 'GET',
           url: '/',
+          config: {
+            rateLimit: {
+              max: 60,
+              timeWindow: '1 minute',
+            },
+          },
           schema: {
             params: {
               type: 'object',
@@ -174,7 +168,6 @@ const evolutionRoutes: FastifyPluginAsync<EvolutionRoutesOptions> = async (
             },
           },
           handler: async (req: FastifyRequest<{ Params: UserIdParams; Querystring: AuthQuery }>, reply: FastifyReply) => {
-            // codeql[js/missing-rate-limiting]
             if (!authorised(req.params.userId, req)) {
               return reply.status(403).send({ error: 'Forbidden: userId mismatch' });
             }
@@ -201,17 +194,16 @@ const evolutionRoutes: FastifyPluginAsync<EvolutionRoutesOptions> = async (
   await fastify.register(
     fp(
       async (r: FastifyInstance): Promise<void> => {
-        await r.register(middie);
-        r.use(
-          rateLimit({
-            windowMs: 60_000,
-            limit: 5,
-            validate: { trustProxy: false },
-          }),
-        );
+        await r.register(rateLimitPlugin, { global: false });
         r.route<{ Params: UserIdParams; Querystring: AuthQuery }>({
           method: 'POST',
           url: '/',
+          config: {
+            rateLimit: {
+              max: 5,
+              timeWindow: '1 minute',
+            },
+          },
           schema: {
             params: {
               type: 'object',
@@ -234,7 +226,6 @@ const evolutionRoutes: FastifyPluginAsync<EvolutionRoutesOptions> = async (
             },
           },
           handler: async (req: FastifyRequest<{ Params: UserIdParams; Querystring: AuthQuery }>, reply: FastifyReply) => {
-            // codeql[js/missing-rate-limiting]
             if (!authorised(req.params.userId, req)) {
               return reply.status(403).send({ error: 'Forbidden: userId mismatch' });
             }
@@ -260,17 +251,16 @@ const evolutionRoutes: FastifyPluginAsync<EvolutionRoutesOptions> = async (
   await fastify.register(
     fp(
       async (r: FastifyInstance): Promise<void> => {
-        await r.register(middie);
-        r.use(
-          rateLimit({
-            windowMs: 60_000,
-            limit: 10,
-            validate: { trustProxy: false },
-          }),
-        );
+        await r.register(rateLimitPlugin, { global: false });
         r.route<{ Params: UserIdParams; Querystring: AuthQuery }>({
           method: 'DELETE',
           url: '/',
+          config: {
+            rateLimit: {
+              max: 10,
+              timeWindow: '1 minute',
+            },
+          },
           schema: {
             params: {
               type: 'object',
@@ -293,7 +283,6 @@ const evolutionRoutes: FastifyPluginAsync<EvolutionRoutesOptions> = async (
             },
           },
           handler: async (req: FastifyRequest<{ Params: UserIdParams; Querystring: AuthQuery }>, reply: FastifyReply) => {
-            // codeql[js/missing-rate-limiting]
             if (!authorised(req.params.userId, req)) {
               return reply.status(403).send({ error: 'Forbidden: userId mismatch' });
             }
@@ -319,17 +308,16 @@ const evolutionRoutes: FastifyPluginAsync<EvolutionRoutesOptions> = async (
   await fastify.register(
     fp(
       async (r: FastifyInstance): Promise<void> => {
-        await r.register(middie);
-        r.use(
-          rateLimit({
-            windowMs: 60_000,
-            limit: 60,
-            validate: { trustProxy: false },
-          }),
-        );
+        await r.register(rateLimitPlugin, { global: false });
         r.route<{ Params: UserIdParams; Querystring: AuthQuery }>({
           method: 'GET',
           url: '/',
+          config: {
+            rateLimit: {
+              max: 60,
+              timeWindow: '1 minute',
+            },
+          },
           schema: {
             params: {
               type: 'object',
@@ -347,7 +335,6 @@ const evolutionRoutes: FastifyPluginAsync<EvolutionRoutesOptions> = async (
             },
           },
           handler: async (req: FastifyRequest<{ Params: UserIdParams; Querystring: AuthQuery }>, reply: FastifyReply) => {
-            // codeql[js/missing-rate-limiting]
             if (!authorised(req.params.userId, req)) {
               return reply.status(403).send({ error: 'Forbidden: userId mismatch' });
             }

@@ -160,6 +160,8 @@ export interface AtlasActions {
 
   // Creator console
   setCreatorConsoleState: (state: AppState['creatorConsoleState']) => void;
+  setBugHunter: (partial: Partial<AppState['bugHunter']>) => void;
+  setEmergencyStatus: (status: AppState['emergencyStatus']) => void;
   setSettingsOpen: (open: boolean) => void;
 
   // Bulk load after auth
@@ -902,6 +904,13 @@ export const useAtlasStore = create<AtlasStore>((set, get) => ({
   // ── Creator Console ───────────────────────────────────────────────────
 
   setCreatorConsoleState: (state) => set({ creatorConsoleState: state }),
+
+  setBugHunter: (partial) =>
+    set((s) => ({
+      bugHunter: { ...s.bugHunter, ...partial },
+    })),
+
+  setEmergencyStatus: (status) => set({ emergencyStatus: status }),
 
   setSettingsOpen: (open) => set({ isSettingsOpen: open }),
 }));

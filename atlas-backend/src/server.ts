@@ -2,7 +2,6 @@ import Fastify, { type FastifyError } from 'fastify';
 import cors from '@fastify/cors';
 import cookie from '@fastify/cookie';
 import { config } from './config.js';
-import chatRoutes from './routes/chat.js';
 import healthRoutes from './routes/health.js';
 import embeddingsRoutes from './routes/embeddings.js';
 import modelRoutes from './routes/models.js';
@@ -31,7 +30,7 @@ async function bootstrap(): Promise<void> {
 
   // ── Routes ─────────────────────────────────────────────────────────────────
   await app.register(healthRoutes);
-  await app.register(chatRoutes);
+  // Full chat + omni + governance: use `npm run dev` / `start` (src/index.ts).
   await app.register(embeddingsRoutes);
   await app.register(modelRoutes);
   await app.register(orchestrateRoutes);

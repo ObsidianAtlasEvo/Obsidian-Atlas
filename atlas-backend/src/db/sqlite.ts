@@ -775,6 +775,75 @@ CREATE TABLE IF NOT EXISTS mind_map_snapshots (
 CREATE INDEX IF NOT EXISTS idx_mm_snap_user ON mind_map_snapshots(user_id, created_at DESC);
 `;
 
+/** Sovereign Console: gaps, change control, audit, emergency, diagnostics (browser → backend, no Firestore). */
+const SOVEREIGNTY_LAYER_V7_GOVERNANCE_CONSOLE = `
+CREATE TABLE IF NOT EXISTS governance_gaps (
+  id TEXT PRIMARY KEY NOT NULL,
+  user_id TEXT NOT NULL,
+  title TEXT NOT NULL,
+  description TEXT NOT NULL,
+  severity TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'identified',
+  type TEXT NOT NULL DEFAULT 'structural_gap',
+  notes TEXT,
+  detected_at TEXT NOT NULL,
+  repaired_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_governance_gaps_user ON governance_gaps(user_id, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS governance_changes (
+  id TEXT PRIMARY KEY NOT NULL,
+  user_id TEXT NOT NULL,
+  title TEXT NOT NULL,
+  description TEXT NOT NULL,
+  impact TEXT,
+  class INTEGER NOT NULL DEFAULT 2,
+  proposed_by TEXT,
+  approved_by TEXT,
+  status TEXT NOT NULL DEFAULT 'proposed',
+  notes TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_governance_changes_user ON governance_changes(user_id, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS governance_audit_logs (
+  id TEXT PRIMARY KEY NOT NULL,
+  user_id TEXT NOT NULL,
+  action TEXT NOT NULL,
+  actor TEXT NOT NULL,
+  type TEXT,
+  severity TEXT NOT NULL DEFAULT 'medium',
+  details_json TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_governance_audit_user ON governance_audit_logs(user_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS governance_emergency_state (
+  user_id TEXT PRIMARY KEY NOT NULL,
+  active INTEGER NOT NULL DEFAULT 0,
+  activated_at TEXT,
+  reason TEXT,
+  lifted_at TEXT,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS diagnostics_reports (
+  id TEXT PRIMARY KEY NOT NULL,
+  user_id TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  type TEXT NOT NULL,
+  payload_json TEXT NOT NULL,
+  timestamp TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'open',
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_diagnostics_session ON diagnostics_reports(session_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_diagnostics_user ON diagnostics_reports(user_id, created_at DESC);
+`;
+
 let _db: Database.Database | null = null;
 
 /**
@@ -795,6 +864,7 @@ export function initSqlite(): Database.Database {
   database.exec(SOVEREIGNTY_LAYER_V4);
   database.exec(SOVEREIGNTY_LAYER_V5);
   database.exec(SOVEREIGNTY_LAYER_V6);
+  database.exec(SOVEREIGNTY_LAYER_V7_GOVERNANCE_CONSOLE);
   migratePolicyProfileColumns(database);
   migrateSectionVIIIContinuity(database);
   migrateArchivedAtIndexes(database);

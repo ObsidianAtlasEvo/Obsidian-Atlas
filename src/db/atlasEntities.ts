@@ -87,3 +87,72 @@ export interface MemoryCandidateDraft {
   keywords: string[];
   reason: string;
 }
+
+// ── Chat Thread Persistence ──────────────────────────────────────────────
+
+/**
+ * Finite-state machine for each chat request.
+ * Every request MUST reach a terminal state (`completed | failed | timed_out | aborted | interrupted`).
+ */
+export type ChatRequestState =
+  | 'idle'
+  | 'submitting'
+  | 'streaming'
+  | 'completed'
+  | 'failed'
+  | 'timed_out'
+  | 'aborted'
+  | 'interrupted';
+
+export const TERMINAL_CHAT_STATES: ReadonlySet<ChatRequestState> = new Set([
+  'completed',
+  'failed',
+  'timed_out',
+  'aborted',
+  'interrupted',
+]);
+
+export interface ChatThreadRecord {
+  id?: number;
+  threadId: string;
+  userId: string;
+  title: string;
+  /** Which chamber originated this thread. */
+  channel: string;
+  createdAt: number;
+  updatedAt: number;
+  lastRequestState: ChatRequestState;
+  messageCount: number;
+}
+
+export interface ChatMessageRecord {
+  id?: number;
+  threadId: string;
+  userId: string;
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+  /** FSM state at write time; streaming messages are `submitting` or `streaming`. */
+  requestState: ChatRequestState;
+  createdAt: number;
+  updatedAt: number;
+  /** Partial content is saved incrementally during streaming. */
+  isPartial: boolean;
+  error?: string;
+  tokens?: number;
+  durationMs?: number;
+}
+
+export interface PromptHistoryRecord {
+  id?: number;
+  userId: string;
+  prompt: string;
+  channel: string;
+  createdAt: number;
+}
+
+export interface UserPreferenceRecord {
+  userId: string;
+  key: string;
+  value: unknown;
+  updatedAt: number;
+}

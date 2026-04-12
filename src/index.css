@@ -227,3 +227,24 @@ pre {
   font-size: 0.8em;
   margin-left: 1px;
 }
+
+/* ── Mobile shell (< 640px) ─────────────────────────────────────────────── */
+
+@media (max-width: 639px) {
+  html {
+    font-size: 13px;
+  }
+
+  body {
+    overflow-y: auto;
+    overflow-x: hidden;
+  }
+
+  #root {
+    min-height: 100dvh;
+  }
+
+  .atlas-nav-rail--desktop {
+    display: none !important;
+  }
+}
