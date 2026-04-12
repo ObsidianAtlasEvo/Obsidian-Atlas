@@ -775,6 +775,23 @@ CREATE TABLE IF NOT EXISTS mind_map_snapshots (
 CREATE INDEX IF NOT EXISTS idx_mm_snap_user ON mind_map_snapshots(user_id, created_at DESC);
 `;
 
+/** Change Control — governance change proposals (migrated from Firestore). */
+const CHANGE_CONTROL_TABLE = `
+CREATE TABLE IF NOT EXISTS governance_changes (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  description TEXT NOT NULL,
+  impact TEXT NOT NULL,
+  proposedBy TEXT NOT NULL DEFAULT 'system',
+  status TEXT NOT NULL DEFAULT 'pending',
+  notes TEXT,
+  createdAt INTEGER NOT NULL,
+  updatedAt INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_governance_changes_status ON governance_changes(status);
+CREATE INDEX IF NOT EXISTS idx_governance_changes_time ON governance_changes(createdAt DESC);
+`;
+
 /** Phase 4 §5 — Data Retention & Deletion tables. */
 const RETENTION_TABLES = `
 CREATE TABLE IF NOT EXISTS atlas_sovereign_audit (
@@ -865,6 +882,7 @@ export function initSqlite(): Database.Database {
   database.exec(SOVEREIGNTY_LAYER_V5);
   database.exec(SOVEREIGNTY_LAYER_V6);
   database.exec(RETENTION_TABLES);
+  database.exec(CHANGE_CONTROL_TABLE);
   migratePolicyProfileColumns(database);
   migrateSectionVIIIContinuity(database);
   migrateArchivedAtIndexes(database);

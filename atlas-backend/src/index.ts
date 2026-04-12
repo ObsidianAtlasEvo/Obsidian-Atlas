@@ -29,6 +29,7 @@ import { registerGovernanceConsoleRoutes } from './routes/governanceConsoleRoute
 import orchestrateRoutes from './routes/orchestrate.js';
 import embeddingsRoutes from './routes/embeddings.js';
 import modelRoutes from './routes/models.js';
+import { registerChangeControlRoutes } from './routes/changeControlRoutes.js';
 import { loadPersistedJobs } from './services/inference/queueManager.js';
 
 initSqlite();
@@ -102,6 +103,7 @@ registerGovernanceConsoleRoutes(app);
 await app.register(orchestrateRoutes);
 await app.register(embeddingsRoutes);
 await app.register(modelRoutes);
+registerChangeControlRoutes(app);
 
 // POST /chat forwards to the handler registered as POST /v1/chat (same body, no model call here).
 app.post('/chat', async (request: FastifyRequest, reply: FastifyReply) => {
