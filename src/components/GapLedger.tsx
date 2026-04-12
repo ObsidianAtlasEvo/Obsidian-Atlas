@@ -40,6 +40,7 @@ export function GapLedger({ state, setState }: GapLedgerProps) {
         status: g.status as Gap['status'],
         detectedAt: String(g.detectedAt ?? g.createdAt ?? new Date().toISOString()),
         repairedAt: g.repairedAt ? String(g.repairedAt) : undefined,
+        source: g.source === 'evolution' || g.source === 'governance' ? g.source : undefined,
       }));
       setGaps(mapped);
     } catch {
@@ -145,7 +146,19 @@ export function GapLedger({ state, setState }: GapLedgerProps) {
                   />
                 </div>
                 <div className="space-y-1">
-                  <h3 className="text-sm font-bold text-ivory uppercase tracking-widest">{gap.title}</h3>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h3 className="text-sm font-bold text-ivory uppercase tracking-widest">{gap.title}</h3>
+                    {gap.source === 'evolution' && (
+                      <span className="text-[8px] uppercase tracking-widest px-1.5 py-0.5 rounded border border-violet-500/30 text-violet-300/90">
+                        Eval pipeline
+                      </span>
+                    )}
+                    {gap.source === 'governance' && (
+                      <span className="text-[8px] uppercase tracking-widest px-1.5 py-0.5 rounded border border-stone-600 text-stone-400">
+                        Console
+                      </span>
+                    )}
+                  </div>
                   <p className="text-xs text-stone leading-relaxed max-w-xl">{gap.description}</p>
                 </div>
               </div>

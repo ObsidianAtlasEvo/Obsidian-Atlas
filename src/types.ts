@@ -733,11 +733,19 @@ export interface Gap {
   id: string;
   title: string;
   description: string;
-  type: 'bug' | 'logic_failure' | 'privacy_risk' | 'security_weakness' | 'latency_bottleneck' | 'structural_gap';
+  type:
+    | 'bug'
+    | 'logic_failure'
+    | 'privacy_risk'
+    | 'security_weakness'
+    | 'latency_bottleneck'
+    | 'structural_gap';
   severity: 'low' | 'medium' | 'high' | 'critical';
   status: 'identified' | 'suspected' | 'investigating' | 'repair_proposed' | 'repaired' | 'failed_repair';
   detectedAt: string;
   repairedAt?: string;
+  /** From merged API: console gap vs evolution eval gap. */
+  source?: 'governance' | 'evolution';
 }
 
 export interface ChangeProposal {

@@ -3,6 +3,8 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { getDb } from '../db/sqlite.js';
 import { attachAtlasSession, getAuthenticatedUser } from '../services/auth/authProvider.js';
+import { assertGovernanceAccess } from '../services/governance/governanceAccess.js';
+import { listMergedGapsForUser } from '../services/governance/gapMerge.js';
 import { isSovereignOwnerEmail } from '../services/intelligence/router.js';
 
 const userIdQ = z.object({ userId: z.string().min(1) });
@@ -41,30 +43,41 @@ export function insertGovernanceAuditLog(input: {
 export function registerGovernanceConsoleRoutes(app: FastifyInstance): void {
   const db = () => getDb();
 
-  // ── Gaps ──────────────────────────────────────────────────────────────────
-  app.get('/v1/governance/gaps', (request, reply) => {
+  // ── Gaps (governance + evolution eval gaps merged) ────────────────────────
+  app.get('/v1/governance/gaps', async (request, reply) => {
     const parsed = userIdQ.extend({ status: z.string().optional() }).safeParse(request.query);
     if (!parsed.success) {
       return reply.status(400).send({ error: 'validation_error', details: parsed.error.flatten() });
     }
     const { userId, status } = parsed.data;
-    let rows: Record<string, unknown>[];
-    if (status) {
-      rows = db()
-        .prepare(
-          `SELECT id, user_id as userId, title, description, severity, status, type, notes, detected_at as detectedAt, repaired_at as repairedAt, created_at as createdAt, updated_at as updatedAt
-           FROM governance_gaps WHERE user_id = ? AND status = ? ORDER BY datetime(detected_at) DESC`
-        )
-        .all(userId, status) as Record<string, unknown>[];
-    } else {
-      rows = db()
-        .prepare(
-          `SELECT id, user_id as userId, title, description, severity, status, type, notes, detected_at as detectedAt, repaired_at as repairedAt, created_at as createdAt, updated_at as updatedAt
-           FROM governance_gaps WHERE user_id = ? ORDER BY datetime(detected_at) DESC`
-        )
-        .all(userId) as Record<string, unknown>[];
+    if (!(await assertGovernanceAccess(request, reply, userId))) return;
+    const gaps = listMergedGapsForUser(userId, status);
+    return reply.send({ gaps });
+  });
+
+  app.get('/v1/governance/memory-vault', async (request, reply) => {
+    const parsed = userIdQ
+      .extend({ limit: z.coerce.number().int().min(1).max(500).optional() })
+      .safeParse(request.query);
+    if (!parsed.success) {
+      return reply.status(400).send({ error: 'validation_error', details: parsed.error.flatten() });
     }
-    return reply.send({ gaps: rows });
+    const { userId, limit: lim = 120 } = parsed.data;
+    if (!(await assertGovernanceAccess(request, reply, userId))) return;
+    try {
+      const rows = db()
+        .prepare(
+          `SELECT id, user_id as userId, content, type, confidence, created_at as createdAt, origin, source_trace_id as sourceTraceId
+           FROM memory_vault
+           WHERE user_id = ? AND (archived_at IS NULL OR archived_at = '')
+           ORDER BY datetime(created_at) DESC
+           LIMIT ?`
+        )
+        .all(userId, lim) as Record<string, unknown>[];
+      return reply.send({ entries: rows });
+    } catch {
+      return reply.send({ entries: [] });
+    }
   });
 
   const gapCreate = z.object({
@@ -76,12 +89,13 @@ export function registerGovernanceConsoleRoutes(app: FastifyInstance): void {
     type: z.string().optional(),
   });
 
-  app.post('/v1/governance/gaps', (request, reply) => {
+  app.post('/v1/governance/gaps', async (request, reply) => {
     const parsed = gapCreate.safeParse(request.body);
     if (!parsed.success) {
       return reply.status(400).send({ error: 'validation_error', details: parsed.error.flatten() });
     }
     const b = parsed.data;
+    if (!(await assertGovernanceAccess(request, reply, b.userId))) return;
     const id = randomUUID();
     const t = nowIso();
     const status = b.status ?? 'identified';
@@ -109,7 +123,7 @@ export function registerGovernanceConsoleRoutes(app: FastifyInstance): void {
     repairedAt: z.string().optional(),
   });
 
-  app.patch('/v1/governance/gaps/:id', (request, reply) => {
+  app.patch('/v1/governance/gaps/:id', async (request, reply) => {
     const id = z.string().min(1).safeParse((request.params as { id?: string }).id);
     const parsed = gapPatch.safeParse(request.body);
     if (!id.success || !parsed.success) {
@@ -119,6 +133,7 @@ export function registerGovernanceConsoleRoutes(app: FastifyInstance): void {
       | { user_id: string }
       | undefined;
     if (!row) return reply.status(404).send({ error: 'not_found' });
+    if (!(await assertGovernanceAccess(request, reply, row.user_id))) return;
     const b = parsed.data;
     const sets: string[] = [];
     const vals: unknown[] = [];
@@ -160,13 +175,14 @@ export function registerGovernanceConsoleRoutes(app: FastifyInstance): void {
     return reply.send({ ok: true });
   });
 
-  app.delete('/v1/governance/gaps/:id', (request, reply) => {
+  app.delete('/v1/governance/gaps/:id', async (request, reply) => {
     const id = z.string().min(1).safeParse((request.params as { id?: string }).id);
     if (!id.success) return reply.status(400).send({ error: 'validation_error' });
     const row = db().prepare(`SELECT user_id FROM governance_gaps WHERE id = ?`).get(id.data) as
       | { user_id: string }
       | undefined;
     if (!row) return reply.status(404).send({ error: 'not_found' });
+    if (!(await assertGovernanceAccess(request, reply, row.user_id))) return;
     db().prepare(`DELETE FROM governance_gaps WHERE id = ?`).run(id.data);
     insertGovernanceAuditLog({
       userId: row.user_id,
@@ -179,12 +195,13 @@ export function registerGovernanceConsoleRoutes(app: FastifyInstance): void {
   });
 
   // ── Change control ────────────────────────────────────────────────────────
-  app.get('/v1/governance/changes', (request, reply) => {
+  app.get('/v1/governance/changes', async (request, reply) => {
     const parsed = userIdQ.extend({ status: z.string().optional() }).safeParse(request.query);
     if (!parsed.success) {
       return reply.status(400).send({ error: 'validation_error', details: parsed.error.flatten() });
     }
     const { userId, status } = parsed.data;
+    if (!(await assertGovernanceAccess(request, reply, userId))) return;
     let rows: Record<string, unknown>[];
     if (status) {
       rows = db()
@@ -216,12 +233,13 @@ export function registerGovernanceConsoleRoutes(app: FastifyInstance): void {
     status: z.string().optional(),
   });
 
-  app.post('/v1/governance/changes', (request, reply) => {
+  app.post('/v1/governance/changes', async (request, reply) => {
     const parsed = changeCreate.safeParse(request.body);
     if (!parsed.success) {
       return reply.status(400).send({ error: 'validation_error', details: parsed.error.flatten() });
     }
     const b = parsed.data;
+    if (!(await assertGovernanceAccess(request, reply, b.userId))) return;
     const id = randomUUID();
     const t = nowIso();
     const status = b.status ?? 'proposed';
@@ -256,7 +274,7 @@ export function registerGovernanceConsoleRoutes(app: FastifyInstance): void {
     approvedBy: z.string().optional(),
   });
 
-  app.patch('/v1/governance/changes/:id', (request, reply) => {
+  app.patch('/v1/governance/changes/:id', async (request, reply) => {
     const id = z.string().min(1).safeParse((request.params as { id?: string }).id);
     const parsed = changePatch.safeParse(request.body);
     if (!id.success || !parsed.success) {
@@ -266,6 +284,7 @@ export function registerGovernanceConsoleRoutes(app: FastifyInstance): void {
       | { user_id: string }
       | undefined;
     if (!row) return reply.status(404).send({ error: 'not_found' });
+    if (!(await assertGovernanceAccess(request, reply, row.user_id))) return;
     const b = parsed.data;
     const sets: string[] = [];
     const vals: unknown[] = [];
@@ -295,13 +314,14 @@ export function registerGovernanceConsoleRoutes(app: FastifyInstance): void {
     return reply.send({ ok: true });
   });
 
-  app.delete('/v1/governance/changes/:id', (request, reply) => {
+  app.delete('/v1/governance/changes/:id', async (request, reply) => {
     const id = z.string().min(1).safeParse((request.params as { id?: string }).id);
     if (!id.success) return reply.status(400).send({ error: 'validation_error' });
     const row = db().prepare(`SELECT user_id FROM governance_changes WHERE id = ?`).get(id.data) as
       | { user_id: string }
       | undefined;
     if (!row) return reply.status(404).send({ error: 'not_found' });
+    if (!(await assertGovernanceAccess(request, reply, row.user_id))) return;
     db().prepare(`DELETE FROM governance_changes WHERE id = ?`).run(id.data);
     insertGovernanceAuditLog({
       userId: row.user_id,
@@ -314,7 +334,7 @@ export function registerGovernanceConsoleRoutes(app: FastifyInstance): void {
   });
 
   // ── Audit logs ────────────────────────────────────────────────────────────
-  app.get('/v1/governance/audit-logs', (request, reply) => {
+  app.get('/v1/governance/audit-logs', async (request, reply) => {
     const parsed = userIdQ
       .extend({
         limit: z.coerce.number().int().min(1).max(500).optional(),
@@ -326,6 +346,7 @@ export function registerGovernanceConsoleRoutes(app: FastifyInstance): void {
       return reply.status(400).send({ error: 'validation_error', details: parsed.error.flatten() });
     }
     const { userId, limit: lim = 100, type, severity } = parsed.data;
+    if (!(await assertGovernanceAccess(request, reply, userId))) return;
     let sql = `SELECT id, user_id as userId, action, actor, type, severity, details_json as detailsJson, created_at as timestamp
                FROM governance_audit_logs WHERE user_id = ?`;
     const params: unknown[] = [userId];
@@ -362,12 +383,13 @@ export function registerGovernanceConsoleRoutes(app: FastifyInstance): void {
     severity: z.enum(['low', 'medium', 'high', 'critical']).optional(),
   });
 
-  app.post('/v1/governance/audit-logs', (request, reply) => {
+  app.post('/v1/governance/audit-logs', async (request, reply) => {
     const parsed = auditPost.safeParse(request.body);
     if (!parsed.success) {
       return reply.status(400).send({ error: 'validation_error', details: parsed.error.flatten() });
     }
     const b = parsed.data;
+    if (!(await assertGovernanceAccess(request, reply, b.userId))) return;
     const id = insertGovernanceAuditLog({
       userId: b.userId,
       action: b.action,
@@ -380,11 +402,12 @@ export function registerGovernanceConsoleRoutes(app: FastifyInstance): void {
   });
 
   // ── Emergency (creator-only POST) ─────────────────────────────────────────
-  app.get('/v1/governance/emergency/status', (request, reply) => {
+  app.get('/v1/governance/emergency/status', async (request, reply) => {
     const parsed = userIdQ.safeParse(request.query);
     if (!parsed.success) {
       return reply.status(400).send({ error: 'validation_error', details: parsed.error.flatten() });
     }
+    if (!(await assertGovernanceAccess(request, reply, parsed.data.userId))) return;
     const row = db()
       .prepare(
         `SELECT active, activated_at as activatedAt, reason, lifted_at as liftedAt FROM governance_emergency_state WHERE user_id = ?`
@@ -421,6 +444,7 @@ export function registerGovernanceConsoleRoutes(app: FastifyInstance): void {
       return reply.status(400).send({ error: 'validation_error', details: parsed.error.flatten() });
     }
     const { userId, action, reason } = parsed.data;
+    if (!(await assertGovernanceAccess(request, reply, userId))) return;
     const t = nowIso();
     const exists = db().prepare(`SELECT 1 FROM governance_emergency_state WHERE user_id = ?`).get(userId);
     if (action === 'activate') {
@@ -471,12 +495,13 @@ export function registerGovernanceConsoleRoutes(app: FastifyInstance): void {
     timestamp: z.string().min(1),
   });
 
-  app.post('/v1/diagnostics/report', (request, reply) => {
+  app.post('/v1/diagnostics/report', async (request, reply) => {
     const parsed = diagPost.safeParse(request.body);
     if (!parsed.success) {
       return reply.status(400).send({ error: 'validation_error', details: parsed.error.flatten() });
     }
     const b = parsed.data;
+    if (!(await assertGovernanceAccess(request, reply, b.userId))) return;
     const id = randomUUID();
     const created = nowIso();
     db()
@@ -488,7 +513,7 @@ export function registerGovernanceConsoleRoutes(app: FastifyInstance): void {
     return reply.status(201).send({ id, status: 'saved' });
   });
 
-  app.get('/v1/diagnostics/reports', (request, reply) => {
+  app.get('/v1/diagnostics/reports', async (request, reply) => {
     const parsed = z
       .object({
         userId: z.string().min(1),
@@ -501,6 +526,7 @@ export function registerGovernanceConsoleRoutes(app: FastifyInstance): void {
       return reply.status(400).send({ error: 'validation_error', details: parsed.error.flatten() });
     }
     const { userId, sessionId, type, limit: lim = 50 } = parsed.data;
+    if (!(await assertGovernanceAccess(request, reply, userId))) return;
     let sql = `SELECT id, user_id as userId, session_id as sessionId, type, payload_json as payloadJson, timestamp, status, created_at as createdAt
                FROM diagnostics_reports WHERE user_id = ?`;
     const params: unknown[] = [userId];
@@ -522,7 +548,7 @@ export function registerGovernanceConsoleRoutes(app: FastifyInstance): void {
     return reply.send({ reports });
   });
 
-  app.patch('/v1/diagnostics/reports/:id', (request, reply) => {
+  app.patch('/v1/diagnostics/reports/:id', async (request, reply) => {
     const id = z.string().min(1).safeParse((request.params as { id?: string }).id);
     const parsed = z
       .object({ status: z.enum(['fixed', 'open', 'archived']), userId: z.string().min(1) })
@@ -536,16 +562,18 @@ export function registerGovernanceConsoleRoutes(app: FastifyInstance): void {
     if (!r || r.user_id !== parsed.data.userId) {
       return reply.status(404).send({ error: 'not_found' });
     }
+    if (!(await assertGovernanceAccess(request, reply, r.user_id))) return;
     db().prepare(`UPDATE diagnostics_reports SET status = ? WHERE id = ?`).run(parsed.data.status, id.data);
     return reply.send({ ok: true });
   });
 
-  app.delete('/v1/diagnostics/reports/session/:sessionId', (request, reply) => {
+  app.delete('/v1/diagnostics/reports/session/:sessionId', async (request, reply) => {
     const sessionId = z.string().min(1).safeParse((request.params as { sessionId?: string }).sessionId);
     const parsed = userIdQ.safeParse(request.query);
     if (!sessionId.success || !parsed.success) {
       return reply.status(400).send({ error: 'validation_error' });
     }
+    if (!(await assertGovernanceAccess(request, reply, parsed.data.userId))) return;
     db()
       .prepare(`DELETE FROM diagnostics_reports WHERE session_id = ? AND user_id = ?`)
       .run(sessionId.data, parsed.data.userId);

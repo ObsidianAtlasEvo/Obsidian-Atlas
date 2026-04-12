@@ -1,5 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
+import { env } from '../config/env.js';
+import { assertGovernanceAccess } from '../services/governance/governanceAccess.js';
 import { getSovereignOverview } from '../services/governance/sovereignOverviewService.js';
 
 export function registerSovereignOverviewRoutes(app: FastifyInstance): void {
@@ -8,6 +10,11 @@ export function registerSovereignOverviewRoutes(app: FastifyInstance): void {
     if (!parsed.success) {
       return reply.status(400).send({ error: 'validation_error', details: parsed.error.flatten() });
     }
-    return reply.send(getSovereignOverview(parsed.data.userId));
+    if (!(await assertGovernanceAccess(request, reply, parsed.data.userId))) return;
+    const overview = getSovereignOverview(parsed.data.userId);
+    return reply.send({
+      ...overview,
+      cloudEvolutionEngineConfigured: Boolean(env.supabaseUrl?.trim() && env.supabaseServiceKey?.trim()),
+    });
   });
 }

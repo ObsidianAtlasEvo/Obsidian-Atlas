@@ -92,6 +92,9 @@ export function ConsoleView({ state, setState }: CreatorConsoleProps) {
     claims: number;
     traces: number;
     constitution: number;
+    evolutionGapsOpen?: number;
+    memoryVaultEntries?: number;
+    cloudEvolutionEngineConfigured?: boolean;
   } | null>(null);
   const [overviewLoadFailed, setOverviewLoadFailed] = useState(false);
 
@@ -105,7 +108,7 @@ export function ConsoleView({ state, setState }: CreatorConsoleProps) {
           { credentials: 'include' }
         );
         if (!res.ok) throw new Error('overview');
-        const d = (await res.json()) as Record<string, number>;
+        const d = (await res.json()) as Record<string, number | boolean | undefined>;
         if (cancelled) return;
         setOverviewMetrics({
           gaps: d.sovereignConsoleGapsOpen ?? 0,
@@ -115,6 +118,9 @@ export function ConsoleView({ state, setState }: CreatorConsoleProps) {
           claims: d.epistemicClaimsActive ?? 0,
           traces: d.chatTracesStored ?? 0,
           constitution: d.constitutionalClausesActive ?? 0,
+          evolutionGapsOpen: typeof d.evolutionGapsOpen === 'number' ? d.evolutionGapsOpen : 0,
+          memoryVaultEntries: typeof d.memoryVaultEntries === 'number' ? d.memoryVaultEntries : 0,
+          cloudEvolutionEngineConfigured: d.cloudEvolutionEngineConfigured === true,
         });
         setOverviewLoadFailed(false);
       } catch {
@@ -463,6 +469,21 @@ export function ConsoleView({ state, setState }: CreatorConsoleProps) {
 
               {activeTab === 'overview' && (
                 <div className="space-y-12">
+                  {!overviewLoadFailed &&
+                    overviewMetrics &&
+                    overviewMetrics.cloudEvolutionEngineConfigured === false && (
+                      <div
+                        role="status"
+                        className="p-4 border border-amber-500/35 bg-amber-500/5 rounded-sm text-[11px] text-amber-100/90 leading-relaxed"
+                      >
+                        <span className="font-semibold text-amber-200/95 uppercase tracking-widest text-[10px]">
+                          Degraded mode —{' '}
+                        </span>
+                        Supabase is not configured for this backend. Remote evolution profiles and Sovereign Console
+                        features that rely on Supabase stay empty; SQLite governance, chat traces, and merged gap ledger
+                        still work.
+                      </div>
+                    )}
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
                     <div className="p-8 bg-titanium/5 border border-titanium/10 rounded-sm space-y-6">
                       <div className="flex items-center justify-between">
@@ -477,7 +498,9 @@ export function ConsoleView({ state, setState }: CreatorConsoleProps) {
                       </div>
                       <div className="pt-4 border-t border-titanium/10">
                         <p className="text-[10px] text-stone leading-relaxed">
-                          From SQLite gap ledger (GET /v1/governance/gaps). Critical count is not split here — use Gap tab.
+                          Open governance gaps (SQLite). Evolution eval gaps:{' '}
+                          {overviewLoadFailed ? '—' : overviewMetrics?.evolutionGapsOpen ?? 0} (see Gap tab for merged
+                          list). Vault rows: {overviewLoadFailed ? '—' : overviewMetrics?.memoryVaultEntries ?? 0}.
                         </p>
                       </div>
                     </div>

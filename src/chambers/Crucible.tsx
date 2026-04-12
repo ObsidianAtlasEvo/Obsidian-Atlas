@@ -824,17 +824,17 @@ const DebateArena: FC = () => {
 
       {/* Mobile concede confirm overlay */}
       {showConcedeConfirm && (
-        <div className="lg:hidden fixed inset-0 z-50 bg-black/70 flex items-end">
-          <div className="w-full bg-[#0d071a] border-t border-white/10 p-6 space-y-4">
+        <div className="lg:hidden fixed inset-0 z-50 bg-black/70 flex items-end pb-[env(safe-area-inset-bottom,0px)]">
+          <div className="w-full bg-[#0d071a] border-t border-white/10 p-6 pb-[max(1.5rem,env(safe-area-inset-bottom))] space-y-4">
             <p className="text-sm font-mono text-white/70 text-center">Formally concede the debate?</p>
             <div className="flex gap-3">
               <button
                 onClick={() => { setShowConcedeConfirm(false); concede(); }}
-                className="flex-1 py-3 rounded border border-red-500/50 text-red-400 font-mono text-sm hover:bg-red-500/10 transition-all"
+                className="atlas-touch-min flex-1 py-3 rounded border border-red-500/50 text-red-400 font-mono text-sm hover:bg-red-500/10 transition-all"
               >Concede</button>
               <button
                 onClick={() => setShowConcedeConfirm(false)}
-                className="flex-1 py-3 rounded border border-white/10 text-white/40 font-mono text-sm hover:bg-white/5 transition-all"
+                className="atlas-touch-min flex-1 py-3 rounded border border-white/10 text-white/40 font-mono text-sm hover:bg-white/5 transition-all"
               >Cancel</button>
             </div>
           </div>

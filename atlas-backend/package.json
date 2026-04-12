@@ -10,7 +10,8 @@
     "start": "node dist/index.js",
     "start:lite": "node dist/server.js",
     "typecheck": "tsc --noEmit",
-    "backfill:vault": "tsx src/scripts/backfillMemoryVault.ts"
+    "backfill:vault": "tsx src/scripts/backfillMemoryVault.ts",
+    "contract:truth-ledger": "tsx src/scripts/contractTruthLedgerPrompt.ts"
   },
   "dependencies": {
     "@fastify/cookie": "^11.0.2",

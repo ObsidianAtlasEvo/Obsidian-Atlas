@@ -970,6 +970,11 @@ function migrateSectionVIIIContinuity(database: Database.Database): void {
   if (!vaultNames.has('origin')) {
     database.exec(`ALTER TABLE memory_vault ADD COLUMN origin TEXT NOT NULL DEFAULT 'inferred'`);
   }
+  const vaultColsAfter = database.prepare(`PRAGMA table_info(memory_vault)`).all() as { name: string }[];
+  const vaultNamesAfter = new Set(vaultColsAfter.map((c) => c.name));
+  if (!vaultNamesAfter.has('source_trace_id')) {
+    database.exec(`ALTER TABLE memory_vault ADD COLUMN source_trace_id TEXT`);
+  }
   database.exec(
     `CREATE INDEX IF NOT EXISTS idx_memory_vault_user_active ON memory_vault(user_id, created_at DESC) WHERE archived_at IS NULL`
   );

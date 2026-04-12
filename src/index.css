@@ -242,9 +242,20 @@ pre {
 
   #root {
     min-height: 100dvh;
+    /* Safe area: notches + home indicator; keeps shell usable when keyboard dismisses */
+    padding-left: env(safe-area-inset-left, 0px);
+    padding-right: env(safe-area-inset-right, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    box-sizing: border-box;
   }
 
   .atlas-nav-rail--desktop {
     display: none !important;
+  }
+
+  /* Optional: add `atlas-touch-min` on primary sheet actions (44×44 minimum). */
+  .atlas-touch-min {
+    min-height: 44px;
+    min-width: 44px;
   }
 }

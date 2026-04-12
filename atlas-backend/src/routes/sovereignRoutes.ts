@@ -23,6 +23,7 @@ import {
   getAuthenticatedUser,
 } from '../services/auth/authProvider.js';
 import { isSovereignOwnerEmail } from '../services/intelligence/router.js';
+import { insertGovernanceAuditLog } from './governanceConsoleRoutes.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -696,21 +697,58 @@ const sovereignRoutes: FastifyPluginAsync = async (
   // POST /api/sovereign/actions/force-recalibrate
   // ──────────────────────────────────────────────────────────────────────────
 
-  fastify.post('/actions/rebuild-profiles', async (_request, reply) => {
-    fastify.log.info('[Sovereign] Triggered: rebuild all evolution profiles');
-    // Emit event to your evolution engine service if it exposes an internal API
-    // e.g., await evolutionEngine.rebuildAll();
-    reply.send({ success: true, message: 'Evolution profile rebuild queued.' });
+  fastify.post('/actions/rebuild-profiles', async (request, reply) => {
+    const user = await getAuthenticatedUser(request);
+    const userId = user?.databaseUserId ?? 'sovereign_console';
+    insertGovernanceAuditLog({
+      userId,
+      action: 'sovereign.quick_action.rebuild_profiles.not_implemented',
+      actor: user?.email ?? 'sovereign',
+      severity: 'low',
+      details: { route: '/actions/rebuild-profiles' },
+    });
+    fastify.log.warn('[Sovereign] rebuild-profiles invoked — not implemented (501)');
+    return reply.code(501).send({
+      error: 'not_implemented',
+      message:
+        'Evolution profile rebuild is not wired to a backend job yet; no profiles were changed. See audit log.',
+    });
   });
 
-  fastify.post('/actions/clear-signal-buffers', async (_request, reply) => {
-    fastify.log.info('[Sovereign] Triggered: clear signal buffers');
-    reply.send({ success: true, message: 'Signal buffers cleared.' });
+  fastify.post('/actions/clear-signal-buffers', async (request, reply) => {
+    const user = await getAuthenticatedUser(request);
+    const userId = user?.databaseUserId ?? 'sovereign_console';
+    insertGovernanceAuditLog({
+      userId,
+      action: 'sovereign.quick_action.clear_signal_buffers.not_implemented',
+      actor: user?.email ?? 'sovereign',
+      severity: 'low',
+      details: { route: '/actions/clear-signal-buffers' },
+    });
+    fastify.log.warn('[Sovereign] clear-signal-buffers invoked — not implemented (501)');
+    return reply.code(501).send({
+      error: 'not_implemented',
+      message:
+        'Signal buffer clear is not wired to a backend job yet; no buffers were changed. See audit log.',
+    });
   });
 
-  fastify.post('/actions/force-recalibrate', async (_request, reply) => {
-    fastify.log.info('[Sovereign] Triggered: force overseer recalibration');
-    reply.send({ success: true, message: 'Overseer recalibration triggered.' });
+  fastify.post('/actions/force-recalibrate', async (request, reply) => {
+    const user = await getAuthenticatedUser(request);
+    const userId = user?.databaseUserId ?? 'sovereign_console';
+    insertGovernanceAuditLog({
+      userId,
+      action: 'sovereign.quick_action.force_recalibrate.not_implemented',
+      actor: user?.email ?? 'sovereign',
+      severity: 'low',
+      details: { route: '/actions/force-recalibrate' },
+    });
+    fastify.log.warn('[Sovereign] force-recalibrate invoked — not implemented (501)');
+    return reply.code(501).send({
+      error: 'not_implemented',
+      message:
+        'Overseer recalibration is not wired to a backend job yet; no models were recalibrated. See audit log.',
+    });
   });
 
   // ──────────────────────────────────────────────────────────────────────────

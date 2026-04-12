@@ -15,8 +15,10 @@ import { CognitiveQuotaError, assertChatQuotaAllows, recordChatTokenUsage } from
 import { enqueueGpuTask, newGpuRequestId } from '../services/inference/queueManager.js';
 import { runMaximumClarityTrack } from '../services/intelligence/maximumClarityPipeline.js';
 import {
+  buildUnifiedOmniSystemPrompt,
   executeLocalOllama,
   injectAtlasRoutingIntoMessages,
+  memoryVaultTopK,
   resolveOmniComputeLane,
   resolveOmniRouting,
 } from '../services/intelligence/omniRouter.js';
@@ -27,8 +29,9 @@ import {
   planUsesLocalOllama,
   swarmPlanToGroqRoutingDecision,
 } from '../services/intelligence/swarmOrchestrator.js';
-import { streamGroqChat } from '../services/intelligence/universalAdapter.js';
-import { buildPrimeDirective } from '../services/intelligence/primeDirective.js';
+import { completeGroqChat, streamGroqChat } from '../services/intelligence/universalAdapter.js';
+import { evaluateExchangeRules } from '../services/evolution/evalEngine.js';
+import { extractMemoryCandidatesHeuristic } from '../services/memory/memoryExtractor.js';
 import {
   QuotaExceededError,
   SystemDeepResearchUnavailableError,
@@ -317,9 +320,25 @@ export function registerOmniStreamRoutes(app: FastifyInstance): void {
             plan: null,
           });
 
-          const primeDirective = buildPrimeDirective(userId);
+          const { systemPrompt, capabilityNotices } = await buildUnifiedOmniSystemPrompt({
+            userId,
+            lastUserText: userPrompt,
+            routing,
+            evolutionProfile,
+          });
+
+          sseWrite(raw, 'capabilities', {
+            inferenceProfile: 'unified_sovereign_pack',
+            semanticRecallTopK: memoryVaultTopK(routing.posture),
+            semanticRecallDegraded: capabilityNotices.length > 0,
+            notices: capabilityNotices,
+          });
+          for (const msg of capabilityNotices) {
+            sseWrite(raw, 'status', { phase: 'capabilities', message: msg });
+          }
+
           const primedMessages: { role: 'system' | 'user' | 'assistant'; content: string }[] = [
-            { role: 'system', content: primeDirective },
+            { role: 'system', content: systemPrompt },
             ...(messagesWithRouting as { role: 'system' | 'user' | 'assistant'; content: string }[])
               .filter((m) => m.role !== 'system'),
           ];
@@ -386,10 +405,57 @@ export function registerOmniStreamRoutes(app: FastifyInstance): void {
         sseWrite(raw, 'error', {
           code: 'empty_reply',
           message:
-            'Atlas returned no text. Often: Ollama hit context/token limits after a long thread, model unloaded, or OLLAMA_BASE_URL misconfigured (use http://host:11434/api). Try a fresh question, shorter thread, or restart Ollama; check pm2 logs for omni_stream_empty_reply.',
+            'Atlas returned no text. Common causes: provider rate limits (wait and retry), Ollama context limits, unloaded models, or OLLAMA_BASE_URL misconfigured. No evolution job was scheduled for this turn.',
         });
         raw.end();
         return;
+      }
+
+      const heurMem = extractMemoryCandidatesHeuristic({
+        userMessage: userPrompt,
+        assistantMessage: result.fullText,
+      });
+      const rulesEval = evaluateExchangeRules({
+        userMessage: userPrompt,
+        assistantResponse: result.fullText,
+        memoryCandidates: heurMem,
+      });
+
+      if (env.postReplyEpistemicRecheck === 'rules' && rulesEval.gapFlagged) {
+        const caution =
+          '\n\n— Epistemic screening (rules): internal quality score for this turn is below the training threshold; verify important claims independently.';
+        result = { ...result, fullText: result.fullText + caution };
+        sseWrite(raw, 'delta', { text: caution });
+      }
+
+      if (env.postReplyEpistemicRecheck === 'llm' && rulesEval.gapFlagged) {
+        try {
+          const check = await completeGroqChat({
+            model: env.cloudChatModel,
+            messages: [
+              {
+                role: 'system',
+                content:
+                  'Output JSON only: {"appendix": string | null}. One short user-facing caveat if the answer is likely unreliable or too thin; otherwise null.',
+              },
+              {
+                role: 'user',
+                content: `USER_QUESTION:\n${userPrompt.slice(0, 4000)}\n\nASSISTANT_ANSWER:\n${result.fullText.slice(0, 8000)}`,
+              },
+            ],
+            temperature: 0.1,
+            timeoutMs: 18_000,
+          });
+          const rawJ = check.text.replace(/^```(?:json)?\s*/i, '').replace(/```$/m, '').trim();
+          const j = JSON.parse(rawJ) as { appendix?: string | null };
+          if (typeof j.appendix === 'string' && j.appendix.trim()) {
+            const add = '\n\n' + j.appendix.trim();
+            result = { ...result, fullText: result.fullText + add };
+            sseWrite(raw, 'delta', { text: add });
+          }
+        } catch {
+          /* optional path */
+        }
       }
 
       triggerEvolutionAfterOmniResponse({
@@ -405,7 +471,7 @@ export function registerOmniStreamRoutes(app: FastifyInstance): void {
         result.surface !== 'god_mode_local' &&
         !result.surface.startsWith('god_mode');
 
-      sseWrite(raw, 'done', {
+      const donePayload: Record<string, unknown> = {
         traceId,
         requestId,
         reply: result.fullText,
@@ -418,11 +484,40 @@ export function registerOmniStreamRoutes(app: FastifyInstance): void {
           posture: routing.posture,
           lineOfInquiry: lineOfInquiry ?? null,
         },
-      });
+      };
+      if (env.omniSseIncludeRulesEvalInDone) {
+        donePayload.epistemicRulesEval = {
+          combinedNormalized: rulesEval.combinedNormalized,
+          gapFlagged: rulesEval.gapFlagged,
+          source: rulesEval.source,
+          truthAlignment: rulesEval.truthAlignment,
+          cognitiveDensity: rulesEval.cognitiveDensity,
+          styleAdherence: rulesEval.styleAdherence,
+        };
+      }
+
+      sseWrite(raw, 'done', donePayload);
       raw.end();
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       request.log.error(e);
+      const is429 =
+        message.includes('429') ||
+        /\brate limit\b/i.test(message) ||
+        message.includes('TPM') ||
+        message.includes('tokens per minute');
+      const retryM = message.match(/try again in ([\d.]+)s/i);
+      const retryAfterSuggestedSec = retryM ? Number(retryM[1]) : undefined;
+      if (is429) {
+        sseWrite(raw, 'error', {
+          code: 'provider_rate_limit',
+          message:
+            'The cloud model provider rate limit was hit. Wait a short time and retry, shorten the thread, or upgrade quota. This turn was not recorded as a completed answer and evolution was not scheduled.',
+          retryAfterSuggestedSec,
+        });
+        raw.end();
+        return;
+      }
       const code =
         e instanceof QuotaExceededError
           ? e.code

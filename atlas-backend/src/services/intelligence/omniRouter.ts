@@ -178,12 +178,63 @@ export function postureTemperature(posture: AtlasPosture): number {
   }
 }
 
-function memoryVaultTopK(posture: AtlasPosture): number {
+export function memoryVaultTopK(posture: AtlasPosture): number {
   if (posture <= 1) return 0;
   if (posture === 2) return 2;
   if (posture === 3) return 4;
   if (posture === 4) return 5;
   return 6;
+}
+
+/**
+ * Same cognitive stack as sovereign local lane: primed identity + posture contract + optional semantic vault + policy layering.
+ * Use for direct Groq / cloud single-lane so production matches local epistemic substrate (minus local model weights).
+ */
+export async function buildUnifiedOmniSystemPrompt(input: {
+  userId: string;
+  lastUserText: string;
+  routing: OmniRoutingResolution;
+  evolutionProfile: UserEvolutionProfile | null;
+}): Promise<{ systemPrompt: string; capabilityNotices: string[] }> {
+  const capabilityNotices: string[] = [];
+  const stripped = stripInternalRoutingFromUserText(input.lastUserText);
+
+  const primedSystem = buildPrimedChatSystemPrompt(input.userId, stripped, {
+    sovereignResponseMode: input.routing.mode,
+  });
+
+  const appendix = [
+    '=== ATLAS_POSTURE_CONTRACT (Section IX) ===',
+    `POSTURE_LEVEL=${input.routing.posture} (${postureLabel(input.routing.posture)})`,
+    postureEpistemicContract(input.routing.posture, input.routing.mode),
+  ].join('\n');
+
+  const k = memoryVaultTopK(input.routing.posture);
+  let vaultBlock = '';
+  if (k > 0) {
+    try {
+      const recalled = await retrieveRelevantMemories(input.userId, stripped, k);
+      if (recalled.length > 0) {
+        vaultBlock = `\n\n[SEMANTIC_MEMORY_VAULT_RECALL — inferred embedding match; not verified fact]\n${recalled
+          .map((m, i) => `(${i + 1}) [${m.type}] relevance=${m.relevance.toFixed(3)} :: ${m.content}`)
+          .join('\n')}`;
+      }
+    } catch {
+      capabilityNotices.push(
+        'Semantic embedding recall unavailable; continuing with truth ledger, SRG substrate, and recent memory rows only.'
+      );
+    }
+  }
+
+  const basePack = `${primedSystem}\n\n${appendix}${vaultBlock}`;
+  const systemPrompt = assembleLayeredSystemPrompt({
+    userId: input.userId,
+    baseSystemPrompt: basePack,
+    sessionMode: input.routing.mode,
+    evolutionProfile: input.evolutionProfile ?? null,
+  });
+
+  return { systemPrompt, capabilityNotices };
 }
 
 export function injectAtlasRoutingIntoMessages<T extends { role: string; content: string }>(
@@ -270,32 +321,10 @@ export async function executeLocalOllama(input: {
   const routing =
     input.routing ?? resolveOmniRouting(lastUser, {});
 
-  const primedSystem = buildPrimedChatSystemPrompt(input.userId, lastUser, {
-    sovereignResponseMode: routing.mode,
-  });
-
-  const appendix = [
-    '=== ATLAS_POSTURE_CONTRACT (Section IX) ===',
-    `POSTURE_LEVEL=${routing.posture} (${postureLabel(routing.posture)})`,
-    postureEpistemicContract(routing.posture, routing.mode),
-  ].join('\n');
-
-  const k = memoryVaultTopK(routing.posture);
-  let vaultBlock = '';
-  if (k > 0) {
-    const recalled = await retrieveRelevantMemories(input.userId, lastUser, k);
-    if (recalled.length > 0) {
-      vaultBlock = `\n\n[SEMANTIC_MEMORY_VAULT_RECALL — inferred embedding match; not verified fact]\n${recalled
-        .map((m, i) => `(${i + 1}) [${m.type}] relevance=${m.relevance.toFixed(3)} :: ${m.content}`)
-        .join('\n')}`;
-    }
-  }
-
-  const basePack = `${primedSystem}\n\n${appendix}${vaultBlock}`;
-  const systemContent = assembleLayeredSystemPrompt({
+  const { systemPrompt: systemContent } = await buildUnifiedOmniSystemPrompt({
     userId: input.userId,
-    baseSystemPrompt: basePack,
-    sessionMode: routing.mode,
+    lastUserText: lastUser,
+    routing,
     evolutionProfile: input.evolutionProfile ?? null,
   });
 

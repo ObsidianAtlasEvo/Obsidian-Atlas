@@ -265,7 +265,21 @@ export function HomeView({ state, setState, onInteraction }: HomeViewProps) {
             }
           }
           if (eventName === 'error') {
-            streamError = String(data?.message ?? 'Atlas stream failed');
+            const code = data && typeof data === 'object' && 'code' in data ? String(data.code) : '';
+            const base = String(data?.message ?? 'Atlas stream failed');
+            const retry =
+              data && typeof data === 'object' && 'retryAfterSuggestedSec' in data && data.retryAfterSuggestedSec != null
+                ? Number(data.retryAfterSuggestedSec as number)
+                : undefined;
+            if (code === 'provider_rate_limit') {
+              streamError =
+                base +
+                (Number.isFinite(retry) && retry! > 0
+                  ? ` Suggested wait: ~${Math.ceil(retry!)}s before retry.`
+                  : '');
+            } else {
+              streamError = base;
+            }
           }
         }
       }

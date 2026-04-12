@@ -116,6 +116,15 @@ const envSchema = z.object({
     .string()
     .optional()
     .transform((v) => v === 'true' || v === '1'),
+  /**
+   * Optional post-reply epistemic pass: `off` | `rules` (append caution when rules eval gaps) | `llm` (extra Groq JSON check).
+   */
+  POST_REPLY_EPISTEMIC_RECHECK: z.enum(['off', 'rules', 'llm']).optional(),
+  /** When false, omit synchronous rules-eval snapshot from SSE `done` (default true). */
+  OMNI_SSE_INCLUDE_RULES_EVAL_IN_DONE: z
+    .string()
+    .optional()
+    .transform((v) => v !== 'false' && v !== '0'),
 });
 
 const raw = envSchema.parse({
@@ -183,6 +192,8 @@ const raw = envSchema.parse({
   OLLAMA_HEALTH_TIMEOUT_MS: process.env.OLLAMA_HEALTH_TIMEOUT_MS,
   OLLAMA_HEALTH_CACHE_TTL_MS: process.env.OLLAMA_HEALTH_CACHE_TTL_MS,
   PHASE3_SECURITY: process.env.PHASE3_SECURITY,
+  POST_REPLY_EPISTEMIC_RECHECK: process.env.POST_REPLY_EPISTEMIC_RECHECK,
+  OMNI_SSE_INCLUDE_RULES_EVAL_IN_DONE: process.env.OMNI_SSE_INCLUDE_RULES_EVAL_IN_DONE,
 });
 
 const sqlitePath = path.resolve(process.cwd(), raw.SQLITE_PATH);
@@ -296,6 +307,9 @@ export const env = {
     Boolean(raw.SUPABASE_URL?.trim()) && Boolean(raw.SUPABASE_SERVICE_KEY?.trim()),
 
   phase3SecurityEnabled: raw.PHASE3_SECURITY ?? false,
+
+  postReplyEpistemicRecheck: (raw.POST_REPLY_EPISTEMIC_RECHECK ?? 'off') as 'off' | 'rules' | 'llm',
+  omniSseIncludeRulesEvalInDone: raw.OMNI_SSE_INCLUDE_RULES_EVAL_IN_DONE !== false,
 } as const;
 
 export type Env = typeof env;

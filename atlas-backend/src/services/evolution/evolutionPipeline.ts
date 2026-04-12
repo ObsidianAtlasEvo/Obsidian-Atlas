@@ -110,7 +110,9 @@ async function runEvolutionJob(job: EvolutionJobPayload): Promise<void> {
         : c.kind === 'project' || c.kind === 'goal' ? 'PROJECT'
         : c.kind === 'fact' ? 'TRUTH'
         : 'EPISODIC';
-      void ingestMemory(userId, `${c.summary}: ${c.detail}`, vaultType, c.confidence).catch(() => {});
+      void ingestMemory(userId, `${c.summary}: ${c.detail}`, vaultType, c.confidence, {
+        sourceTraceId: traceId,
+      }).catch(() => {});
     } catch {
       /* skip single memory failure */
     }

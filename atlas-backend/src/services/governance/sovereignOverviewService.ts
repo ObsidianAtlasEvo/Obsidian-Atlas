@@ -125,6 +125,27 @@ export function getSovereignOverview(userId: string) {
     /* governance console tables not present on legacy DB */
   }
 
+  let evolutionGapsOpen = 0;
+  let memoryVaultEntries = 0;
+  try {
+    evolutionGapsOpen = (
+      db.prepare(`SELECT COUNT(1) as c FROM evolution_gaps WHERE user_id = ?`).get(userId) as { c: number }
+    ).c;
+  } catch {
+    evolutionGapsOpen = 0;
+  }
+  try {
+    memoryVaultEntries = (
+      db
+        .prepare(
+          `SELECT COUNT(1) as c FROM memory_vault WHERE user_id = ? AND (archived_at IS NULL OR archived_at = '')`
+        )
+        .get(userId) as { c: number }
+    ).c;
+  } catch {
+    memoryVaultEntries = 0;
+  }
+
   return {
     userId,
     constitutionalClausesActive: constitutionActive,
@@ -150,5 +171,9 @@ export function getSovereignOverview(userId: string) {
     sovereignConsoleGapsOpen,
     sovereignConsoleChangesPending,
     sovereignConsoleAuditEvents,
+    /** Post-turn eval gaps (SQLite `evolution_gaps`); also surfaced via merged Gap Ledger API. */
+    evolutionGapsOpen,
+    /** Rows in semantic `memory_vault` for this user (non-archived). */
+    memoryVaultEntries,
   };
 }
