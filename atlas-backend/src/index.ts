@@ -6,7 +6,6 @@ import { env } from './config/env.js';
 import { startChronosScheduler } from './services/autonomy/chronos.js';
 import { initSemanticVectorIndex } from './db/vectorStore.js';
 import { initSqlite } from './db/sqlite.js';
-import registerChatRoutes from './routes/chat.js';
 import registerHealthRoutes from './routes/health.js'
 import { registerRateLimit } from './plugins/rateLimit.js';
 import { registerOllamaCompatRoutes } from './routes/ollamaCompat.js';
@@ -83,7 +82,6 @@ await registerRateLimit(app);
 registerHealthRoutes(app);
 registerInferenceQueueRoutes(app);
 registerAuthRoutes(app);
-registerChatRoutes(app);
 registerOllamaCompatRoutes(app);
 registerOmniStreamRoutes(app);
 registerSovereigntyRoutes(app);
