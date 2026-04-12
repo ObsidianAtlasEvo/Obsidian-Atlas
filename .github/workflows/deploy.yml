@@ -165,9 +165,9 @@ jobs:
           echo "Waiting 10s for PM2 to stabilize..."
           sleep 10
           echo "Probing health endpoint..."
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-            --max-time 15 \
-            https://obsidianatlastech.com/api/health || echo "000")
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 \
+            https://obsidianatlastech.com/api/health 2>/dev/null)
+          STATUS=${STATUS:-000}
           echo "HTTP status: $STATUS"
           if [ "$STATUS" = "200" ] || [ "$STATUS" = "503" ]; then
             # 503 = degraded but alive (deep health check) — still a successful deploy
