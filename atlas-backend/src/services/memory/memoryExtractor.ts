@@ -81,31 +81,37 @@ export function extractMemoryCandidatesHeuristic(input: {
   const out: MemoryCandidate[] = [];
 
   if (/\b(i prefer|i like|i'd rather|i would rather|please always|always use|never use)\b/i.test(u)) {
-    push(out, 'preference', 'Stated preference in user message', u.slice(0, 280), 0.62, 'pref.phrase', TAG_HEURISTIC);
+    push(out, 'preference', 'Stated preference in user message', u.slice(0, 280), 0.82, 'pref.phrase', TAG_HEURISTIC);
   }
   if (/\b(concise|brief|short answer|tl;dr|bullet points|no fluff)\b/i.test(lower)) {
-    push(out, 'preference', 'Brevity / format preference', u.slice(0, 200), 0.58, 'pref.brevity', TAG_HEURISTIC);
+    push(out, 'preference', 'Brevity / format preference', u.slice(0, 200), 0.80, 'pref.brevity', TAG_HEURISTIC);
   }
   if (/\b(my project|our project|i'm building|i am building|mvp|roadmap|sprint|release)\b/i.test(combined)) {
-    push(out, 'project', 'Possible ongoing project mention', u.slice(0, 280) || a.slice(0, 280), 0.55, 'proj.keyword', TAG_HEURISTIC);
+    push(out, 'project', 'Possible ongoing project mention', u.slice(0, 280) || a.slice(0, 280), 0.76, 'proj.keyword', TAG_HEURISTIC);
   }
   if (/\b(i want to|my goal|aiming to|plan to|trying to|hoping to)\b/i.test(lower)) {
-    push(out, 'goal', 'Goal-oriented phrasing', u.slice(0, 280), 0.56, 'goal.phrase', TAG_HEURISTIC);
+    push(out, 'goal', 'Goal-oriented phrasing', u.slice(0, 280), 0.78, 'goal.phrase', TAG_HEURISTIC);
   }
   if (/\b(do not|don't|never|must not|avoid|strictly no)\b/i.test(u) && u.length < 400) {
-    push(out, 'constraint', 'Prohibitive or constraint language', u.slice(0, 280), 0.54, 'constrain.neg', TAG_HEURISTIC);
+    push(out, 'constraint', 'Prohibitive or constraint language', u.slice(0, 280), 0.79, 'constrain.neg', TAG_HEURISTIC);
   }
   if (/\b(formal|casual|friendly|professional|technical|rigorous|step by step)\b/i.test(lower)) {
-    push(out, 'style', 'Tone or style cue', u.slice(0, 200), 0.52, 'style.adj', TAG_HEURISTIC);
+    push(out, 'style', 'Tone or style cue', u.slice(0, 200), 0.77, 'style.adj', TAG_HEURISTIC);
   }
   if (/\b(i am a|i work as|i'm a|my role is|as a \w+ engineer|as a developer)\b/i.test(lower)) {
-    push(out, 'identity', 'Possible role/identity cue', u.slice(0, 220), 0.5, 'id.role', TAG_HEURISTIC);
+    push(out, 'identity', 'Possible role/identity cue', u.slice(0, 220), 0.80, 'id.role', TAG_HEURISTIC);
   }
   if (/\b(i live in|i'm based in|i am based in|my timezone is|i have \d+ (years?|kids?))\b/i.test(lower)) {
-    push(out, 'fact', 'User-stated factual self-detail', u.slice(0, 220), 0.48, 'fact.self', TAG_HEURISTIC);
+    push(out, 'fact', 'User-stated factual self-detail', u.slice(0, 220), 0.75, 'fact.self', TAG_HEURISTIC);
   }
   if (/\b(as you prefer|per your preference|you (?:asked|wanted) (?:for|me to))\b/i.test(a)) {
-    push(out, 'preference', 'Assistant echoed a user preference', a.slice(0, 220), 0.45, 'pref.echo', TAG_HEURISTIC);
+    push(out, 'preference', 'Assistant echoed a user preference', a.slice(0, 220), 0.73, 'pref.echo', TAG_HEURISTIC);
+  }
+  if (/\b(in my experience|from my experience|i've found that|i've seen that|i've learned)\b/i.test(lower)) {
+    push(out, 'fact', 'Experience-based assertion', u.slice(0, 280), 0.78, 'fact.experience', TAG_HEURISTIC);
+  }
+  if (/\b(skip the|no need for|don't bother with|stop doing|quit)\b/i.test(lower)) {
+    push(out, 'rejection', 'Rejected behavior or pattern', u.slice(0, 280), 0.81, 'reject.explicit', TAG_HEURISTIC);
   }
 
   const seen = new Set<string>();

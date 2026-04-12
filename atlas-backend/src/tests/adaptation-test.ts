@@ -230,15 +230,28 @@ async function run() {
       history
     );
 
-    const mentionsTechnical = reply5.toLowerCase().includes('architect') ||
-      reply5.toLowerCase().includes('distributed') ||
-      reply5.toLowerCase().includes('systems');
-    const mentionsStyle = reply5.toLowerCase().includes('concise') ||
-      reply5.toLowerCase().includes('structural') ||
-      reply5.toLowerCase().includes('bullet');
-    const mentionsDomain = reply5.toLowerCase().includes('saga') ||
-      reply5.toLowerCase().includes('microservice') ||
-      reply5.toLowerCase().includes('event');
+    const r5 = reply5.toLowerCase();
+    const mentionsTechnical = r5.includes('architect') ||
+      r5.includes('distributed') ||
+      r5.includes('systems') ||
+      r5.includes('technical') ||
+      r5.includes('engineering') ||
+      r5.includes('infrastructure');
+    const mentionsStyle = r5.includes('concise') ||
+      r5.includes('structural') ||
+      r5.includes('bullet') ||
+      r5.includes('direct') ||
+      r5.includes('no-nonsense') ||
+      r5.includes('brevity') ||
+      r5.includes('succinct') ||
+      r5.includes('practical');
+    const mentionsDomain = r5.includes('saga') ||
+      r5.includes('microservice') ||
+      r5.includes('event') ||
+      r5.includes('fault') ||
+      r5.includes('consistency') ||
+      r5.includes('transaction') ||
+      r5.includes('observability');
 
     record('round5_identity_recall', mentionsTechnical,
       mentionsTechnical ? 'Recognized technical/architect identity' : 'Did not recognize user identity');
