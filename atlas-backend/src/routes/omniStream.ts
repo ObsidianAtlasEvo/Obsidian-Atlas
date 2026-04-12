@@ -355,34 +355,15 @@ export function registerOmniStreamRoutes(app: FastifyInstance): void {
         result.fullText += `\n\n*[Quality note: ${qg.issues.join('; ')}]*`;
       }
 
-      // Overseer lens: 4-step synthesis pipeline (synthesis → completeness → user lens → constitutional check)
-      const overseerResult = await applyOverseerLens(userId, result.fullText, {
-        query: userPrompt,
-        mode: routing.mode ?? 'default',
-        userId,
-        conversationId: traceId,
-        modelOutputs: [], // swarm outputs not yet exposed at this layer; Step 1 handles gracefully
-      });
-      // Always use overseer response (it synthesizes, personalizes, and may annotate)
-      result.fullText = overseerResult.response;
-
       const requestMessages = messages.filter(
         (m): m is { role: ChatRole; content: string } => m.role !== 'system'
       );
-
-      triggerEvolutionAfterOmniResponse({
-        traceId,
-        userId,
-        userMessage: userPrompt,
-        assistantResponse: result.fullText,
-        requestMessages,
-        verifiedEmail,
-      });
 
       const cloudSwarm =
         result.surface !== 'god_mode_local' &&
         !result.surface.startsWith('god_mode');
 
+      // Send done immediately with the raw LLM response — never block user delivery on Overseer
       sseWrite(raw, 'done', {
         traceId,
         requestId,
@@ -398,6 +379,37 @@ export function registerOmniStreamRoutes(app: FastifyInstance): void {
         },
       });
       raw.end();
+
+      // Overseer lens runs async — trains on response, personalizes future outputs (non-blocking)
+      Promise.resolve().then(async () => {
+        try {
+          const overseerResult = await applyOverseerLens(userId, result.fullText, {
+            query: userPrompt,
+            mode: routing.mode ?? 'default',
+            userId,
+            conversationId: traceId,
+            modelOutputs: [],
+          });
+          triggerEvolutionAfterOmniResponse({
+            traceId,
+            userId,
+            userMessage: userPrompt,
+            assistantResponse: overseerResult.response,
+            requestMessages,
+            verifiedEmail,
+          });
+        } catch {
+          // Overseer failure is non-fatal — evolution will retry on next interaction
+          triggerEvolutionAfterOmniResponse({
+            traceId,
+            userId,
+            userMessage: userPrompt,
+            assistantResponse: result.fullText,
+            requestMessages,
+            verifiedEmail,
+          });
+        }
+      }).catch(() => { /* silent — never crash the server over background Overseer */ });
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       request.log.error(e);
