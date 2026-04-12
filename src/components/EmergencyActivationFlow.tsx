@@ -1,16 +1,23 @@
 import React, { useState } from 'react';
 import { AppState, EmergencyContainment } from '../types';
-import { auth, setEmergencyState, logAudit } from '../services/firebase';
 import { ShieldAlert, ShieldCheck, Lock, Key, Smartphone, AlertTriangle, CheckCircle2, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { atlasApiUrl } from '../lib/atlasApi';
+import { atlasTraceUserId } from '../lib/atlasTraceContext';
 
 interface EmergencyActivationFlowProps {
   state: AppState;
+  setState: React.Dispatch<React.SetStateAction<AppState>>;
   onClose: () => void;
   isLifting?: boolean;
 }
 
-export const EmergencyActivationFlow: React.FC<EmergencyActivationFlowProps> = ({ state, onClose, isLifting = false }) => {
+export const EmergencyActivationFlow: React.FC<EmergencyActivationFlowProps> = ({
+  state,
+  setState,
+  onClose,
+  isLifting = false,
+}) => {
   const [step, setStep] = useState(1);
   const [password, setPassword] = useState('');
   const [otp1, setOtp1] = useState('');
@@ -28,26 +35,44 @@ export const EmergencyActivationFlow: React.FC<EmergencyActivationFlowProps> = (
   const handleActivate = async () => {
     setIsVerifying(true);
     try {
+      const uid = atlasTraceUserId(state);
+      const res = await fetch(atlasApiUrl('/v1/governance/emergency'), {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: uid,
+          action: isLifting ? 'deactivate' : 'activate',
+          reason: isLifting ? (state.emergencyStatus?.reason ?? 'recovery') : reason,
+        }),
+      });
+      if (!res.ok) {
+        const t = await res.text().catch(() => '');
+        throw new Error(t || `HTTP ${res.status}`);
+      }
+
       const emergencyState: EmergencyContainment = {
         active: !isLifting,
         activatedAt: isLifting ? state.emergencyStatus?.activatedAt : new Date().toISOString(),
         activatedBy: creatorEmail,
         reason: isLifting ? state.emergencyStatus?.reason : reason,
-        level: 4, // Hard freeze
+        level: 4,
         liftedAt: isLifting ? new Date().toISOString() : undefined,
         liftedBy: isLifting ? creatorEmail : undefined,
-        forensicSnapshot: !isLifting ? {
-          configState: { activeMode: state.activeMode, uiPosture: state.cognitiveLoad.uiPosture },
-          authLogs: [], // In real app, fetch recent logs
-          activeSessions: [auth.currentUser?.uid || 'unknown'],
-          timestamp: new Date().toISOString()
-        } : state.emergencyStatus?.forensicSnapshot
+        forensicSnapshot: !isLifting
+          ? {
+              configState: { activeMode: state.activeMode, uiPosture: state.cognitiveLoad.uiPosture },
+              authLogs: [],
+              activeSessions: [state.currentUser?.uid || 'unknown'],
+              timestamp: new Date().toISOString(),
+            }
+          : state.emergencyStatus?.forensicSnapshot,
       };
 
-      await setEmergencyState(emergencyState);
+      setState((prev) => ({ ...prev, emergencyStatus: emergencyState }));
       onClose();
     } catch (error) {
-      console.error("Failed to update emergency state:", error);
+      console.error('Failed to update emergency state:', error);
     } finally {
       setIsVerifying(false);
     }

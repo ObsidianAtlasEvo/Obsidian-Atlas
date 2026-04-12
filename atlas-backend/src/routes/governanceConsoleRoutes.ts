@@ -1,40 +1,612 @@
-/**
- * Governance Console Routes
- * Phase 3/4 — Backend endpoints for Sovereign Creator Console
- *
- * Replaces the localhost:11434 Ollama dependency for console commands.
- * Routes through the existing LLM infrastructure (omniRouter / llmDelegator).
- */
-
-import type { FastifyInstance } from 'fastify';
+import { randomUUID } from 'node:crypto';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
+import { getDb } from '../db/sqlite.js';
+import { attachAtlasSession, getAuthenticatedUser } from '../services/auth/authProvider.js';
+import { assertGovernanceAccess } from '../services/governance/governanceAccess.js';
+import { listMergedGapsForUser } from '../services/governance/gapMerge.js';
+import { isSovereignOwnerEmail } from '../services/intelligence/router.js';
 
-const consoleCommandSchema = z.object({
-  command: z.string().min(1).max(4000),
-  userId: z.string().min(1),
-  userEmail: z.string().email().optional(),
-  channel: z.string().optional(),
-});
+const userIdQ = z.object({ userId: z.string().min(1) });
 
-const aiCommandSchema = z.object({
-  command: z.string().min(1).max(4000),
-  userId: z.string().min(1),
-  userEmail: z.string().email().optional(),
-  channel: z.string().optional(),
-});
-
-const CREATOR_EMAIL = 'crowleyrc62@gmail.com';
-
-function isCreator(email?: string): boolean {
-  return email?.trim().toLowerCase() === CREATOR_EMAIL;
+function nowIso(): string {
+  return new Date().toISOString();
 }
 
-function buildGovernancePrompt(command: string, isAdmin: boolean): string {
-  const securityContext = isAdmin
-    ? 'ADMINISTRATIVE ACCESS GRANTED: User is the Sovereign Creator. Full governance access permitted.'
-    : `SECURITY: Non-creator user. Restrict to read-only operational queries. Refuse administrative commands.`;
+export function insertGovernanceAuditLog(input: {
+  userId: string;
+  action: string;
+  actor: string;
+  type?: string;
+  severity?: string;
+  details?: unknown;
+}): string {
+  const db = getDb();
+  const id = randomUUID();
+  const created = nowIso();
+  db.prepare(
+    `INSERT INTO governance_audit_logs (id, user_id, action, actor, type, severity, details_json, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    id,
+    input.userId,
+    input.action,
+    input.actor,
+    input.type ?? 'governance',
+    input.severity ?? 'medium',
+    JSON.stringify(input.details ?? {}),
+    created
+  );
+  return id;
+}
 
-  return `You are the Obsidian Atlas Sovereign Creator Console AI Governance module.
+export function registerGovernanceConsoleRoutes(app: FastifyInstance): void {
+  const db = () => getDb();
+
+  // ── Gaps (governance + evolution eval gaps merged) ────────────────────────
+  app.get('/v1/governance/gaps', async (request, reply) => {
+    const parsed = userIdQ.extend({ status: z.string().optional() }).safeParse(request.query);
+    if (!parsed.success) {
+      return reply.status(400).send({ error: 'validation_error', details: parsed.error.flatten() });
+    }
+    const { userId, status } = parsed.data;
+    if (!(await assertGovernanceAccess(request, reply, userId))) return;
+    const gaps = listMergedGapsForUser(userId, status);
+    return reply.send({ gaps });
+  });
+
+  app.get('/v1/governance/memory-vault', async (request, reply) => {
+    const parsed = userIdQ
+      .extend({ limit: z.coerce.number().int().min(1).max(500).optional() })
+      .safeParse(request.query);
+    if (!parsed.success) {
+      return reply.status(400).send({ error: 'validation_error', details: parsed.error.flatten() });
+    }
+    const { userId, limit: lim = 120 } = parsed.data;
+    if (!(await assertGovernanceAccess(request, reply, userId))) return;
+    try {
+      const rows = db()
+        .prepare(
+          `SELECT id, user_id as userId, content, type, confidence, created_at as createdAt, origin, source_trace_id as sourceTraceId
+           FROM memory_vault
+           WHERE user_id = ? AND (archived_at IS NULL OR archived_at = '')
+           ORDER BY datetime(created_at) DESC
+           LIMIT ?`
+        )
+        .all(userId, lim) as Record<string, unknown>[];
+      return reply.send({ entries: rows });
+    } catch {
+      return reply.send({ entries: [] });
+    }
+  });
+
+  const gapCreate = z.object({
+    userId: z.string().min(1),
+    title: z.string().min(1),
+    description: z.string().min(1),
+    severity: z.string().min(1),
+    status: z.string().optional(),
+    type: z.string().optional(),
+  });
+
+  app.post('/v1/governance/gaps', async (request, reply) => {
+    const parsed = gapCreate.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.status(400).send({ error: 'validation_error', details: parsed.error.flatten() });
+    }
+    const b = parsed.data;
+    if (!(await assertGovernanceAccess(request, reply, b.userId))) return;
+    const id = randomUUID();
+    const t = nowIso();
+    const status = b.status ?? 'identified';
+    const type = b.type ?? 'structural_gap';
+    db().prepare(
+      `INSERT INTO governance_gaps (id, user_id, title, description, severity, status, type, detected_at, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(id, b.userId, b.title, b.description, b.severity, status, type, t, t, t);
+    insertGovernanceAuditLog({
+      userId: b.userId,
+      action: 'gap_created',
+      actor: 'console',
+      severity: 'low',
+      details: { gapId: id, title: b.title },
+    });
+    return reply.status(201).send({ id, status: 'created' });
+  });
+
+  const gapPatch = z.object({
+    status: z.string().optional(),
+    title: z.string().optional(),
+    description: z.string().optional(),
+    severity: z.string().optional(),
+    notes: z.string().optional(),
+    repairedAt: z.string().optional(),
+  });
+
+  app.patch('/v1/governance/gaps/:id', async (request, reply) => {
+    const id = z.string().min(1).safeParse((request.params as { id?: string }).id);
+    const parsed = gapPatch.safeParse(request.body);
+    if (!id.success || !parsed.success) {
+      return reply.status(400).send({ error: 'validation_error' });
+    }
+    const row = db().prepare(`SELECT user_id FROM governance_gaps WHERE id = ?`).get(id.data) as
+      | { user_id: string }
+      | undefined;
+    if (!row) return reply.status(404).send({ error: 'not_found' });
+    if (!(await assertGovernanceAccess(request, reply, row.user_id))) return;
+    const b = parsed.data;
+    const sets: string[] = [];
+    const vals: unknown[] = [];
+    if (b.status !== undefined) {
+      sets.push('status = ?');
+      vals.push(b.status);
+    }
+    if (b.title !== undefined) {
+      sets.push('title = ?');
+      vals.push(b.title);
+    }
+    if (b.description !== undefined) {
+      sets.push('description = ?');
+      vals.push(b.description);
+    }
+    if (b.severity !== undefined) {
+      sets.push('severity = ?');
+      vals.push(b.severity);
+    }
+    if (b.notes !== undefined) {
+      sets.push('notes = ?');
+      vals.push(b.notes);
+    }
+    if (b.repairedAt !== undefined) {
+      sets.push('repaired_at = ?');
+      vals.push(b.repairedAt);
+    }
+    if (sets.length === 0) return reply.status(400).send({ error: 'no_updates' });
+    sets.push('updated_at = ?');
+    vals.push(nowIso());
+    vals.push(id.data);
+    db().prepare(`UPDATE governance_gaps SET ${sets.join(', ')} WHERE id = ?`).run(...vals);
+    insertGovernanceAuditLog({
+      userId: row.user_id,
+      action: 'gap_updated',
+      actor: 'console',
+      details: { gapId: id.data, ...b },
+    });
+    return reply.send({ ok: true });
+  });
+
+  app.delete('/v1/governance/gaps/:id', async (request, reply) => {
+    const id = z.string().min(1).safeParse((request.params as { id?: string }).id);
+    if (!id.success) return reply.status(400).send({ error: 'validation_error' });
+    const row = db().prepare(`SELECT user_id FROM governance_gaps WHERE id = ?`).get(id.data) as
+      | { user_id: string }
+      | undefined;
+    if (!row) return reply.status(404).send({ error: 'not_found' });
+    if (!(await assertGovernanceAccess(request, reply, row.user_id))) return;
+    db().prepare(`DELETE FROM governance_gaps WHERE id = ?`).run(id.data);
+    insertGovernanceAuditLog({
+      userId: row.user_id,
+      action: 'gap_deleted',
+      actor: 'console',
+      severity: 'high',
+      details: { gapId: id.data },
+    });
+    return reply.send({ ok: true });
+  });
+
+  // ── Change control ────────────────────────────────────────────────────────
+  app.get('/v1/governance/changes', async (request, reply) => {
+    const parsed = userIdQ.extend({ status: z.string().optional() }).safeParse(request.query);
+    if (!parsed.success) {
+      return reply.status(400).send({ error: 'validation_error', details: parsed.error.flatten() });
+    }
+    const { userId, status } = parsed.data;
+    if (!(await assertGovernanceAccess(request, reply, userId))) return;
+    let rows: Record<string, unknown>[];
+    if (status) {
+      rows = db()
+        .prepare(
+          `SELECT id, user_id as userId, title, description, impact, class, proposed_by as proposedBy, approved_by as approvedBy,
+                  status, notes, created_at as createdAt, updated_at as updatedAt
+           FROM governance_changes WHERE user_id = ? AND status = ? ORDER BY datetime(created_at) DESC`
+        )
+        .all(userId, status) as Record<string, unknown>[];
+    } else {
+      rows = db()
+        .prepare(
+          `SELECT id, user_id as userId, title, description, impact, class, proposed_by as proposedBy, approved_by as approvedBy,
+                  status, notes, created_at as createdAt, updated_at as updatedAt
+           FROM governance_changes WHERE user_id = ? ORDER BY datetime(created_at) DESC`
+        )
+        .all(userId) as Record<string, unknown>[];
+    }
+    return reply.send({ changes: rows });
+  });
+
+  const changeCreate = z.object({
+    userId: z.string().min(1),
+    title: z.string().min(1),
+    description: z.string().min(1),
+    impact: z.string().optional(),
+    proposedBy: z.string().optional(),
+    class: z.number().int().min(0).max(4).optional(),
+    status: z.string().optional(),
+  });
+
+  app.post('/v1/governance/changes', async (request, reply) => {
+    const parsed = changeCreate.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.status(400).send({ error: 'validation_error', details: parsed.error.flatten() });
+    }
+    const b = parsed.data;
+    if (!(await assertGovernanceAccess(request, reply, b.userId))) return;
+    const id = randomUUID();
+    const t = nowIso();
+    const status = b.status ?? 'proposed';
+    const cls = b.class ?? 2;
+    db().prepare(
+      `INSERT INTO governance_changes (id, user_id, title, description, impact, class, proposed_by, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      id,
+      b.userId,
+      b.title,
+      b.description,
+      b.impact ?? '',
+      cls,
+      b.proposedBy ?? 'system',
+      status,
+      t,
+      t
+    );
+    insertGovernanceAuditLog({
+      userId: b.userId,
+      action: 'change_proposed',
+      actor: b.proposedBy ?? 'system',
+      details: { changeId: id, title: b.title },
+    });
+    return reply.status(201).send({ id, status: 'created' });
+  });
+
+  const changePatch = z.object({
+    status: z.string().optional(),
+    notes: z.string().optional(),
+    approvedBy: z.string().optional(),
+  });
+
+  app.patch('/v1/governance/changes/:id', async (request, reply) => {
+    const id = z.string().min(1).safeParse((request.params as { id?: string }).id);
+    const parsed = changePatch.safeParse(request.body);
+    if (!id.success || !parsed.success) {
+      return reply.status(400).send({ error: 'validation_error' });
+    }
+    const row = db().prepare(`SELECT user_id FROM governance_changes WHERE id = ?`).get(id.data) as
+      | { user_id: string }
+      | undefined;
+    if (!row) return reply.status(404).send({ error: 'not_found' });
+    if (!(await assertGovernanceAccess(request, reply, row.user_id))) return;
+    const b = parsed.data;
+    const sets: string[] = [];
+    const vals: unknown[] = [];
+    if (b.status !== undefined) {
+      sets.push('status = ?');
+      vals.push(b.status);
+    }
+    if (b.notes !== undefined) {
+      sets.push('notes = ?');
+      vals.push(b.notes);
+    }
+    if (b.approvedBy !== undefined) {
+      sets.push('approved_by = ?');
+      vals.push(b.approvedBy);
+    }
+    if (sets.length === 0) return reply.status(400).send({ error: 'no_updates' });
+    sets.push('updated_at = ?');
+    vals.push(nowIso());
+    vals.push(id.data);
+    db().prepare(`UPDATE governance_changes SET ${sets.join(', ')} WHERE id = ?`).run(...vals);
+    insertGovernanceAuditLog({
+      userId: row.user_id,
+      action: 'change_updated',
+      actor: b.approvedBy ?? 'console',
+      details: { changeId: id.data, ...b },
+    });
+    return reply.send({ ok: true });
+  });
+
+  app.delete('/v1/governance/changes/:id', async (request, reply) => {
+    const id = z.string().min(1).safeParse((request.params as { id?: string }).id);
+    if (!id.success) return reply.status(400).send({ error: 'validation_error' });
+    const row = db().prepare(`SELECT user_id FROM governance_changes WHERE id = ?`).get(id.data) as
+      | { user_id: string }
+      | undefined;
+    if (!row) return reply.status(404).send({ error: 'not_found' });
+    if (!(await assertGovernanceAccess(request, reply, row.user_id))) return;
+    db().prepare(`DELETE FROM governance_changes WHERE id = ?`).run(id.data);
+    insertGovernanceAuditLog({
+      userId: row.user_id,
+      action: 'change_deleted',
+      actor: 'console',
+      severity: 'high',
+      details: { changeId: id.data },
+    });
+    return reply.send({ ok: true });
+  });
+
+  // ── Audit logs ────────────────────────────────────────────────────────────
+  app.get('/v1/governance/audit-logs', async (request, reply) => {
+    const parsed = userIdQ
+      .extend({
+        limit: z.coerce.number().int().min(1).max(500).optional(),
+        type: z.string().optional(),
+        severity: z.string().optional(),
+      })
+      .safeParse(request.query);
+    if (!parsed.success) {
+      return reply.status(400).send({ error: 'validation_error', details: parsed.error.flatten() });
+    }
+    const { userId, limit: lim = 100, type, severity } = parsed.data;
+    if (!(await assertGovernanceAccess(request, reply, userId))) return;
+    let sql = `SELECT id, user_id as userId, action, actor, type, severity, details_json as detailsJson, created_at as timestamp
+               FROM governance_audit_logs WHERE user_id = ?`;
+    const params: unknown[] = [userId];
+    if (type) {
+      sql += ` AND type = ?`;
+      params.push(type);
+    }
+    if (severity) {
+      sql += ` AND severity = ?`;
+      params.push(severity);
+    }
+    sql += ` ORDER BY datetime(created_at) DESC LIMIT ?`;
+    params.push(lim);
+    const rows = db().prepare(sql).all(...params) as { detailsJson: string }[];
+    const logs = rows.map((r) => ({
+      ...r,
+      metadata: (() => {
+        try {
+          return JSON.parse(r.detailsJson || '{}');
+        } catch {
+          return {};
+        }
+      })(),
+    }));
+    return reply.send({ logs });
+  });
+
+  const auditPost = z.object({
+    userId: z.string().min(1),
+    action: z.string().min(1),
+    actor: z.string().min(1),
+    details: z.record(z.string(), z.unknown()).optional(),
+    type: z.string().optional(),
+    severity: z.enum(['low', 'medium', 'high', 'critical']).optional(),
+  });
+
+  app.post('/v1/governance/audit-logs', async (request, reply) => {
+    const parsed = auditPost.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.status(400).send({ error: 'validation_error', details: parsed.error.flatten() });
+    }
+    const b = parsed.data;
+    if (!(await assertGovernanceAccess(request, reply, b.userId))) return;
+    const id = insertGovernanceAuditLog({
+      userId: b.userId,
+      action: b.action,
+      actor: b.actor,
+      type: b.type,
+      severity: b.severity,
+      details: b.details,
+    });
+    return reply.status(201).send({ id, status: 'saved' });
+  });
+
+  // ── Emergency (creator-only POST) ─────────────────────────────────────────
+  app.get('/v1/governance/emergency/status', async (request, reply) => {
+    const parsed = userIdQ.safeParse(request.query);
+    if (!parsed.success) {
+      return reply.status(400).send({ error: 'validation_error', details: parsed.error.flatten() });
+    }
+    if (!(await assertGovernanceAccess(request, reply, parsed.data.userId))) return;
+    const row = db()
+      .prepare(
+        `SELECT active, activated_at as activatedAt, reason, lifted_at as liftedAt FROM governance_emergency_state WHERE user_id = ?`
+      )
+      .get(parsed.data.userId) as
+      | { active: number; activatedAt: string | null; reason: string | null; liftedAt: string | null }
+      | undefined;
+    if (!row) {
+      return reply.send({ active: false });
+    }
+    return reply.send({
+      active: row.active === 1,
+      activatedAt: row.activatedAt ?? undefined,
+      reason: row.reason ?? undefined,
+      liftedAt: row.liftedAt ?? undefined,
+    });
+  });
+
+  const emergencyBody = z.object({
+    userId: z.string().min(1),
+    action: z.enum(['activate', 'deactivate']),
+    reason: z.string().min(1),
+  });
+
+  app.post('/v1/governance/emergency', async (request, reply) => {
+    await attachAtlasSession(request as FastifyRequest);
+    const user = await getAuthenticatedUser(request as FastifyRequest);
+    const email = user?.email ?? null;
+    if (!isSovereignOwnerEmail(email)) {
+      return reply.status(403).send({ error: 'forbidden', message: 'Sovereign creator only' });
+    }
+    const parsed = emergencyBody.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.status(400).send({ error: 'validation_error', details: parsed.error.flatten() });
+    }
+    const { userId, action, reason } = parsed.data;
+    if (!(await assertGovernanceAccess(request, reply, userId))) return;
+    const t = nowIso();
+    const exists = db().prepare(`SELECT 1 FROM governance_emergency_state WHERE user_id = ?`).get(userId);
+    if (action === 'activate') {
+      if (exists) {
+        db()
+          .prepare(
+            `UPDATE governance_emergency_state SET active = 1, activated_at = ?, reason = ?, lifted_at = NULL, updated_at = ? WHERE user_id = ?`
+          )
+          .run(t, reason, t, userId);
+      } else {
+        db()
+          .prepare(
+            `INSERT INTO governance_emergency_state (user_id, active, activated_at, reason, lifted_at, updated_at) VALUES (?, 1, ?, ?, NULL, ?)`
+          )
+          .run(userId, t, reason, t);
+      }
+    } else {
+      if (exists) {
+        db()
+          .prepare(
+            `UPDATE governance_emergency_state SET active = 0, lifted_at = ?, updated_at = ? WHERE user_id = ?`
+          )
+          .run(t, t, userId);
+      } else {
+        db()
+          .prepare(
+            `INSERT INTO governance_emergency_state (user_id, active, activated_at, reason, lifted_at, updated_at) VALUES (?, 0, NULL, NULL, ?, ?)`
+          )
+          .run(userId, t, t);
+      }
+    }
+    insertGovernanceAuditLog({
+      userId,
+      action: `emergency_${action}`,
+      actor: email ?? 'sovereign',
+      severity: 'critical',
+      details: { reason },
+    });
+    return reply.send({ status: 'ok', action, timestamp: t });
+  });
+
+  // ── Diagnostics (BugHunter / console) ─────────────────────────────────────
+  const diagPost = z.object({
+    userId: z.string().min(1),
+    sessionId: z.string().min(1),
+    type: z.enum(['scan', 'error', 'stress', 'persona']),
+    payload: z.record(z.string(), z.unknown()),
+    timestamp: z.string().min(1),
+  });
+
+  app.post('/v1/diagnostics/report', async (request, reply) => {
+    const parsed = diagPost.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.status(400).send({ error: 'validation_error', details: parsed.error.flatten() });
+    }
+    const b = parsed.data;
+    if (!(await assertGovernanceAccess(request, reply, b.userId))) return;
+    const id = randomUUID();
+    const created = nowIso();
+    db()
+      .prepare(
+        `INSERT INTO diagnostics_reports (id, user_id, session_id, type, payload_json, timestamp, status, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, 'open', ?)`
+      )
+      .run(id, b.userId, b.sessionId, b.type, JSON.stringify(b.payload), b.timestamp, created);
+    return reply.status(201).send({ id, status: 'saved' });
+  });
+
+  app.get('/v1/diagnostics/reports', async (request, reply) => {
+    const parsed = z
+      .object({
+        userId: z.string().min(1),
+        sessionId: z.string().optional(),
+        type: z.string().optional(),
+        limit: z.coerce.number().int().min(1).max(200).optional(),
+      })
+      .safeParse(request.query);
+    if (!parsed.success) {
+      return reply.status(400).send({ error: 'validation_error', details: parsed.error.flatten() });
+    }
+    const { userId, sessionId, type, limit: lim = 50 } = parsed.data;
+    if (!(await assertGovernanceAccess(request, reply, userId))) return;
+    let sql = `SELECT id, user_id as userId, session_id as sessionId, type, payload_json as payloadJson, timestamp, status, created_at as createdAt
+               FROM diagnostics_reports WHERE user_id = ?`;
+    const params: unknown[] = [userId];
+    if (sessionId) {
+      sql += ` AND session_id = ?`;
+      params.push(sessionId);
+    }
+    if (type) {
+      sql += ` AND type = ?`;
+      params.push(type);
+    }
+    sql += ` ORDER BY datetime(created_at) DESC LIMIT ?`;
+    params.push(lim);
+    const rows = db().prepare(sql).all(...params) as { payloadJson: string }[];
+    const reports = rows.map((r) => ({
+      ...r,
+      payload: JSON.parse(r.payloadJson || '{}') as Record<string, unknown>,
+    }));
+    return reply.send({ reports });
+  });
+
+  app.patch('/v1/diagnostics/reports/:id', async (request, reply) => {
+    const id = z.string().min(1).safeParse((request.params as { id?: string }).id);
+    const parsed = z
+      .object({ status: z.enum(['fixed', 'open', 'archived']), userId: z.string().min(1) })
+      .safeParse(request.body);
+    if (!id.success || !parsed.success) {
+      return reply.status(400).send({ error: 'validation_error' });
+    }
+    const r = db().prepare(`SELECT user_id FROM diagnostics_reports WHERE id = ?`).get(id.data) as
+      | { user_id: string }
+      | undefined;
+    if (!r || r.user_id !== parsed.data.userId) {
+      return reply.status(404).send({ error: 'not_found' });
+    }
+    if (!(await assertGovernanceAccess(request, reply, r.user_id))) return;
+    db().prepare(`UPDATE diagnostics_reports SET status = ? WHERE id = ?`).run(parsed.data.status, id.data);
+    return reply.send({ ok: true });
+  });
+
+  app.delete('/v1/diagnostics/reports/session/:sessionId', async (request, reply) => {
+    const sessionId = z.string().min(1).safeParse((request.params as { sessionId?: string }).sessionId);
+    const parsed = userIdQ.safeParse(request.query);
+    if (!sessionId.success || !parsed.success) {
+      return reply.status(400).send({ error: 'validation_error' });
+    }
+    if (!(await assertGovernanceAccess(request, reply, parsed.data.userId))) return;
+    db()
+      .prepare(`DELETE FROM diagnostics_reports WHERE session_id = ? AND user_id = ?`)
+      .run(sessionId.data, parsed.data.userId);
+    return reply.send({ ok: true });
+  });
+
+  // ── LLM console (creator email gate; legacy terminal) ─────────────────────
+  const consoleCommandSchema = z.object({
+    command: z.string().min(1).max(4000),
+    userId: z.string().min(1),
+    userEmail: z.string().email().optional(),
+    channel: z.string().optional(),
+  });
+
+  const aiCommandSchema = z.object({
+    command: z.string().min(1).max(4000),
+    userId: z.string().min(1),
+    userEmail: z.string().email().optional(),
+    channel: z.string().optional(),
+  });
+
+  const CREATOR_EMAIL = 'crowleyrc62@gmail.com';
+
+  function isCreator(email?: string): boolean {
+    return email?.trim().toLowerCase() === CREATOR_EMAIL;
+  }
+
+  function buildGovernancePrompt(command: string, isAdmin: boolean): string {
+    const securityContext = isAdmin
+      ? 'ADMINISTRATIVE ACCESS GRANTED: User is the Sovereign Creator. Full governance access permitted.'
+      : `SECURITY: Non-creator user. Restrict to read-only operational queries. Refuse administrative commands.`;
+
+    return `You are the Obsidian Atlas Sovereign Creator Console AI Governance module.
 
 ${securityContext}
 
@@ -53,10 +625,8 @@ Analyze and respond with a JSON object:
 proposalClass: 0=none, 1=minor, 2=moderate, 3=major, 4=critical
 isImmediateUpgrade: true only if command explicitly requests an immediate implementation
 `;
-}
+  }
 
-export function registerGovernanceConsoleRoutes(app: FastifyInstance): void {
-  // Terminal console command
   app.post('/v1/governance/console-command', async (request, reply) => {
     const parsed = consoleCommandSchema.safeParse(request.body);
     if (!parsed.success) {
@@ -77,10 +647,9 @@ export function registerGovernanceConsoleRoutes(app: FastifyInstance): void {
       const prompt = buildGovernancePrompt(command, admin);
       const raw = await complete(prompt, { maxTokens: 400, temperature: 0.3 });
 
-      // Try to parse JSON response, fall back to raw text
       try {
-        const parsed = JSON.parse(raw) as { response?: string };
-        return reply.send({ response: parsed.response ?? raw });
+        const parsedJson = JSON.parse(raw) as { response?: string };
+        return reply.send({ response: parsedJson.response ?? raw });
       } catch {
         return reply.send({ response: raw });
       }
@@ -93,7 +662,6 @@ export function registerGovernanceConsoleRoutes(app: FastifyInstance): void {
     }
   });
 
-  // AI Governance command (full structured response)
   app.post('/v1/governance/ai-command', async (request, reply) => {
     const parsed = aiCommandSchema.safeParse(request.body);
     if (!parsed.success) {

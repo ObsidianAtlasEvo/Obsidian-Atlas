@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAtlasStore } from '../store/useAtlasStore';
-import { generateId, nowISO } from '../lib/persistence';
+import { nowISO } from '../lib/persistence';
+import type { BugHunterState, BugEntry } from '../types';
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
 const C = {
@@ -87,7 +88,11 @@ function StatCard({ label, value, color }: { label: string; value: string | numb
 
 function SeverityBadge({ severity }: { severity: string }) {
   const map: Record<string, string> = {
-    low: C.teal, medium: C.amber, high: C.danger, critical: C.danger,
+    low: C.teal,
+    medium: C.amber,
+    high: C.danger,
+    critical: C.danger,
+    'dormant-risk': C.muted,
   };
   return (
     <span style={{
@@ -155,11 +160,13 @@ function OverviewTab({
   emergencyStatus,
   bugHunter,
   store,
+  setEmergencyStatus,
 }: {
   currentUser: any;
   emergencyStatus: any;
   bugHunter: any;
   store: any;
+  setEmergencyStatus: (s: any) => void;
 }) {
   const memories = store.memories ?? [];
   const journalEntries = store.journalEntries ?? [];
@@ -169,7 +176,7 @@ function OverviewTab({
 
   const handleActivateEmergency = () => {
     if (window.confirm('Activate Emergency Containment? This will lock down system access and trigger forensic logging.')) {
-      store.setEmergencyStatus?.({
+      setEmergencyStatus({
         active: true,
         activatedAt: nowISO(),
         activatedBy: currentUser?.uid ?? 'sovereign_creator',
@@ -359,25 +366,19 @@ function AIGovernanceTab({ store }: { store: any }) {
 
 // ─── Bug Hunter Tab ───────────────────────────────────────────────────────────
 
-interface BugEntry {
-  id: string;
-  name: string;
-  category: string;
-  severity: 'low' | 'medium' | 'high' | 'critical';
-  status: string;
-  affectedSurface: string;
-  description?: string;
-  detectedAt?: string;
-  stackTrace?: string;
-}
-
-function BugHunterTab({ bugHunter, store }: { bugHunter: any; store: any }) {
+function BugHunterTab({
+  bugHunter,
+  setBugHunter,
+}: {
+  bugHunter: BugHunterState;
+  setBugHunter: (partial: Partial<BugHunterState>) => void;
+}) {
   const [expanded, setExpanded] = useState<string | null>(null);
 
   const ledger: BugEntry[] = bugHunter?.ledger ?? [];
 
   const toggleActive = () => {
-    store.setBugHunter?.({ ...bugHunter, isActive: !bugHunter?.isActive });
+    setBugHunter({ isActive: !bugHunter?.isActive });
   };
 
   return (
@@ -458,19 +459,21 @@ function BugHunterTab({ bugHunter, store }: { bugHunter: any; store: any }) {
                   <div style={{ ...INSET_STYLE, margin: '4px 0 8px', ...FADE_IN }}>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 12 }}>
                       <div>
-                        <div style={LABEL_STYLE}>Description</div>
-                        <div style={{ color: C.text, fontSize: '0.82rem', marginTop: 4 }}>{bug.description ?? '—'}</div>
+                        <div style={LABEL_STYLE}>Recommended fix</div>
+                        <div style={{ color: C.text, fontSize: '0.82rem', marginTop: 4 }}>
+                          {bug.recommendedFix || '—'}
+                        </div>
                       </div>
                       <div>
-                        <div style={LABEL_STYLE}>Detected At</div>
+                        <div style={LABEL_STYLE}>Logged At</div>
                         <div style={{ color: C.muted, fontSize: '0.82rem', marginTop: 4 }}>
-                          {bug.detectedAt ? new Date(bug.detectedAt).toLocaleString() : '—'}
+                          {bug.timestamp ? new Date(bug.timestamp).toLocaleString() : '—'}
                         </div>
                       </div>
                     </div>
-                    {bug.stackTrace && (
+                    {bug.notes && bug.notes.length > 0 && (
                       <div>
-                        <div style={LABEL_STYLE}>Stack Trace</div>
+                        <div style={LABEL_STYLE}>Notes</div>
                         <pre style={{
                           background: 'rgba(0,0,0,0.5)',
                           borderRadius: 6,
@@ -483,7 +486,7 @@ function BugHunterTab({ bugHunter, store }: { bugHunter: any; store: any }) {
                           marginTop: 6,
                           whiteSpace: 'pre-wrap',
                         }}>
-                          {bug.stackTrace}
+                          {bug.notes.join('\n')}
                         </pre>
                       </div>
                     )}
@@ -510,18 +513,18 @@ const LEVEL_CONFIG = [
 function EmergencyTab({
   emergencyStatus,
   currentUser,
-  store,
+  setEmergencyStatus,
 }: {
   emergencyStatus: any;
   currentUser: any;
-  store: any;
+  setEmergencyStatus: (s: any) => void;
 }) {
   const [selectedLevel, setSelectedLevel] = useState<1 | 2 | 3 | 4>(1);
   const [reason, setReason] = useState('');
 
   const activate = () => {
     if (!reason.trim()) { alert('A reason is required to activate emergency containment.'); return; }
-    store.setEmergencyStatus?.({
+    setEmergencyStatus({
       active: true,
       activatedAt: nowISO(),
       activatedBy: currentUser?.uid ?? 'sovereign_creator',
@@ -539,7 +542,7 @@ function EmergencyTab({
 
   const lift = () => {
     if (!window.confirm('Lift Emergency Containment? This will restore normal system access.')) return;
-    store.setEmergencyStatus?.({
+    setEmergencyStatus({
       ...emergencyStatus,
       active: false,
       liftedAt: nowISO(),
@@ -736,16 +739,32 @@ function EmergencyTab({
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
+function persistedTabToUi(
+  t: string | undefined
+): Tab {
+  if (t === 'ai_governance' || t === 'ai-governance') return 'ai_governance';
+  if (t === 'bug_hunter') return 'bug_hunter';
+  if (t === 'emergency') return 'emergency';
+  return 'overview';
+}
+
 export default function CreatorConsoleChamber() {
   const currentUser = useAtlasStore((s: any) => s.currentUser);
   const emergencyStatus = useAtlasStore((s: any) => s.emergencyStatus);
-  const creatorConsoleState = useAtlasStore((s: any) => s.creatorConsoleState);
   const bugHunter = useAtlasStore((s: any) => s.bugHunter);
   const store = useAtlasStore((s: any) => s);
+  const setCreatorConsoleState = useAtlasStore((s: any) => s.setCreatorConsoleState);
+  const setBugHunter = useAtlasStore((s: any) => s.setBugHunter);
+  const setEmergencyStatus = useAtlasStore((s: any) => s.setEmergencyStatus);
 
-  const [activeTab, setActiveTab] = useState<Tab>(
-    (creatorConsoleState?.activeTab as Tab) ?? 'overview'
+  const [activeTab, setActiveTab] = useState<Tab>(() =>
+    persistedTabToUi(useAtlasStore.getState().creatorConsoleState?.activeTab)
   );
+
+  useEffect(() => {
+    const prev = useAtlasStore.getState().creatorConsoleState;
+    setCreatorConsoleState({ ...prev, activeTab });
+  }, [activeTab, setCreatorConsoleState]);
 
   // Access check
   if (!currentUser || currentUser.role !== 'sovereign_creator') {
@@ -839,15 +858,18 @@ export default function CreatorConsoleChamber() {
           emergencyStatus={emergencyStatus}
           bugHunter={bugHunter}
           store={store}
+          setEmergencyStatus={setEmergencyStatus}
         />
       )}
       {activeTab === 'ai_governance' && <AIGovernanceTab store={store} />}
-      {activeTab === 'bug_hunter' && <BugHunterTab bugHunter={bugHunter} store={store} />}
+      {activeTab === 'bug_hunter' && (
+        <BugHunterTab bugHunter={bugHunter} setBugHunter={setBugHunter} />
+      )}
       {activeTab === 'emergency' && (
         <EmergencyTab
           emergencyStatus={emergencyStatus}
           currentUser={currentUser}
-          store={store}
+          setEmergencyStatus={setEmergencyStatus}
         />
       )}
 

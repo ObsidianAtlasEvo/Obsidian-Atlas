@@ -1,6 +1,9 @@
 # Atlas-Audit: [QA-CI] Verified — workflow_dispatch + push (integration branches) + all pull_request targets; then lint, test, Vite build, backend tsc emit.
 name: CI
 
+permissions:
+  contents: read
+
 on:
   workflow_dispatch:
   push:

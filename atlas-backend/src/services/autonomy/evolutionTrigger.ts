@@ -1,6 +1,7 @@
 import { buildPrimedChatSystemPrompt } from '../intelligence/atlasIdentity.js';
 import { createRoutedEvolutionModelProvider } from '../intelligence/router.js';
 import { scheduleEvolutionRun } from '../evolution/evolutionPipeline.js';
+import { dispatchEvolutionInteraction } from '../evolutionEngineRegistry.js';
 import type { ChatRole } from '../../types/atlas.js';
 
 export interface OmniEvolutionPayload {
@@ -29,5 +30,12 @@ export function triggerEvolutionAfterOmniResponse(payload: OmniEvolutionPayload)
     requestMessages: payload.requestMessages,
     model,
     chatModelLabel: 'omni-stream',
+  });
+
+  dispatchEvolutionInteraction({
+    userId: payload.userId,
+    sessionId: payload.traceId,
+    userMessage: payload.userMessage,
+    assistantMessage: payload.assistantResponse,
   });
 }

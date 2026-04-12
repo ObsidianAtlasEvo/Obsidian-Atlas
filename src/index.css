@@ -228,7 +228,7 @@ pre {
   margin-left: 1px;
 }
 
-/* ── Mobile responsive ─────────────────────────────────────────────────── */
+/* ── Mobile shell (< 640px) ─────────────────────────────────────────────── */
 
 @media (max-width: 639px) {
   html {
@@ -237,9 +237,27 @@ pre {
 
   body {
     overflow-y: auto;
+    overflow-x: hidden;
+  }
+
+  #root {
+    min-height: 100dvh;
+    padding-left: env(safe-area-inset-left, 0px);
+    padding-right: env(safe-area-inset-right, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    box-sizing: border-box;
   }
 
   .atlas-desktop-nav {
     display: none;
+  }
+
+  .atlas-nav-rail--desktop {
+    display: none !important;
+  }
+
+  .atlas-touch-min {
+    min-height: 44px;
+    min-width: 44px;
   }
 }

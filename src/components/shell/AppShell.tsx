@@ -9,41 +9,9 @@ export default function AppShell() {
   const setSidebarCollapsed = useAtlasStore((s) => s.setSidebarCollapsed);
   const isMobile = useIsMobile();
 
-  if (isMobile) {
-    return (
-      <div
-        style={{
-          width: '100%',
-          height: '100dvh',
-          display: 'flex',
-          flexDirection: 'column',
-          position: 'relative',
-          overflow: 'hidden',
-        }}
-      >
-        <main
-          style={{
-            flex: 1,
-            display: 'flex',
-            flexDirection: 'column',
-            overflowY: 'auto',
-            overflowX: 'hidden',
-            position: 'relative',
-            minHeight: 0,
-            paddingBottom: 56, // space for bottom nav
-          }}
-        >
-          <ChamberView />
-        </main>
-
-        <NavRail
-          expanded={false}
-          onToggle={() => {}}
-          isMobile
-        />
-      </div>
-    );
-  }
+  const navBottomReserve = isMobile
+    ? 'calc(52px + env(safe-area-inset-bottom, 0px))'
+    : 0;
 
   return (
     <div
@@ -51,27 +19,41 @@ export default function AppShell() {
         width: '100%',
         height: '100dvh',
         display: 'flex',
+        flexDirection: isMobile ? 'column' : 'row',
         overflow: 'hidden',
         position: 'relative',
       }}
     >
-      <NavRail
-        expanded={!sidebarCollapsed}
-        onToggle={() => setSidebarCollapsed(!sidebarCollapsed)}
-      />
+      {!isMobile && (
+        <NavRail
+          expanded={!sidebarCollapsed}
+          onToggle={() => setSidebarCollapsed(!sidebarCollapsed)}
+        />
+      )}
 
       <main
         style={{
           flex: 1,
           display: 'flex',
           flexDirection: 'column',
-          overflow: 'hidden',
+          overflow: isMobile ? 'auto' : 'hidden',
+          overflowX: 'hidden',
           position: 'relative',
           minWidth: 0,
+          minHeight: 0,
+          paddingBottom: navBottomReserve,
         }}
       >
         <ChamberView />
       </main>
+
+      {isMobile && (
+        <NavRail
+          isMobile
+          expanded={false}
+          onToggle={() => setSidebarCollapsed(!sidebarCollapsed)}
+        />
+      )}
     </div>
   );
 }

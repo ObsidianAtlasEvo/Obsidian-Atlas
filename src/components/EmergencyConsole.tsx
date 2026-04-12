@@ -1,18 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { AppState, AuditLog, EmergencyContainment } from '../types';
-import { db, logAudit, handleFirestoreError, OperationType } from '../services/firebase';
-import {
-  collection,
-  query,
-  orderBy,
-  onSnapshot,
-  limit,
-  Timestamp,
-  type QuerySnapshot,
-} from 'firebase/firestore';
-import { ShieldAlert, ShieldCheck, Activity, History, Lock, Unlock, AlertTriangle, FileText, Terminal, Zap, RefreshCw, Eye, EyeOff } from 'lucide-react';
+import { AppState, AuditLog } from '../types';
+import { ShieldAlert, ShieldCheck, History, Lock, AlertTriangle, FileText, RefreshCw } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { EmergencyActivationFlow } from './EmergencyActivationFlow';
+import { atlasApiUrl } from '../lib/atlasApi';
+import { atlasTraceUserId } from '../lib/atlasTraceContext';
 
 interface EmergencyConsoleProps {
   state: AppState;
@@ -25,16 +17,30 @@ export const EmergencyConsole: React.FC<EmergencyConsoleProps> = ({ state, setSt
   const [activeTab, setActiveTab] = useState<'status' | 'logs' | 'recovery'>('status');
 
   useEffect(() => {
-    const q = query(collection(db, 'audit_logs'), orderBy('timestamp', 'desc'), limit(50));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const s = snapshot as QuerySnapshot;
-      const logsData = s.docs.map((d) => ({ id: d.id, ...d.data() } as AuditLog));
-      setLogs(logsData);
-    }, (error) => {
-      handleFirestoreError(error, OperationType.LIST, 'audit_logs');
-    });
-    return () => unsubscribe();
-  }, []);
+    const uid = atlasTraceUserId(state);
+    let cancelled = false;
+
+    const fetchLogs = async () => {
+      try {
+        const res = await fetch(
+          `${atlasApiUrl('/v1/governance/audit-logs')}?userId=${encodeURIComponent(uid)}&limit=50`,
+          { credentials: 'include' },
+        );
+        if (!res.ok || cancelled) return;
+        const data = (await res.json()) as AuditLog[];
+        if (!cancelled) setLogs(data);
+      } catch {
+        /* backend may be offline — keep stale logs */
+      }
+    };
+
+    void fetchLogs();
+    const interval = setInterval(fetchLogs, 15_000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [state.currentUser?.uid]);
 
   const renderStatus = () => (
     <div className="space-y-8">
@@ -235,7 +241,8 @@ export const EmergencyConsole: React.FC<EmergencyConsoleProps> = ({ state, setSt
       <AnimatePresence>
         {isLifting && (
           <EmergencyActivationFlow 
-            state={state} 
+            state={state}
+            setState={setState}
             onClose={() => setIsLifting(false)} 
             isLifting={true}
           />

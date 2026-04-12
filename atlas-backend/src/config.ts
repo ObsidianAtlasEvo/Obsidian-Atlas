@@ -27,8 +27,16 @@ export const config = {
   /** Host/interface to bind */
   host: parseStringEnv('HOST', '127.0.0.1'),
 
-  /** Base URL for the local Ollama instance */
-  ollamaUrl: parseStringEnv('OLLAMA_URL', 'http://127.0.0.1:11434'),
+  /**
+   * Host base for Ollama HTTP API (no trailing `/api`).
+   * Prefer `OLLAMA_BASE_URL` (same as atlas-backend `env`) so health checks match embeddings.
+   */
+  ollamaUrl: (() => {
+    const raw = (process.env.OLLAMA_BASE_URL || process.env.OLLAMA_URL || 'http://127.0.0.1:11434').trim();
+    let u = raw.replace(/\/$/, '');
+    if (u.endsWith('/api')) u = u.slice(0, -4).replace(/\/$/, '');
+    return u || 'http://127.0.0.1:11434';
+  })(),
 
   /** Default chat/completion model */
   chatModel: parseStringEnv('CHAT_MODEL', 'llama3.1:70b'),

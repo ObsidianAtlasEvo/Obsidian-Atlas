@@ -4,6 +4,8 @@ import { randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { env } from '../config/env.js';
+import { EvolutionRepository } from '../db/evolutionRepository.js';
+import { getFailureModeDoctrine } from '../resilience/failureModeDoctrine.js';
 import { touchChronosActivity } from '../services/autonomy/chronos.js';
 import { triggerEvolutionAfterOmniResponse } from '../services/autonomy/evolutionTrigger.js';
 import { attachAtlasSession } from '../services/auth/authProvider.js';
@@ -14,8 +16,10 @@ import { applyOverseerLens } from '../services/governance/overseerService.js';
 import { enqueueGpuTask, newGpuRequestId } from '../services/inference/queueManager.js';
 import { runMaximumClarityTrack } from '../services/intelligence/maximumClarityPipeline.js';
 import {
+  buildUnifiedOmniSystemPrompt,
   executeLocalOllama,
   injectAtlasRoutingIntoMessages,
+  memoryVaultTopK,
   resolveOmniComputeLane,
   resolveOmniRouting,
 } from '../services/intelligence/omniRouter.js';
@@ -26,6 +30,9 @@ import {
   planUsesLocalOllama,
   swarmPlanToGroqRoutingDecision,
 } from '../services/intelligence/swarmOrchestrator.js';
+import { completeGroqChat, streamGroqChat } from '../services/intelligence/universalAdapter.js';
+import { evaluateExchangeRules } from '../services/evolution/evalEngine.js';
+import { extractMemoryCandidatesHeuristic } from '../services/memory/memoryExtractor.js';
 import {
   QuotaExceededError,
   SystemDeepResearchUnavailableError,
@@ -88,6 +95,20 @@ function lastUserContent(messages: { role: string; content: string }[]): string 
     if (messages[i]!.role === 'user') return messages[i]!.content;
   }
   return '';
+}
+
+async function loadEvolutionProfileForOmni(userId: string) {
+  if (!env.evolutionEnabled || !env.supabaseUrl || !env.supabaseServiceKey) {
+    return null;
+  }
+  const doctrine = getFailureModeDoctrine();
+  const repo = new EvolutionRepository(env.supabaseUrl, env.supabaseServiceKey);
+  return doctrine.withFallback(
+    'supabase',
+    () => repo.getProfile(userId),
+    async () => null,
+    { userId },
+  );
 }
 
 function sseWrite(raw: { write: (s: string) => boolean }, event: string, data: unknown): void {
@@ -172,6 +193,7 @@ export function registerOmniStreamRoutes(app: FastifyInstance): void {
         .join('\n');
 
       const policyProfile = getPolicyProfile(userId);
+      const evolutionProfile = await loadEvolutionProfileForOmni(userId);
 
       let fullText = '';
       const onDelta = (t: string) => {
@@ -205,6 +227,7 @@ export function registerOmniStreamRoutes(app: FastifyInstance): void {
             messages,
             onDelta,
             routing,
+            evolutionProfile,
             timeoutMs:
               maximumClarity === true
                 ? Math.max(env.omniLocalTimeoutMs, 300_000)
@@ -311,6 +334,44 @@ export function registerOmniStreamRoutes(app: FastifyInstance): void {
             onSwarmTicker: (evt) => sseWrite(raw, 'swarm_ticker', evt),
             timeoutMs: 240_000,
           });
+        } else if (env.directGroqMode) {
+          sseWrite(raw, 'route', {
+            strategy: 'direct',
+            legacyTarget: 'groq',
+            rationale: 'direct_groq_mode',
+            plan: null,
+          });
+
+          const { systemPrompt, capabilityNotices } = await buildUnifiedOmniSystemPrompt({
+            userId,
+            lastUserText: userPrompt,
+            routing,
+            evolutionProfile,
+          });
+
+          sseWrite(raw, 'capabilities', {
+            inferenceProfile: 'unified_sovereign_pack',
+            semanticRecallTopK: memoryVaultTopK(routing.posture),
+            semanticRecallDegraded: capabilityNotices.length > 0,
+            notices: capabilityNotices,
+          });
+          for (const msg of capabilityNotices) {
+            sseWrite(raw, 'status', { phase: 'capabilities', message: msg });
+          }
+
+          const primedMessages: { role: 'system' | 'user' | 'assistant'; content: string }[] = [
+            { role: 'system', content: systemPrompt },
+            ...(messagesWithRouting as { role: 'system' | 'user' | 'assistant'; content: string }[])
+              .filter((m) => m.role !== 'system'),
+          ];
+
+          const directOut = await streamGroqChat({
+            model: env.cloudChatModel,
+            messages: primedMessages,
+            onDelta,
+            timeoutMs: 120_000,
+          });
+          result = { ...directOut, surface: 'direct_groq' };
         } else {
           const plan = await planSwarmExecution({
             userPrompt,
@@ -359,12 +420,77 @@ export function registerOmniStreamRoutes(app: FastifyInstance): void {
         (m): m is { role: ChatRole; content: string } => m.role !== 'system'
       );
 
+      if (!result.fullText.trim()) {
+        request.log.warn(
+          {
+            userId,
+            surface: result.surface,
+            model: result.model,
+            promptPreview: userPrompt.slice(0, 200),
+          },
+          'omni_stream_empty_reply',
+        );
+        sseWrite(raw, 'error', {
+          code: 'empty_reply',
+          message:
+            'Atlas returned no text. Common causes: provider rate limits (wait and retry), Ollama context limits, unloaded models, or OLLAMA_BASE_URL misconfigured. No evolution job was scheduled for this turn.',
+        });
+        raw.end();
+        return;
+      }
+
+      const heurMem = extractMemoryCandidatesHeuristic({
+        userMessage: userPrompt,
+        assistantMessage: result.fullText,
+      });
+      const rulesEval = evaluateExchangeRules({
+        userMessage: userPrompt,
+        assistantResponse: result.fullText,
+        memoryCandidates: heurMem,
+      });
+
+      if (env.postReplyEpistemicRecheck === 'rules' && rulesEval.gapFlagged) {
+        const caution =
+          '\n\n— Epistemic screening (rules): internal quality score for this turn is below the training threshold; verify important claims independently.';
+        result = { ...result, fullText: result.fullText + caution };
+        sseWrite(raw, 'delta', { text: caution });
+      }
+
+      if (env.postReplyEpistemicRecheck === 'llm' && rulesEval.gapFlagged) {
+        try {
+          const check = await completeGroqChat({
+            model: env.cloudChatModel,
+            messages: [
+              {
+                role: 'system',
+                content:
+                  'Output JSON only: {"appendix": string | null}. One short user-facing caveat if the answer is likely unreliable or too thin; otherwise null.',
+              },
+              {
+                role: 'user',
+                content: `USER_QUESTION:\n${userPrompt.slice(0, 4000)}\n\nASSISTANT_ANSWER:\n${result.fullText.slice(0, 8000)}`,
+              },
+            ],
+            temperature: 0.1,
+            timeoutMs: 18_000,
+          });
+          const rawJ = check.text.replace(/^```(?:json)?\s*/i, '').replace(/```$/m, '').trim();
+          const j = JSON.parse(rawJ) as { appendix?: string | null };
+          if (typeof j.appendix === 'string' && j.appendix.trim()) {
+            const add = '\n\n' + j.appendix.trim();
+            result = { ...result, fullText: result.fullText + add };
+            sseWrite(raw, 'delta', { text: add });
+          }
+        } catch {
+          /* optional path */
+        }
+      }
+
       const cloudSwarm =
         result.surface !== 'god_mode_local' &&
         !result.surface.startsWith('god_mode');
 
-      // Send done immediately with the raw LLM response — never block user delivery on Overseer
-      sseWrite(raw, 'done', {
+      const donePayload: Record<string, unknown> = {
         traceId,
         requestId,
         reply: result.fullText,
@@ -377,7 +503,19 @@ export function registerOmniStreamRoutes(app: FastifyInstance): void {
           posture: routing.posture,
           lineOfInquiry: lineOfInquiry ?? null,
         },
-      });
+      };
+      if (env.omniSseIncludeRulesEvalInDone) {
+        donePayload.epistemicRulesEval = {
+          combinedNormalized: rulesEval.combinedNormalized,
+          gapFlagged: rulesEval.gapFlagged,
+          source: rulesEval.source,
+          truthAlignment: rulesEval.truthAlignment,
+          cognitiveDensity: rulesEval.cognitiveDensity,
+          styleAdherence: rulesEval.styleAdherence,
+        };
+      }
+
+      sseWrite(raw, 'done', donePayload);
       raw.end();
 
       // Overseer lens runs async — trains on response, personalizes future outputs (non-blocking)
@@ -413,6 +551,23 @@ export function registerOmniStreamRoutes(app: FastifyInstance): void {
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       request.log.error(e);
+      const is429 =
+        message.includes('429') ||
+        /\brate limit\b/i.test(message) ||
+        message.includes('TPM') ||
+        message.includes('tokens per minute');
+      const retryM = message.match(/try again in ([\d.]+)s/i);
+      const retryAfterSuggestedSec = retryM ? Number(retryM[1]) : undefined;
+      if (is429) {
+        sseWrite(raw, 'error', {
+          code: 'provider_rate_limit',
+          message:
+            'The cloud model provider rate limit was hit. Wait a short time and retry, shorten the thread, or upgrade quota. This turn was not recorded as a completed answer and evolution was not scheduled.',
+          retryAfterSuggestedSec,
+        });
+        raw.end();
+        return;
+      }
       const code =
         e instanceof QuotaExceededError
           ? e.code

@@ -733,11 +733,19 @@ export interface Gap {
   id: string;
   title: string;
   description: string;
-  type: 'bug' | 'logic_failure' | 'privacy_risk' | 'security_weakness' | 'latency_bottleneck' | 'structural_gap';
+  type:
+    | 'bug'
+    | 'logic_failure'
+    | 'privacy_risk'
+    | 'security_weakness'
+    | 'latency_bottleneck'
+    | 'structural_gap';
   severity: 'low' | 'medium' | 'high' | 'critical';
   status: 'identified' | 'suspected' | 'investigating' | 'repair_proposed' | 'repaired' | 'failed_repair';
   detectedAt: string;
   repairedAt?: string;
+  /** From merged API: console gap vs evolution eval gap. */
+  source?: 'governance' | 'evolution';
 }
 
 export interface ChangeProposal {
@@ -1617,6 +1625,7 @@ export interface AppState {
     | 'roadmap'
     | 'onboarding'
     | 'evolution-layer'
+    | 'explainability'
     | 'chrysalis'
     | 'directive-center'
     | 'mind-cartography'
@@ -1715,7 +1724,15 @@ export interface AppState {
   emergencyStatus?: EmergencyContainment;
   isSettingsOpen?: boolean;
   creatorConsoleState?: {
-    activeTab: 'overview' | 'ai-governance' | 'gaps' | 'changes' | 'audit' | 'emergency';
+    activeTab:
+      | 'overview'
+      | 'ai-governance'
+      | 'ai_governance'
+      | 'gaps'
+      | 'changes'
+      | 'audit'
+      | 'emergency'
+      | 'bug_hunter';
     initialCommand?: string;
   };
 }

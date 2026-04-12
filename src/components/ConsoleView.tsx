@@ -1,7 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { AppState, EmergencyContainment, Gap, ChangeProposal, AuditLog } from '../types';
-import { db, auth, logAudit, handleFirestoreError, OperationType } from '../services/firebase';
-import { doc, getDoc, setDoc, updateDoc, onSnapshot, collection, query, orderBy, limit, Timestamp, addDoc } from 'firebase/firestore';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   ShieldAlert, 
@@ -35,7 +33,7 @@ import { EmergencyActivationFlow } from './EmergencyActivationFlow';
 import { GapLedger } from './GapLedger';
 import { ChangeControl } from './ChangeControl';
 import { AuditLogView } from './AuditLogView';
-import { BugHunter } from './BugHunter';
+import BugHunter from './BugHunter';
 import { SovereigntyControls } from './Settings/SovereigntyControls';
 
 interface CreatorConsoleProps {
@@ -43,8 +41,36 @@ interface CreatorConsoleProps {
   setState: React.Dispatch<React.SetStateAction<AppState>>;
 }
 
+type ConsoleTabId =
+  | 'overview'
+  | 'ai-governance'
+  | 'gaps'
+  | 'changes'
+  | 'audit'
+  | 'emergency'
+  | 'console'
+  | 'diagnostics';
+
+function normalizePersistedConsoleTab(tab: string | undefined): ConsoleTabId {
+  if (!tab) return 'console';
+  if (tab === 'ai_governance') return 'ai-governance';
+  if (tab === 'bug_hunter') return 'diagnostics';
+  const allowed: ConsoleTabId[] = [
+    'overview',
+    'ai-governance',
+    'gaps',
+    'changes',
+    'audit',
+    'emergency',
+    'console',
+    'diagnostics',
+  ];
+  if (allowed.includes(tab as ConsoleTabId)) return tab as ConsoleTabId;
+  return 'console';
+}
+
 export function ConsoleView({ state, setState }: CreatorConsoleProps) {
-  const [activeTab, setActiveTab] = useState<'overview' | 'ai-governance' | 'gaps' | 'changes' | 'audit' | 'emergency' | 'console' | 'diagnostics'>('console');
+  const [activeTab, setActiveTab] = useState<ConsoleTabId>('console');
   const [showEmergencyModal, setShowEmergencyModal] = useState(false);
   const [loading, setLoading] = useState(false);
   const [aiCommand, setAiCommand] = useState('');
@@ -58,9 +84,96 @@ export function ConsoleView({ state, setState }: CreatorConsoleProps) {
     { type: 'output', text: 'SECURE LINK ESTABLISHED. WELCOME, CREATOR.', timestamp: new Date().toISOString() },
   ]);
 
+  const [overviewMetrics, setOverviewMetrics] = useState<{
+    gaps: number;
+    changes: number;
+    audit: number;
+    identityGoals: number;
+    claims: number;
+    traces: number;
+    constitution: number;
+    evolutionGapsOpen?: number;
+    memoryVaultEntries?: number;
+    cloudEvolutionEngineConfigured?: boolean;
+  } | null>(null);
+  const [overviewLoadFailed, setOverviewLoadFailed] = useState(false);
+
+  useEffect(() => {
+    const uid = atlasTraceUserId(state);
+    let cancelled = false;
+    const loadOverview = async () => {
+      try {
+        const res = await fetch(
+          `${atlasApiUrl('/v1/cognitive/sovereign-overview')}?userId=${encodeURIComponent(uid)}`,
+          { credentials: 'include' }
+        );
+        if (!res.ok) throw new Error('overview');
+        const d = (await res.json()) as Record<string, unknown>;
+        if (cancelled) return;
+        const n = (v: unknown, fallback = 0): number =>
+          typeof v === 'number' && !Number.isNaN(v) ? v : fallback;
+        setOverviewMetrics({
+          gaps: n(d.sovereignConsoleGapsOpen),
+          changes: n(d.sovereignConsoleChangesPending),
+          audit: n(d.sovereignConsoleAuditEvents),
+          identityGoals: n(d.identityGoalsActive),
+          claims: n(d.epistemicClaimsActive),
+          traces: n(d.chatTracesStored),
+          constitution: n(d.constitutionalClausesActive),
+          evolutionGapsOpen: typeof d.evolutionGapsOpen === 'number' ? d.evolutionGapsOpen : 0,
+          memoryVaultEntries: typeof d.memoryVaultEntries === 'number' ? d.memoryVaultEntries : 0,
+          cloudEvolutionEngineConfigured: d.cloudEvolutionEngineConfigured === true,
+        });
+        setOverviewLoadFailed(false);
+      } catch {
+        if (!cancelled) {
+          setOverviewMetrics(null);
+          setOverviewLoadFailed(true);
+        }
+      }
+    };
+    void loadOverview();
+    const t = setInterval(loadOverview, 30_000);
+    return () => {
+      cancelled = true;
+      clearInterval(t);
+    };
+  }, [state.currentUser?.uid, state.currentUser?.email]);
+
+  useEffect(() => {
+    const uid = atlasTraceUserId(state);
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch(
+          `${atlasApiUrl('/v1/governance/emergency/status')}?userId=${encodeURIComponent(uid)}`,
+          { credentials: 'include' }
+        );
+        if (!res.ok || cancelled) return;
+        const d = (await res.json()) as { active: boolean; activatedAt?: string; reason?: string };
+        if (!d.active || cancelled) return;
+        setState((prev) => ({
+          ...prev,
+          emergencyStatus: {
+            active: true,
+            activatedAt: d.activatedAt,
+            reason: d.reason,
+            level: 4,
+            activatedBy: 'sovereign',
+          },
+        }));
+      } catch {
+        /* ignore */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [state.currentUser?.uid, setState]);
+
   useEffect(() => {
     if (state.creatorConsoleState) {
-      setActiveTab(state.creatorConsoleState.activeTab);
+      setActiveTab(normalizePersistedConsoleTab(state.creatorConsoleState.activeTab));
       if (state.creatorConsoleState.initialCommand) {
         setAiCommand(state.creatorConsoleState.initialCommand);
       }
@@ -240,35 +353,61 @@ export function ConsoleView({ state, setState }: CreatorConsoleProps) {
             ],
           },
         }));
-        const newProposal = {
-          title: result.proposalTitle,
-          description: result.proposalDescription,
-          class: result.proposalClass,
-          status: 'deployed',
-          proposedBy: state.currentUser?.uid || 'system',
-          approvedBy: state.currentUser?.uid || 'system',
-          createdAt: Timestamp.now(),
-          rollbackSafe: true,
-        };
-        await addDoc(collection(db, 'change_control'), newProposal);
-        logAudit('Governance Command Implemented', 'critical', {
-          command: aiCommand,
-          proposalTitle: result.proposalTitle,
+
+        const uid = atlasTraceUserId(state);
+        await fetch(atlasApiUrl('/v1/governance/changes'), {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            userId: uid,
+            title: result.proposalTitle,
+            description: result.proposalDescription,
+            class: result.proposalClass,
+            impact: result.upgradeImpact ?? '',
+            proposedBy: state.currentUser?.uid || 'system',
+            status: 'deployed',
+          }),
+        });
+        await fetch(atlasApiUrl('/v1/governance/audit-logs'), {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            userId: uid,
+            action: 'Governance Command Implemented',
+            actor: state.currentUser?.uid || 'system',
+            severity: 'critical',
+            details: { command: aiCommand, proposalTitle: result.proposalTitle },
+          }),
         });
       } else {
-        const newProposal = {
-          title: result.proposalTitle,
-          description: result.proposalDescription,
-          class: result.proposalClass,
-          status: 'proposed',
-          proposedBy: state.currentUser?.uid || 'system',
-          createdAt: Timestamp.now(),
-          rollbackSafe: true,
-        };
-        await addDoc(collection(db, 'change_control'), newProposal);
-        logAudit('Governance Command Executed', 'high', {
-          command: aiCommand,
-          proposalTitle: result.proposalTitle,
+        const uid = atlasTraceUserId(state);
+        await fetch(atlasApiUrl('/v1/governance/changes'), {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            userId: uid,
+            title: result.proposalTitle,
+            description: result.proposalDescription,
+            class: result.proposalClass,
+            impact: '',
+            proposedBy: state.currentUser?.uid || 'system',
+            status: 'proposed',
+          }),
+        });
+        await fetch(atlasApiUrl('/v1/governance/audit-logs'), {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            userId: uid,
+            action: 'Governance Command Executed',
+            actor: state.currentUser?.uid || 'system',
+            severity: 'high',
+            details: { command: aiCommand, proposalTitle: result.proposalTitle },
+          }),
         });
       }
       setAiCommand('');
@@ -397,6 +536,21 @@ export function ConsoleView({ state, setState }: CreatorConsoleProps) {
 
               {activeTab === 'overview' && (
                 <div className="space-y-12">
+                  {!overviewLoadFailed &&
+                    overviewMetrics &&
+                    overviewMetrics.cloudEvolutionEngineConfigured === false && (
+                      <div
+                        role="status"
+                        className="p-4 border border-amber-500/35 bg-amber-500/5 rounded-sm text-[11px] text-amber-100/90 leading-relaxed"
+                      >
+                        <span className="font-semibold text-amber-200/95 uppercase tracking-widest text-[10px]">
+                          Degraded mode —{' '}
+                        </span>
+                        Supabase is not configured for this backend. Remote evolution profiles and Sovereign Console
+                        features that rely on Supabase stay empty; SQLite governance, chat traces, and merged gap ledger
+                        still work.
+                      </div>
+                    )}
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
                     <div className="p-8 bg-titanium/5 border border-titanium/10 rounded-sm space-y-6">
                       <div className="flex items-center justify-between">
@@ -404,11 +558,17 @@ export function ConsoleView({ state, setState }: CreatorConsoleProps) {
                         <Target size={16} className="text-gold" />
                       </div>
                       <div className="flex items-end gap-3">
-                        <span className="text-4xl font-serif text-ivory">12</span>
+                        <span className="text-4xl font-serif text-ivory">
+                          {overviewLoadFailed ? '—' : overviewMetrics?.gaps ?? '…'}
+                        </span>
                         <span className="text-[10px] text-stone mb-1 uppercase tracking-widest">Identified</span>
                       </div>
                       <div className="pt-4 border-t border-titanium/10">
-                        <p className="text-[10px] text-stone leading-relaxed">3 critical structural gaps require immediate attention.</p>
+                        <p className="text-[10px] text-stone leading-relaxed">
+                          Open governance gaps (SQLite). Evolution eval gaps:{' '}
+                          {overviewLoadFailed ? '—' : overviewMetrics?.evolutionGapsOpen ?? 0} (see Gap tab for merged
+                          list). Vault rows: {overviewLoadFailed ? '—' : overviewMetrics?.memoryVaultEntries ?? 0}.
+                        </p>
                       </div>
                     </div>
                     <div className="p-8 bg-titanium/5 border border-titanium/10 rounded-sm space-y-6">
@@ -417,11 +577,15 @@ export function ConsoleView({ state, setState }: CreatorConsoleProps) {
                         <GitBranch size={16} className="text-gold" />
                       </div>
                       <div className="flex items-end gap-3">
-                        <span className="text-4xl font-serif text-ivory">4</span>
+                        <span className="text-4xl font-serif text-ivory">
+                          {overviewLoadFailed ? '—' : overviewMetrics?.changes ?? '…'}
+                        </span>
                         <span className="text-[10px] text-stone mb-1 uppercase tracking-widest">In Queue</span>
                       </div>
                       <div className="pt-4 border-t border-titanium/10">
-                        <p className="text-[10px] text-stone leading-relaxed">2 Class 3 changes awaiting creator approval.</p>
+                        <p className="text-[10px] text-stone leading-relaxed">
+                          Proposed / approved / testing items in governance_changes.
+                        </p>
                       </div>
                     </div>
                     <div className="p-8 bg-titanium/5 border border-titanium/10 rounded-sm space-y-6">
@@ -430,11 +594,15 @@ export function ConsoleView({ state, setState }: CreatorConsoleProps) {
                         <History size={16} className="text-gold" />
                       </div>
                       <div className="flex items-end gap-3">
-                        <span className="text-4xl font-serif text-ivory">156</span>
-                        <span className="text-[10px] text-stone mb-1 uppercase tracking-widest">Last 24h</span>
+                        <span className="text-4xl font-serif text-ivory">
+                          {overviewLoadFailed ? '—' : overviewMetrics?.audit ?? '…'}
+                        </span>
+                        <span className="text-[10px] text-stone mb-1 uppercase tracking-widest">Total stored</span>
                       </div>
                       <div className="pt-4 border-t border-titanium/10">
-                        <p className="text-[10px] text-stone leading-relaxed">No anomalies detected in the last audit cycle.</p>
+                        <p className="text-[10px] text-stone leading-relaxed">
+                          Rows in governance_audit_logs for this user.
+                        </p>
                       </div>
                     </div>
                   </div>
@@ -446,11 +614,31 @@ export function ConsoleView({ state, setState }: CreatorConsoleProps) {
                       <Layers size={16} /> Architecture Health Map
                     </h3>
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                      {['Identity', 'Auth', 'Memory', 'Reasoning', 'Privacy', 'Security', 'UI/UX', 'System'].map(module => (
-                        <div key={module} className="p-6 bg-graphite/40 border border-titanium/10 rounded-sm flex flex-col items-center gap-4 group hover:border-gold/30 transition-all">
-                          <div className="w-2 h-2 rounded-full bg-teal shadow-[0_0_8px_rgba(20,184,166,0.4)]" />
-                          <span className="text-[10px] font-mono uppercase tracking-widest text-ivory">{module}</span>
-                          <span className="text-[8px] text-stone uppercase tracking-widest">Operational</span>
+                      {(
+                        [
+                          { label: 'Identity', ok: (overviewMetrics?.identityGoals ?? 0) > 0 },
+                          { label: 'Auth', ok: (overviewMetrics?.constitution ?? 0) > 0 },
+                          { label: 'Memory', ok: (overviewMetrics?.traces ?? 0) > 0 },
+                          { label: 'Reasoning', ok: (overviewMetrics?.claims ?? 0) > 0 },
+                          { label: 'Privacy', ok: !overviewLoadFailed },
+                          { label: 'Security', ok: !overviewLoadFailed },
+                          { label: 'UI/UX', ok: !overviewLoadFailed },
+                          { label: 'System', ok: !overviewLoadFailed && overviewMetrics != null },
+                        ] as const
+                      ).map(({ label, ok }) => (
+                        <div
+                          key={label}
+                          className="p-6 bg-graphite/40 border border-titanium/10 rounded-sm flex flex-col items-center gap-4 group hover:border-gold/30 transition-all"
+                        >
+                          <div
+                            className={`w-2 h-2 rounded-full shadow-[0_0_8px_rgba(20,184,166,0.4)] ${
+                              ok ? 'bg-teal' : 'bg-amber-500'
+                            }`}
+                          />
+                          <span className="text-[10px] font-mono uppercase tracking-widest text-ivory">{label}</span>
+                          <span className="text-[8px] text-stone uppercase tracking-widest">
+                            {overviewLoadFailed ? 'Unknown' : ok ? 'Operational' : 'Check'}
+                          </span>
                         </div>
                       ))}
                     </div>
@@ -593,7 +781,8 @@ export function ConsoleView({ state, setState }: CreatorConsoleProps) {
       <AnimatePresence>
         {showEmergencyModal && (
           <EmergencyActivationFlow 
-            state={state} 
+            state={state}
+            setState={setState}
             onClose={() => setShowEmergencyModal(false)} 
             isLifting={state.emergencyStatus?.active}
           />

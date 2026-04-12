@@ -114,7 +114,8 @@ export function streamChat(
           try {
             chunk = JSON.parse(trimmed) as OllamaStreamChunk;
           } catch {
-            throw new OllamaError(`Failed to parse response: ${trimmed}`, 'PARSE_ERROR');
+            // Ollama can split JSON across TCP chunks; a line may be partial. Skip instead of failing the whole chat.
+            continue;
           }
 
           if (chunk.message?.content) {

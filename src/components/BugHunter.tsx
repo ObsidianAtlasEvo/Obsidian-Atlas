@@ -694,3 +694,5 @@ export const BugHunter: React.FC<BugHunterProps> = ({ state, setState, embedded 
     </>
   );
 };
+
+export default BugHunter;

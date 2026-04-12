@@ -35,6 +35,8 @@ const CanonChamber           = lazy(() => import('../../chambers/CanonChamber'))
 const CouncilChamber         = lazy(() => import('../../chambers/CouncilChamber'));
 const MasteryChamber         = lazy(() => import('../../chambers/MasteryChamber'));
 const ChrysalisChamber       = lazy(() => import('../../chambers/ChrysalisChamber'));
+const EvolutionControlChamber = lazy(() => import('../../chambers/EvolutionControlChamber'));
+const ExplainabilityChamber   = lazy(() => import('../../chambers/explainability/ExplainabilityChamber'));
 
 // Phase 4 — Governance
 const CreatorConsoleChamber  = lazy(() => import('../../chambers/CreatorConsoleChamber'));
@@ -141,7 +143,8 @@ export default function ChamberView() {
       case 'privacy-center':                          return placeholder('Privacy Center');
       case 'roadmap':                                 return placeholder('Roadmap');
       case 'onboarding':                              return placeholder('Onboarding');
-      case 'evolution-layer':                         return placeholder('Evolution Layer');
+      case 'evolution-layer':                         return chamber(EvolutionControlChamber);
+      case 'explainability':                          return chamber(ExplainabilityChamber);
       case 'humanization-controls':                   return placeholder('Humanization Controls');
       case 'life-domains':                            return placeholder('Life Domains');
       case 'operating-manual':                        return placeholder('Operating Manual');

@@ -1,10 +1,10 @@
 import React from 'react';
-import { BugHunter as BugHunterPanel } from '../../../components/BugHunter';
+import BugHunter from '../../../components/BugHunter';
 import type { ActionModuleProps } from '../types';
 
 /**
- * Bug Tester — stress / validation: DB health, retrieval checks, truth-ledger contradictions.
+ * Bug Tester — floating bug report widget (session-authenticated POST to /api/sovereign/bugs).
  */
-export function BugTesterModule({ state, setState }: ActionModuleProps): React.ReactElement {
-  return <BugHunterPanel state={state} setState={setState} embedded />;
+export function BugTesterModule(props: ActionModuleProps): React.ReactElement {
+  return <BugHunter state={props.state} setState={props.setState} />;
 }

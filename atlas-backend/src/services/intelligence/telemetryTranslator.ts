@@ -100,7 +100,7 @@ export function buildGroqRoutingDirectives(
 
   if (userTelemetry.truthFirstStrictness > 8 || mirrorforge.epistemicDemand === 'high') {
     bias_heavy_models = true;
-    notes.push('High epistemic rigor → bias gemini-1.5-pro or claude-3-5-sonnet / swarm for verification-heavy work.');
+    notes.push('High epistemic rigor → bias gemini-2.5-flash or claude-3-5-sonnet / swarm for verification-heavy work.');
   }
 
   if (policy.preferredComputeDepth === 'Heavy' && mirrorforge.urgency !== 'high') {

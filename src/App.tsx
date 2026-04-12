@@ -36,10 +36,10 @@ export default function App() {
         <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
         <span style={{ color: 'rgba(226,232,240,0.3)', fontSize: '0.75rem', letterSpacing: '0.1em' }}>
           ATLAS
-        </span>
-      </div>
-    );
-  }
+            </span>
+    </div>
+  );
+}
 
   // Auth gate — show auth screen if no user
   if (!currentUser || activeMode === 'auth') {

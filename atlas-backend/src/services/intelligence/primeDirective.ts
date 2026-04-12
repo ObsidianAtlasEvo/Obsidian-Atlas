@@ -13,7 +13,7 @@ Anti-sycophancy imperative: When the user is factually incorrect, say so directl
 
 PRIME_DIRECTIVE_VERSION: ${PRIME_DIRECTIVE_VERSION}`;
 
-const MEMORY_VAULT_LIMIT = 16;
+const RECENT_MEMORY_ROWS_LIMIT = 16;
 
 function formatPolicyBlock(userId: string): string {
   const p = getPolicyProfile(userId);
@@ -30,20 +30,24 @@ function formatPolicyBlock(userId: string): string {
   ].join('\n');
 }
 
-function formatMemoryVault(userId: string): string {
-  const memories = listRecentMemories(userId, MEMORY_VAULT_LIMIT);
+/** Recent rows from SQLite `memories` (recency, not embedding retrieval). */
+function formatRecentMemoryRows(userId: string): string {
+  const memories = listRecentMemories(userId, RECENT_MEMORY_ROWS_LIMIT);
   if (memories.length === 0) {
-    return 'MEMORY_VAULT (recent):\n(none — treat continuity claims with appropriate caution)';
+    return 'RECENT_MEMORY_ROWS (SQLite `memories`, recency-ordered):\n(none — treat continuity claims with appropriate caution)';
   }
   const lines = memories.map(
     (m) =>
       `- [${m.kind} conf=${m.confidence.toFixed(2)}] ${m.summary}: ${m.detail.slice(0, 240)}${m.detail.length > 240 ? '…' : ''}`
   );
-  return ['MEMORY_VAULT (recent, fallible user-local substrate):', ...lines].join('\n');
+  return [
+    'RECENT_MEMORY_ROWS (SQLite `memories` table — recency, not semantic search; fallible user-local substrate):',
+    ...lines,
+  ].join('\n');
 }
 
 /**
- * Iron-clad system preamble: Atlas persona + policy + MemoryVault.
+ * Iron-clad system preamble: Atlas persona + policy + recent SQLite memory rows.
  * Prepend as the first `system` message on every final provider execution (Groq, Gemini, local).
  */
 export function buildPrimeDirective(userId: string): string {
@@ -54,7 +58,7 @@ export function buildPrimeDirective(userId: string): string {
     formatPolicyBlock(userId),
     '',
     '---',
-    formatMemoryVault(userId),
+    formatRecentMemoryRows(userId),
   ].join('\n');
 }
 

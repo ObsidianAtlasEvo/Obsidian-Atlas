@@ -1,58 +1,72 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { AppState, AuditLog } from '../types';
-import { db, handleFirestoreError, OperationType } from '../services/firebase';
-import {
-  collection,
-  query,
-  orderBy,
-  onSnapshot,
-  limit,
-  Timestamp,
-  type QuerySnapshot,
-} from 'firebase/firestore';
-import { motion, AnimatePresence } from 'motion/react';
-import { History, ShieldCheck, AlertTriangle, Clock, Search, Filter, ChevronRight, User } from 'lucide-react';
 import { cn } from '../lib/utils';
+import { atlasApiUrl } from '../lib/atlasApi';
+import { atlasTraceUserId } from '../lib/atlasTraceContext';
 
 interface AuditLogViewProps {
   state: AppState;
   setState: React.Dispatch<React.SetStateAction<AppState>>;
 }
 
-export function AuditLogView({ state, setState }: AuditLogViewProps) {
+export function AuditLogView({ state }: AuditLogViewProps) {
   const [logs, setLogs] = useState<AuditLog[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<'all' | 'critical' | 'high' | 'medium' | 'low'>('all');
 
-  useEffect(() => {
-    const q = query(collection(db, 'audit_logs'), orderBy('timestamp', 'desc'), limit(100));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const s = snapshot as QuerySnapshot;
-      const logData = s.docs.map((doc) => {
-        const data = doc.data();
-        return { 
-          id: doc.id, 
-          ...data, 
-          timestamp: data.timestamp instanceof Timestamp ? data.timestamp.toDate().toISOString() : data.timestamp 
-        } as AuditLog;
-      });
-      setLogs(logData);
+  const userId = atlasTraceUserId(state);
+
+  const loadLogs = useCallback(async () => {
+    try {
+      const res = await fetch(
+        `${atlasApiUrl('/v1/governance/audit-logs')}?userId=${encodeURIComponent(userId)}&limit=100`,
+        { credentials: 'include' }
+      );
+      if (!res.ok) throw new Error(String(res.status));
+      const data = (await res.json()) as {
+        logs: Array<{
+          id: string;
+          action: string;
+          actor: string;
+          severity: string;
+          timestamp: string;
+          metadata?: unknown;
+        }>;
+      };
+      const mapped: AuditLog[] = data.logs.map((l) => ({
+        id: l.id,
+        timestamp: l.timestamp,
+        actorUid: l.actor || 'unknown',
+        action: l.action,
+        metadata: l.metadata,
+        severity: (l.severity as AuditLog['severity']) || 'medium',
+      }));
+      setLogs(mapped);
+    } catch {
+      setLogs([]);
+    } finally {
       setLoading(false);
-    }, (error) => {
-      handleFirestoreError(error, OperationType.LIST, 'audit_logs');
-    });
+    }
+  }, [userId]);
 
-    return () => unsubscribe();
-  }, []);
+  useEffect(() => {
+    void loadLogs();
+    const id = setInterval(() => void loadLogs(), 25_000);
+    return () => clearInterval(id);
+  }, [loadLogs]);
 
-  const filteredLogs = filter === 'all' ? logs : logs.filter(l => l.severity === filter);
+  const filteredLogs = filter === 'all' ? logs : logs.filter((l) => l.severity === filter);
 
   const getSeverityColor = (severity: string) => {
     switch (severity) {
-      case 'critical': return 'text-oxblood';
-      case 'high': return 'text-gold';
-      case 'medium': return 'text-ivory';
-      default: return 'text-stone';
+      case 'critical':
+        return 'text-oxblood';
+      case 'high':
+        return 'text-gold';
+      case 'medium':
+        return 'text-ivory';
+      default:
+        return 'text-stone';
     }
   };
 
@@ -61,16 +75,16 @@ export function AuditLogView({ state, setState }: AuditLogViewProps) {
       <div className="flex items-center justify-between">
         <div className="space-y-1">
           <h2 className="text-xl font-serif text-ivory tracking-tight">Immutable Audit Logs</h2>
-          <p className="text-[10px] font-mono uppercase tracking-widest text-stone">Governance & Security Event History</p>
+          <p className="text-[10px] font-mono uppercase tracking-widest text-stone">Governance & Security Event History · Atlas backend</p>
         </div>
         <div className="flex bg-titanium/5 border border-titanium/10 p-1 rounded-sm">
-          {['all', 'critical', 'high', 'medium', 'low'].map(f => (
+          {['all', 'critical', 'high', 'medium', 'low'].map((f) => (
             <button
               key={f}
-              onClick={() => setFilter(f as any)}
+              onClick={() => setFilter(f as typeof filter)}
               className={cn(
-                "px-3 py-1.5 text-[8px] uppercase tracking-widest transition-all",
-                filter === f ? "bg-gold/10 text-gold" : "text-stone hover:text-ivory"
+                'px-3 py-1.5 text-[8px] uppercase tracking-widest transition-all',
+                filter === f ? 'bg-gold/10 text-gold' : 'text-stone hover:text-ivory'
               )}
             >
               {f}
@@ -92,23 +106,35 @@ export function AuditLogView({ state, setState }: AuditLogViewProps) {
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={5} className="p-20 text-center text-stone uppercase tracking-widest animate-pulse">Retrieving Audit Trail...</td></tr>
+              <tr>
+                <td colSpan={5} className="p-20 text-center text-stone uppercase tracking-widest animate-pulse">
+                  Retrieving Audit Trail...
+                </td>
+              </tr>
             ) : filteredLogs.length === 0 ? (
-              <tr><td colSpan={5} className="p-20 text-center text-stone uppercase tracking-widest opacity-30">No Logs Recorded</td></tr>
+              <tr>
+                <td colSpan={5} className="p-20 text-center text-stone uppercase tracking-widest opacity-30">
+                  No Logs Recorded
+                </td>
+              </tr>
             ) : (
               filteredLogs.map((log) => (
                 <tr key={log.id} className="border-b border-titanium/5 hover:bg-titanium/5 transition-all group">
                   <td className="p-4 text-[10px] font-mono text-stone group-hover:text-ivory transition-all whitespace-nowrap">
                     {new Date(log.timestamp).toLocaleString([], { hour12: false })}
                   </td>
-                  <td className="p-4 text-[10px] font-bold text-ivory uppercase tracking-widest">
-                    {log.action}
-                  </td>
+                  <td className="p-4 text-[10px] font-bold text-ivory uppercase tracking-widest">{log.action}</td>
                   <td className="p-4 text-[10px] font-mono text-stone group-hover:text-ivory transition-all">
-                    {log.actorUid.substring(0, 8)}...
+                    {(log.actorUid || 'unknown').substring(0, 8)}...
                   </td>
                   <td className="p-4">
-                    <span className={cn("text-[8px] font-bold uppercase tracking-widest px-2 py-0.5 border rounded-full", getSeverityColor(log.severity), `border-${getSeverityColor(log.severity)}/20`)}>
+                    <span
+                      className={cn(
+                        'text-[8px] font-bold uppercase tracking-widest px-2 py-0.5 border rounded-full',
+                        getSeverityColor(log.severity),
+                        `border-${getSeverityColor(log.severity)}/20`
+                      )}
+                    >
                       {log.severity}
                     </span>
                   </td>

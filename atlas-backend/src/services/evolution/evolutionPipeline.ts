@@ -13,6 +13,7 @@ import {
 import { applyExplicitPolicyCorrections } from './policyStore.js';
 import { extractMemoryCandidates } from '../memory/memoryExtractor.js';
 import { saveMemory, saveTrace } from '../memory/memoryStore.js';
+import { ingestMemory } from '../memory/memoryVault.js';
 import type { ModelProvider } from '../model/modelProvider.js';
 import { env } from '../../config/env.js';
 import type { ChatRole } from '../../types/atlas.js';
@@ -111,6 +112,14 @@ async function runEvolutionJob(job: EvolutionJobPayload): Promise<void> {
         tags: c.tags,
       });
       memoriesPersisted.push({ id: row.id, summary: row.summary });
+
+      const vaultType = c.kind === 'constraint' || c.kind === 'rejection' ? 'DIRECTIVE'
+        : c.kind === 'project' || c.kind === 'goal' ? 'PROJECT'
+        : c.kind === 'fact' ? 'TRUTH'
+        : 'EPISODIC';
+      void ingestMemory(userId, `${c.summary}: ${c.detail}`, vaultType, c.confidence, {
+        sourceTraceId: traceId,
+      }).catch(() => {});
     } catch {
       /* skip single memory failure */
     }

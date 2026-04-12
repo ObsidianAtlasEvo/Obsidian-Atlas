@@ -5,7 +5,7 @@
 // Atlas-Audit: [EXEC-ROUTE] Verified — Auto posture sends inferInquiryPosture() to omni-stream so routing is structurally intelligent without manual toggles.
 // Atlas-Audit: [INTEGRATION] Successful inquiries append a pulse artifact and Quick Access lists the operating loop (Pulse, Directives, map, pressure, doctrine) so Home, Pulse, Command, Cartography, and Crucible share one visible thread.
 // Atlas-Audit: [IX] Verified
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Search, Sparkles, ArrowRight, Zap, Target, Brain, Clock, Shield, AlertCircle, TrendingUp, Layers, GitBranch, Compass, Info, CheckCircle2, Layout, Sliders, History, PenTool, Settings, Scale, BookOpen, ShieldAlert, Waves, Globe, AlertTriangle, Radio, Database, Activity, HelpCircle, Flame } from 'lucide-react';
 import { cn } from '../lib/utils';
@@ -19,7 +19,7 @@ import {
 } from '../types';
 import { AtlasGraph } from './AtlasGraph';
 import { ATLAS_TRACE_CHANNEL, atlasTraceUserId } from '../lib/atlasTraceContext';
-import { atlasApiUrl, atlasHttpEnabled } from '../lib/atlasApi';
+import { atlasApiUrl, atlasChatUseHttpBackend, atlasStreamHeaders } from '../lib/atlasApi';
 import { LayeredResponse } from './LayeredResponse';
 import { DirectiveIntake } from './DirectiveIntake';
 import { ResonanceEngine } from '../resonance/engine';
@@ -149,6 +149,7 @@ export function HomeView({ state, setState, onInteraction }: HomeViewProps) {
   const [query, setQuery] = useState('');
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [abortController, setAbortController] = useState<AbortController | null>(null);
+  const inquiryAbortRef = useRef<AbortController | null>(null);
   const [analysisResult, setAnalysisResult] = useState<UserQuestion | null>(null);
   const [followUpQuery, setFollowUpQuery] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -165,6 +166,11 @@ export function HomeView({ state, setState, onInteraction }: HomeViewProps) {
     (import.meta as { env?: { VITE_ATLAS_INQUIRY_TIMEOUT_MS?: string } }).env
       ?.VITE_ATLAS_INQUIRY_TIMEOUT_MS ?? '300000'
   );
+  /** Abort if no SSE chunk for this long while the stream is open (stall detection). */
+  const HOME_STREAM_STALL_MS = Number(
+    (import.meta as { env?: { VITE_ATLAS_STREAM_STALL_MS?: string } }).env
+      ?.VITE_ATLAS_STREAM_STALL_MS ?? '30000'
+  );
 
   const synthesizeViaAtlasStream = async (
     q: string,
@@ -174,6 +180,12 @@ export function HomeView({ state, setState, onInteraction }: HomeViewProps) {
     const onAbort = () => ac.abort();
     signal?.addEventListener('abort', onAbort, { once: true });
     const timeout = setTimeout(() => ac.abort(), HOME_INQUIRY_TIMEOUT_MS);
+    let stallTimer: ReturnType<typeof setTimeout> | null = null;
+    const bumpStallWatchdog = () => {
+      if (stallTimer) clearTimeout(stallTimer);
+      stallTimer = setTimeout(() => ac.abort(), HOME_STREAM_STALL_MS);
+    };
+    bumpStallWatchdog();
     try {
       const streamBody: Record<string, unknown> = {
         userId: atlasTraceUserId(state),
@@ -187,7 +199,7 @@ export function HomeView({ state, setState, onInteraction }: HomeViewProps) {
 
       const res = await fetch(atlasApiUrl('/v1/chat/omni-stream'), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+        headers: atlasStreamHeaders(),
         credentials: 'include',
         signal: ac.signal,
         body: JSON.stringify(streamBody),
@@ -211,6 +223,7 @@ export function HomeView({ state, setState, onInteraction }: HomeViewProps) {
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
+        bumpStallWatchdog();
         buffer += dec.decode(value, { stream: true });
         let sep: number;
         while ((sep = buffer.indexOf('\n\n')) !== -1) {
@@ -232,6 +245,7 @@ export function HomeView({ state, setState, onInteraction }: HomeViewProps) {
             }
           }
           if (eventName === 'delta' && typeof data?.text === 'string') {
+            bumpStallWatchdog();
             full += data.text;
           }
           if (eventName === 'routing' && data && typeof data === 'object') {
@@ -251,13 +265,31 @@ export function HomeView({ state, setState, onInteraction }: HomeViewProps) {
             }
           }
           if (eventName === 'error') {
-            streamError = String(data?.message ?? 'Atlas stream failed');
+            const code = data && typeof data === 'object' && 'code' in data ? String(data.code) : '';
+            const base = String(data?.message ?? 'Atlas stream failed');
+            const retry =
+              data && typeof data === 'object' && 'retryAfterSuggestedSec' in data && data.retryAfterSuggestedSec != null
+                ? Number(data.retryAfterSuggestedSec as number)
+                : undefined;
+            if (code === 'provider_rate_limit') {
+              streamError =
+                base +
+                (Number.isFinite(retry) && retry! > 0
+                  ? ` Suggested wait: ~${Math.ceil(retry!)}s before retry.`
+                  : '');
+            } else {
+              streamError = base;
+            }
           }
         }
       }
 
       if (streamError) throw new Error(streamError);
-      if (!full.trim()) throw new Error('Atlas returned no content for this inquiry.');
+      if (!full.trim()) {
+        throw new Error(
+          'Atlas returned no content for this inquiry. If the Network tab shows POST /api/chat with a fast 200, nginx may be forwarding the wrong path: strip the /api prefix like Vite (see vite.config proxy for /api). Expected upstream route is POST /v1/chat/omni-stream.',
+        );
+      }
 
       const posture = Math.min(5, Math.max(1, serverRouting?.posture ?? 2));
       const mode = serverRouting?.mode ?? 'direct_qa';
@@ -318,12 +350,13 @@ export function HomeView({ state, setState, onInteraction }: HomeViewProps) {
     } catch (e) {
       if (ac.signal.aborted) {
         throw new Error(
-          `Inquiry timed out after ${Math.round(HOME_INQUIRY_TIMEOUT_MS / 1000)}s while waiting for Atlas response.`
+          `Inquiry stopped: exceeded ${Math.round(HOME_INQUIRY_TIMEOUT_MS / 1000)}s total limit, or no stream data for ${Math.round(HOME_STREAM_STALL_MS / 1000)}s.`
         );
       }
       throw e;
     } finally {
       clearTimeout(timeout);
+      if (stallTimer) clearTimeout(stallTimer);
       signal?.removeEventListener('abort', onAbort);
     }
   };
@@ -357,13 +390,16 @@ export function HomeView({ state, setState, onInteraction }: HomeViewProps) {
     const searchVal = overrideQuery || query;
     if (!searchVal.trim()) return;
 
+    inquiryAbortRef.current?.abort();
+
+    setIsAnalyzing(true);
     setError(null);
     const controller = new AbortController();
+    inquiryAbortRef.current = controller;
     setAbortController(controller);
 
     console.log('Starting search for:', searchVal);
     try {
-      setIsAnalyzing(true);
       // 1. Generate Resonance Context Packet (Pre-synthesis)
       const resonanceContext = ResonanceEngine.getContextPacket(searchVal, {
         threads: state.resonance.threads,
@@ -385,7 +421,7 @@ export function HomeView({ state, setState, onInteraction }: HomeViewProps) {
         new Promise<null>((resolve) => setTimeout(() => resolve(null), 8_000)),
       ]).catch(() => null);
 
-      const analysis = await (atlasHttpEnabled()
+      const analysis = await (atlasChatUseHttpBackend()
         ? synthesizeViaAtlasStream(searchVal, controller.signal)
         : Promise.reject(
             new Error('Atlas API is not enabled. Start backend and use /api proxy for inquiries.')
@@ -530,16 +566,16 @@ export function HomeView({ state, setState, onInteraction }: HomeViewProps) {
       }
     } finally {
       setIsAnalyzing(false);
+      inquiryAbortRef.current = null;
       setAbortController(null);
     }
   };
 
   const handleAbort = () => {
-    if (abortController) {
-      abortController.abort();
-      setIsAnalyzing(false);
-      setAbortController(null);
-    }
+    inquiryAbortRef.current?.abort();
+    setIsAnalyzing(false);
+    inquiryAbortRef.current = null;
+    setAbortController(null);
   };
 
   const handleFollowUp = async (e: React.FormEvent) => {

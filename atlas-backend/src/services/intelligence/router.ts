@@ -1,4 +1,5 @@
 import { env } from '../../config/env.js';
+import { getFailureModeDoctrine } from '../../resilience/failureModeDoctrine.js';
 import type { GenerateInput, GenerateOutput, ModelProvider } from '../model/modelProvider.js';
 import { createOllamaModelProvider } from '../model/ollamaClient.js';
 import type { IntelligenceSurface, RoutedGenerateInput, StreamChunk } from './types.js';
@@ -12,6 +13,13 @@ export function normalizeEmail(email: string | null | undefined): string | null 
   if (email == null || typeof email !== 'string') return null;
   const t = email.trim().toLowerCase();
   return t.length ? t : null;
+}
+
+/** Ollama HTTP API path (handles `OLLAMA_BASE_URL` with or without trailing `/api`). */
+function ollamaApiUrl(path: string): string {
+  const base = env.ollamaBaseUrl.replace(/\/$/, '');
+  const p = path.startsWith('/') ? path : `/${path}`;
+  return base.endsWith('/api') ? `${base}${p}` : `${base}/api${p}`;
 }
 
 export function isSovereignOwnerEmail(email: string | null | undefined): boolean {
@@ -30,7 +38,7 @@ export async function isLocalOllamaReachable(signal?: AbortSignal): Promise<bool
   const controller = new AbortController();
   const t = setTimeout(() => controller.abort(), 2500);
   try {
-    const res = await fetch(`${env.ollamaBaseUrl}/api/tags`, {
+    const res = await fetch(ollamaApiUrl('/tags'), {
       method: 'GET',
       signal: signal ?? controller.signal,
     });
@@ -387,6 +395,7 @@ export class IntelligenceRouter {
    * Non-owner → cloud.
    */
   async generateStructured(input: RoutedGenerateInput): Promise<GenerateOutput> {
+    const doctrine = getFailureModeDoctrine();
     if (isSovereignOwnerEmail(input.userEmail) && (await isLocalOllamaReachable(input.signal))) {
       try {
         return await this.local.generateStructured(input);
@@ -394,7 +403,16 @@ export class IntelligenceRouter {
         ollamaReachableCache = { at: Date.now(), ok: false };
       }
     }
-    return this.cloud.generateStructured(input);
+    return doctrine.withFallback(
+      'groq_api',
+      () => this.cloud.generateStructured(input),
+      async () => ({
+        text:
+          'Atlas cloud inference is temporarily unavailable. Please try again in a few minutes.',
+        model: 'atlas_cloud_fallback',
+      }),
+      { userId: input.userId },
+    );
   }
 
   async generateStreaming(

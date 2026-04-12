@@ -35,7 +35,8 @@ export async function ingestMemory(
   userId: string,
   content: string,
   type: MemoryVaultType,
-  confidence = 0.7
+  confidence = 0.7,
+  options?: { sourceTraceId?: string | null }
 ): Promise<MemoryVaultRecord | null> {
   const clean = content.trim();
   if (!clean) return null;
@@ -44,12 +45,23 @@ export async function ingestMemory(
     const embedding = await embedText(clean);
     const id = randomUUID();
     const createdAt = new Date().toISOString();
+    const traceId = options?.sourceTraceId?.trim() || null;
     getDb()
       .prepare(
-        `INSERT INTO memory_vault (id, user_id, content, type, embedding_json, confidence, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO memory_vault (id, user_id, content, type, embedding_json, confidence, created_at, origin, source_trace_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
-      .run(id, userId, clean, type, JSON.stringify(embedding), confidence, createdAt);
+      .run(
+        id,
+        userId,
+        clean,
+        type,
+        JSON.stringify(embedding),
+        confidence,
+        createdAt,
+        traceId ? 'evolution_ingest' : 'inferred',
+        traceId
+      );
 
     return { id, userId, content: clean, type, embedding, confidence, createdAt };
   } catch (e) {

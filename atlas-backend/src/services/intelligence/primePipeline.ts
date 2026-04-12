@@ -4,6 +4,8 @@ import { buildPrimedChatSystemPrompt } from './atlasIdentity.js';
 import { getIntelligenceRouter, normalizeEmail } from './router.js';
 import type { GenerateOutput } from '../model/modelProvider.js';
 import type { PrimedChatMessage, RoutedGenerateInput } from './types.js';
+import { assembleLayeredSystemPrompt } from '../../governance/chatPolicyAssembly.js';
+import type { UserEvolutionProfile } from '../../types/evolutionTypes.js';
 
 function sanitizeClientMessages(
   messages: Array<{ role: string; content: string }>
@@ -32,6 +34,8 @@ export interface PrimePipelineChatInput {
   modelOverride?: string;
   timeoutMs?: number;
   signal?: AbortSignal;
+  /** When set (e.g. from Supabase), merged via policy precedence on top of primed identity. */
+  evolutionProfile?: UserEvolutionProfile | null;
 }
 
 /**
@@ -51,8 +55,14 @@ export async function executePrimedChatInference(input: PrimePipelineChatInput):
     }
   }
 
-  const systemPrompt = buildPrimedChatSystemPrompt(input.userId, lastUser, {
+  const primed = buildPrimedChatSystemPrompt(input.userId, lastUser, {
     sovereignResponseMode: input.sovereignResponseMode,
+  });
+  const systemPrompt = assembleLayeredSystemPrompt({
+    userId: input.userId,
+    baseSystemPrompt: primed,
+    sessionMode: input.sovereignResponseMode ?? 'chat',
+    evolutionProfile: input.evolutionProfile ?? null,
   });
 
   const verifiedEmail =

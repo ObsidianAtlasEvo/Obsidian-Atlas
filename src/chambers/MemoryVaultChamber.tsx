@@ -1,7 +1,9 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { useAtlasStore } from '../store/useAtlasStore';
 import { nowISO } from '../lib/persistence';
 import type { MemoryEntry } from '@/types';
+import { atlasApiUrl } from '../lib/atlasApi';
+import { atlasTraceUserId } from '../lib/atlasTraceContext';
 
 // ─── Design Tokens ────────────────────────────────────────────────────────────
 const TOKEN = {
@@ -48,6 +50,16 @@ const LAYER_META: Record<MemoryEntry['layer'], {
 };
 
 const LAYER_ORDER: MemoryEntry['layer'][] = ['transient', 'working', 'sovereign'];
+
+type SqliteVaultRow = {
+  id: string;
+  content: string;
+  type?: string;
+  confidence?: number;
+  createdAt?: string;
+  origin?: string | null;
+  sourceTraceId?: string | null;
+};
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function relativeTime(iso: string): string {
@@ -925,11 +937,35 @@ const MemoryVaultChamber: React.FC = () => {
   const addMemoryEntry     = useAtlasStore(s => s.addMemoryEntry);
   const promoteMemoryEntry = useAtlasStore(s => s.promoteMemoryEntry);
   const removeMemoryEntry  = useAtlasStore(s => s.removeMemoryEntry);
+  const traceUserId        = useAtlasStore(atlasTraceUserId);
 
   const [searchQuery, setSearchQuery]     = useState('');
   const [showForm, setShowForm]           = useState(false);
   const [activeTab, setActiveTab]         = useState<MemoryEntry['layer']>('working');
   const [useTabLayout, setUseTabLayout]   = useState(false);
+  const [sqliteRows, setSqliteRows]       = useState<SqliteVaultRow[]>([]);
+  const [sqliteStatus, setSqliteStatus]   = useState<'idle' | 'loading' | 'ok' | 'err'>('idle');
+
+  const loadSqliteVault = useCallback(async () => {
+    setSqliteStatus('loading');
+    try {
+      const res = await fetch(
+        `${atlasApiUrl('/v1/governance/memory-vault')}?userId=${encodeURIComponent(traceUserId)}&limit=200`,
+        { credentials: 'include' }
+      );
+      if (!res.ok) throw new Error(String(res.status));
+      const data = (await res.json()) as { entries?: SqliteVaultRow[] };
+      setSqliteRows(Array.isArray(data.entries) ? data.entries : []);
+      setSqliteStatus('ok');
+    } catch {
+      setSqliteRows([]);
+      setSqliteStatus('err');
+    }
+  }, [traceUserId]);
+
+  useEffect(() => {
+    void loadSqliteVault();
+  }, [loadSqliteVault]);
 
   // Detect viewport width for responsive tabbed layout
   React.useEffect(() => {
@@ -964,6 +1000,15 @@ const MemoryVaultChamber: React.FC = () => {
     sovereign: memoryArchitecture.sovereign.length,
   };
   const totalCount = counts.transient + counts.working + counts.sovereign;
+
+  const sqliteDupGroups = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const r of sqliteRows) {
+      const k = r.content.trim().toLowerCase().slice(0, 140);
+      m.set(k, (m.get(k) ?? 0) + 1);
+    }
+    return m;
+  }, [sqliteRows]);
 
   return (
     <div
@@ -1016,10 +1061,115 @@ const MemoryVaultChamber: React.FC = () => {
               color: TOKEN.muted,
             }}
           >
-            Three-layer memory inspector — inspect, promote, and purge Atlas's memory.
+            Browser-side layers below; SQLite semantic vault (embedding recall + evolution ingest) is listed separately.
           </p>
         </div>
       </div>
+
+      <section
+        style={{
+          background: TOKEN.inset,
+          border: `1px solid ${TOKEN.border}`,
+          borderRadius: 10,
+          padding: '12px 14px',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 8,
+          maxHeight: 280,
+          overflow: 'hidden',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
+          <div>
+            <h3 style={{ margin: 0, fontSize: '0.72rem', fontWeight: 700, color: TOKEN.violet, letterSpacing: '0.06em' }}>
+              SQLite semantic vault
+            </h3>
+            <p style={{ margin: '4px 0 0', fontSize: '0.62rem', color: TOKEN.muted, lineHeight: 1.45 }}>
+              Provenance for server-stored rows: origin (pipeline) and optional trace id. Duplicate badge = same normalized
+              text appears more than once (manual dedup still TBD).
+            </p>
+          </div>
+          <button
+            type="button"
+            className="atlas-touch-min"
+            onClick={() => void loadSqliteVault()}
+            style={{
+              fontSize: '0.62rem',
+              fontWeight: 600,
+              letterSpacing: '0.06em',
+              textTransform: 'uppercase',
+              padding: '8px 12px',
+              borderRadius: 6,
+              border: `1px solid ${TOKEN.border}`,
+              background: 'transparent',
+              color: TOKEN.muted,
+              cursor: 'pointer',
+              fontFamily: TOKEN.font,
+            }}
+          >
+            Refresh
+          </button>
+        </div>
+        {sqliteStatus === 'loading' && (
+          <p style={{ margin: 0, fontSize: '0.65rem', color: TOKEN.dim }}>Loading…</p>
+        )}
+        {sqliteStatus === 'err' && (
+          <p style={{ margin: 0, fontSize: '0.65rem', color: TOKEN.danger }}>
+            Could not load (sign in for governance API or check backend).
+          </p>
+        )}
+        {sqliteStatus === 'ok' && sqliteRows.length === 0 && (
+          <p style={{ margin: 0, fontSize: '0.65rem', color: TOKEN.dim }}>No rows in memory_vault for this user.</p>
+        )}
+        {sqliteRows.length > 0 && (
+          <div style={{ overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: 6, paddingRight: 2 }}>
+            {sqliteRows.map((r) => {
+              const norm = r.content.trim().toLowerCase().slice(0, 140);
+              const dup = (sqliteDupGroups.get(norm) ?? 0) > 1;
+              return (
+                <div
+                  key={r.id}
+                  style={{
+                    fontSize: '0.65rem',
+                    lineHeight: 1.45,
+                    color: TOKEN.text,
+                    borderBottom: `1px solid ${TOKEN.borderSubtle}`,
+                    paddingBottom: 6,
+                  }}
+                >
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'baseline', marginBottom: 4 }}>
+                    {dup && (
+                      <span
+                        style={{
+                          fontSize: '0.55rem',
+                          fontWeight: 700,
+                          textTransform: 'uppercase',
+                          color: TOKEN.danger,
+                          letterSpacing: '0.04em',
+                        }}
+                      >
+                        duplicate text
+                      </span>
+                    )}
+                    {r.type != null && r.type !== '' && (
+                      <span style={{ color: TOKEN.violet, fontWeight: 600 }}>[{r.type}]</span>
+                    )}
+                    {r.confidence != null && (
+                      <span style={{ color: TOKEN.dim }}>conf {Number(r.confidence).toFixed(2)}</span>
+                    )}
+                  </div>
+                  <p style={{ margin: 0, wordBreak: 'break-word' }}>{r.content}</p>
+                  <p style={{ margin: '4px 0 0', color: TOKEN.dim, fontSize: '0.6rem' }}>
+                    origin: {r.origin ?? '—'}
+                    {r.sourceTraceId ? ` · trace: ${r.sourceTraceId}` : ''}
+                    {r.createdAt ? ` · ${r.createdAt}` : ''}
+                  </p>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
 
       {/* Stats Bar */}
       <StatsBar

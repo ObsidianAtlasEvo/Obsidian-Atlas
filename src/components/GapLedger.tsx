@@ -1,22 +1,12 @@
 // Atlas-Audit: [EXEC-MODE] Verified — Repair-from-gap routes Home inquiry surface via coerceActiveMode('today-in-atlas', prev.activeMode).
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { AppState, Gap } from '../types';
-import { db, handleFirestoreError, OperationType } from '../services/firebase';
-import {
-  collection,
-  query,
-  orderBy,
-  onSnapshot,
-  doc,
-  updateDoc,
-  addDoc,
-  Timestamp,
-  type QuerySnapshot,
-} from 'firebase/firestore';
-import { motion, AnimatePresence } from 'motion/react';
-import { Target, AlertTriangle, CheckCircle, Clock, Search, Filter, Plus, ChevronRight, RefreshCw } from 'lucide-react';
+import { motion } from 'motion/react';
+import { AlertTriangle, Plus, ChevronRight, RefreshCw } from 'lucide-react';
 import { coerceActiveMode } from '../lib/atlasWayfinding';
 import { cn } from '../lib/utils';
+import { atlasApiUrl } from '../lib/atlasApi';
+import { atlasTraceUserId } from '../lib/atlasTraceContext';
 
 interface GapLedgerProps {
   state: AppState;
@@ -29,28 +19,62 @@ export function GapLedger({ state, setState }: GapLedgerProps) {
   const [filter, setFilter] = useState<'all' | 'critical' | 'high' | 'medium' | 'low'>('all');
   const [repairingGapId, setRepairingGapId] = useState<string | null>(null);
 
-  useEffect(() => {
-    const q = query(collection(db, 'gap_ledger'), orderBy('detectedAt', 'desc'));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const s = snapshot as QuerySnapshot;
-      const gapData = s.docs.map((d) => ({ id: d.id, ...d.data() } as Gap));
-      setGaps(gapData);
+  const userId = atlasTraceUserId(state);
+
+  const loadGaps = useCallback(async () => {
+    try {
+      const res = await fetch(
+        `${atlasApiUrl('/v1/governance/gaps')}?userId=${encodeURIComponent(userId)}`,
+        { credentials: 'include' }
+      );
+      if (!res.ok) throw new Error(String(res.status));
+      const data = (await res.json()) as {
+        gaps: Array<Record<string, unknown>>;
+      };
+      const mapped: Gap[] = data.gaps.map((g) => ({
+        id: String(g.id),
+        title: String(g.title),
+        description: String(g.description),
+        type: (g.type as Gap['type']) || 'structural_gap',
+        severity: g.severity as Gap['severity'],
+        status: g.status as Gap['status'],
+        detectedAt: String(g.detectedAt ?? g.createdAt ?? new Date().toISOString()),
+        repairedAt: g.repairedAt ? String(g.repairedAt) : undefined,
+        source: g.source === 'evolution' || g.source === 'governance' ? g.source : undefined,
+      }));
+      setGaps(mapped);
+    } catch {
+      setGaps([]);
+    } finally {
       setLoading(false);
-    }, (error) => {
-      handleFirestoreError(error, OperationType.LIST, 'gap_ledger');
-    });
+    }
+  }, [userId]);
 
-    return () => unsubscribe();
-  }, []);
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      if (cancelled) return;
+      await loadGaps();
+    })();
+    const id = setInterval(() => void loadGaps(), 20_000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [loadGaps]);
 
-  const filteredGaps = filter === 'all' ? gaps : gaps.filter(g => g.severity === filter);
+  const filteredGaps = filter === 'all' ? gaps : gaps.filter((g) => g.severity === filter);
 
   const getSeverityColor = (severity: string) => {
     switch (severity) {
-      case 'critical': return 'text-crimson-900 border-crimson-900/20 bg-crimson-900/5';
-      case 'high': return 'text-gold-500 border-gold-500/20 bg-gold-500/5';
-      case 'medium': return 'text-ivory border-stone-800/20 bg-stone-800/5';
-      default: return 'text-stone border-stone-800/10 bg-stone-800/5';
+      case 'critical':
+        return 'text-crimson-900 border-crimson-900/20 bg-crimson-900/5';
+      case 'high':
+        return 'text-gold-500 border-gold-500/20 bg-gold-500/5';
+      case 'medium':
+        return 'text-ivory border-stone-800/20 bg-stone-800/5';
+      default:
+        return 'text-stone border-stone-800/10 bg-stone-800/5';
     }
   };
 
@@ -59,24 +83,36 @@ export function GapLedger({ state, setState }: GapLedgerProps) {
       <div className="flex items-center justify-between">
         <div className="space-y-1">
           <h2 className="text-xl font-serif text-ivory tracking-tight">Ranked Gap Ledger</h2>
-          <p className="text-[10px] font-mono uppercase tracking-widest text-stone">Identified Architectural Weaknesses</p>
+          <p className="text-[10px] font-mono uppercase tracking-widest text-stone">Identified Architectural Weaknesses · Atlas backend</p>
         </div>
         <div className="flex items-center gap-4">
           <div className="flex bg-stone-900/40 border border-stone-800 p-1 rounded-sm">
-            {['all', 'critical', 'high', 'medium', 'low'].map(f => (
+            {['all', 'critical', 'high', 'medium', 'low'].map((f) => (
               <button
                 key={f}
-                onClick={() => setFilter(f as any)}
+                onClick={() => setFilter(f as typeof filter)}
                 className={cn(
-                  "px-3 py-1.5 text-[8px] uppercase tracking-widest transition-all duration-300",
-                  filter === f ? "bg-gold-500/10 text-gold-500" : "text-stone hover:text-ivory"
+                  'px-3 py-1.5 text-[8px] uppercase tracking-widest transition-all duration-300',
+                  filter === f ? 'bg-gold-500/10 text-gold-500' : 'text-stone hover:text-ivory'
                 )}
               >
                 {f}
               </button>
             ))}
           </div>
-          <button className="p-2 bg-gold-500/10 border border-gold-500/20 text-gold-500 hover:bg-gold-500/20 transition-all duration-300">
+          <button
+            type="button"
+            onClick={() => void loadGaps()}
+            className="p-2 bg-gold-500/10 border border-gold-500/20 text-gold-500 hover:bg-gold-500/20 transition-all duration-300"
+            title="Refresh"
+          >
+            <RefreshCw size={16} />
+          </button>
+          <button
+            type="button"
+            className="p-2 bg-gold-500/10 border border-gold-500/20 text-gold-500 hover:bg-gold-500/20 transition-all duration-300 opacity-50 cursor-not-allowed"
+            title="Add gap (API: POST /v1/governance/gaps)"
+          >
             <Plus size={16} />
           </button>
         </div>
@@ -84,32 +120,51 @@ export function GapLedger({ state, setState }: GapLedgerProps) {
 
       <div className="grid grid-cols-1 gap-4">
         {loading ? (
-          <div className="py-20 text-center text-stone uppercase tracking-widest pulse-shimmer rounded-sm">Scanning Architecture...</div>
+          <div className="py-20 text-center text-stone uppercase tracking-widest pulse-shimmer rounded-sm">
+            Scanning Architecture...
+          </div>
         ) : filteredGaps.length === 0 ? (
-          <div className="py-20 text-center text-stone uppercase tracking-widest opacity-30">No Gaps Identified in this Tier</div>
+          <div className="py-20 text-center text-stone uppercase tracking-widest opacity-30">
+            No Gaps Identified in this Tier
+          </div>
         ) : (
           filteredGaps.map((gap) => (
-            <motion.div 
+            <motion.div
               key={gap.id}
               initial={{ opacity: 0, y: 4 }}
               animate={{ opacity: 1, y: 0 }}
               className={cn(
-                "p-6 border rounded-sm flex items-center justify-between group transition-all duration-300",
+                'p-6 border rounded-sm flex items-center justify-between group transition-all duration-300',
                 getSeverityColor(gap.severity)
               )}
             >
               <div className="flex items-center gap-6">
                 <div className="p-3 bg-obsidian/40 border border-stone-800 rounded-sm">
-                  <AlertTriangle size={20} className={cn(gap.severity === 'critical' ? 'text-crimson-900' : 'text-gold-500')} />
+                  <AlertTriangle
+                    size={20}
+                    className={cn(gap.severity === 'critical' ? 'text-crimson-900' : 'text-gold-500')}
+                  />
                 </div>
                 <div className="space-y-1">
-                  <h3 className="text-sm font-bold text-ivory uppercase tracking-widest">{gap.title}</h3>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h3 className="text-sm font-bold text-ivory uppercase tracking-widest">{gap.title}</h3>
+                    {gap.source === 'evolution' && (
+                      <span className="text-[8px] uppercase tracking-widest px-1.5 py-0.5 rounded border border-violet-500/30 text-violet-300/90">
+                        Eval pipeline
+                      </span>
+                    )}
+                    {gap.source === 'governance' && (
+                      <span className="text-[8px] uppercase tracking-widest px-1.5 py-0.5 rounded border border-stone-600 text-stone-400">
+                        Console
+                      </span>
+                    )}
+                  </div>
                   <p className="text-xs text-stone leading-relaxed max-w-xl">{gap.description}</p>
                 </div>
               </div>
               <div className="flex items-center gap-8">
                 {gap.status === 'identified' && (
-                  <button 
+                  <button
                     onClick={() => {
                       setRepairingGapId(gap.id);
                       setState((prev) => ({
@@ -121,15 +176,14 @@ export function GapLedger({ state, setState }: GapLedgerProps) {
                           thinkingState: 'WEIGHING CONTRADICTIONS',
                         },
                       }));
-                      // Reset loading state after a delay (simulating the request starting)
                       setTimeout(() => setRepairingGapId(null), 2000);
                     }}
                     disabled={repairingGapId === gap.id}
                     className={cn(
-                      "px-3 py-1.5 border text-[8px] uppercase tracking-widest transition-all duration-300 flex items-center gap-2",
-                      repairingGapId === gap.id 
-                        ? "border-gold-500/20 text-gold-500/40 cursor-not-allowed" 
-                        : "border-gold-500/40 text-gold-500 hover:bg-gold-500/10 active:scale-95"
+                      'px-3 py-1.5 border text-[8px] uppercase tracking-widest transition-all duration-300 flex items-center gap-2',
+                      repairingGapId === gap.id
+                        ? 'border-gold-500/20 text-gold-500/40 cursor-not-allowed'
+                        : 'border-gold-500/40 text-gold-500 hover:bg-gold-500/10 active:scale-95'
                     )}
                   >
                     {repairingGapId === gap.id ? (
@@ -148,7 +202,9 @@ export function GapLedger({ state, setState }: GapLedgerProps) {
                 </div>
                 <div className="flex flex-col items-end">
                   <span className="text-[8px] uppercase tracking-widest text-stone">Detected</span>
-                  <span className="text-[10px] font-mono text-ivory uppercase tracking-widest">{new Date(gap.detectedAt).toLocaleDateString()}</span>
+                  <span className="text-[10px] font-mono text-ivory uppercase tracking-widest">
+                    {new Date(gap.detectedAt).toLocaleDateString()}
+                  </span>
                 </div>
                 <ChevronRight size={16} className="text-stone group-hover:text-gold-500 transition-all duration-300" />
               </div>

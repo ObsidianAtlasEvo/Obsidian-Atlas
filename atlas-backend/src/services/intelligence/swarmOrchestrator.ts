@@ -205,8 +205,8 @@ OUTPUT RULES:
 
 OPERATIONAL LAW:
 - VIP SOVEREIGN: You may use "local-ollama" ONLY when ROUTING_PAYLOAD.ROUTING_METADATA.sovereign_eligible is true. Otherwise never emit local-ollama.
-- Follow GROQ_ROUTING_DIRECTIVES.force_speed_path: when true, prefer "direct" with "groq-llama3-70b" unless the user prompt absolutely requires long-context (then gemini-1.5-pro) or elite code (claude-3-5-sonnet).
-- When GROQ_ROUTING_DIRECTIVES.bias_heavy_models is true, prefer gemini-1.5-pro, claude-3-5-sonnet, gpt-4o, or a short swarm over a single shallow Groq pass.
+- Follow GROQ_ROUTING_DIRECTIVES.force_speed_path: when true, prefer "direct" with "groq-llama3-70b" unless the user prompt absolutely requires long-context (then gemini-2.5-flash) or elite code (claude-3-5-sonnet).
+- When GROQ_ROUTING_DIRECTIVES.bias_heavy_models is true, prefer gemini-2.5-flash, claude-3-5-sonnet, gpt-4o, or a short swarm over a single shallow Groq pass.
 - When GROQ_ROUTING_DIRECTIVES.skip_premium_for_speed is true, avoid premium-tier models unless indispensable.
 - Use "swarm" when steps genuinely require different modalities (e.g. huge read → structured matrix). Keep steps ≤ 6 when possible.
 - If you are unsure, {"strategy":"direct","model":"groq-llama3-70b","reason":"default safe path"}.
@@ -339,7 +339,7 @@ export function swarmPlanToGroqRoutingDecision(plan: ExecutionPlan): GroqRouting
   }
   const id = normalizeRegistryModelId(plan.model);
   if (id === 'local-ollama') return { target: 'local_gpu', rationale: plan.reason };
-  if (id === 'gemini-1.5-pro') return { target: 'gemini_pro', rationale: plan.reason };
+  if (id === 'gemini-2.5-flash' || id === 'gemini-1.5-pro') return { target: 'gemini_pro', rationale: plan.reason };
   return { target: 'groq', rationale: plan.reason };
 }
 
@@ -577,7 +577,7 @@ export async function executeGroqGeminiDualConsensus(input: {
         phase: 'step',
         message: `Gemini lane degraded: ${e instanceof Error ? e.message : String(e)}`,
         step: 2,
-        model: 'gemini-1.5-pro',
+        model: 'gemini-2.5-flash',
       });
       return { text: '(Gemini lane unavailable)', model: geminiModel };
     }),
