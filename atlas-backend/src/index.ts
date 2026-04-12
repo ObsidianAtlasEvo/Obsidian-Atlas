@@ -11,7 +11,7 @@ import registerHealthRoutes from './routes/health.js'
 import { registerRateLimit } from './plugins/rateLimit.js';
 import { registerOllamaCompatRoutes } from './routes/ollamaCompat.js';
 import { registerInferenceQueueRoutes } from './routes/inferenceQueue.js';
-// // // // import { registerOmniStreamRoutes } from './routes/omniStream.js';
+import { registerOmniStreamRoutes } from './routes/omniStream.js';
 import { registerCognitiveGovernanceRoutes } from './routes/cognitiveGovernanceRoutes.js';
 import { registerLongitudinalRoutes } from './routes/longitudinalRoutes.js';
 import { registerStrategicModelingRoutes } from './routes/strategicModelingRoutes.js';
@@ -85,7 +85,7 @@ registerInferenceQueueRoutes(app);
 registerAuthRoutes(app);
 registerChatRoutes(app);
 registerOllamaCompatRoutes(app);
-// // registerOmniStreamRoutes(app);
+registerOmniStreamRoutes(app);
 registerSovereigntyRoutes(app);
 registerCognitiveGovernanceRoutes(app);
 registerLongitudinalRoutes(app);
