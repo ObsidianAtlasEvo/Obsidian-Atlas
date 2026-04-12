@@ -412,7 +412,7 @@ export function HomeView({ state, setState, onInteraction }: HomeViewProps) {
       }
 
       console.log('Synthesis successful:', analysis.id);
-      if (resonanceResult.observation) {
+      if (resonanceResult?.observation) {
         console.log('Resonance detected:', resonanceResult.observation.inferredTheme);
       }
 
