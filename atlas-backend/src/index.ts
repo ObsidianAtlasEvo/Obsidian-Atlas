@@ -26,6 +26,7 @@ import { initAutoRecovery } from './services/governance/degraded/recoveryOrchest
 import { registerExplanationRoutes } from './routes/explanationRoutes.js';
 import { registerRetentionRoutes } from './routes/retentionRoutes.js';
 import { registerGovernanceConsoleRoutes } from './routes/governanceConsoleRoutes.js';
+import { registerGapLedgerRoutes } from './routes/gapLedgerRoutes.js';
 import { loadPersistedJobs } from './services/inference/queueManager.js';
 
 initSqlite();
@@ -96,6 +97,7 @@ registerDegradedModeRoutes(app);
 registerExplanationRoutes(app);
 registerRetentionRoutes(app);
 registerGovernanceConsoleRoutes(app);
+registerGapLedgerRoutes(app);
 
 // POST /chat forwards to the handler registered as POST /v1/chat (same body, no model call here).
 app.post('/chat', async (request: FastifyRequest, reply: FastifyReply) => {
