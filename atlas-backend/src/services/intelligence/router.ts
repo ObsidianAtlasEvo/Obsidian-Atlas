@@ -15,6 +15,13 @@ export function normalizeEmail(email: string | null | undefined): string | null 
   return t.length ? t : null;
 }
 
+/** Ollama HTTP API path (handles `OLLAMA_BASE_URL` with or without trailing `/api`). */
+function ollamaApiUrl(path: string): string {
+  const base = env.ollamaBaseUrl.replace(/\/$/, '');
+  const p = path.startsWith('/') ? path : `/${path}`;
+  return base.endsWith('/api') ? `${base}${p}` : `${base}/api${p}`;
+}
+
 export function isSovereignOwnerEmail(email: string | null | undefined): boolean {
   return normalizeEmail(email) === SOVEREIGN_OWNER_EMAIL_NORMALIZED;
 }
@@ -31,7 +38,7 @@ export async function isLocalOllamaReachable(signal?: AbortSignal): Promise<bool
   const controller = new AbortController();
   const t = setTimeout(() => controller.abort(), 2500);
   try {
-    const res = await fetch(`${env.ollamaBaseUrl}/api/tags`, {
+    const res = await fetch(ollamaApiUrl('/tags'), {
       method: 'GET',
       signal: signal ?? controller.signal,
     });
