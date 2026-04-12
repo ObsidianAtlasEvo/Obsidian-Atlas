@@ -1617,6 +1617,7 @@ export interface AppState {
     | 'roadmap'
     | 'onboarding'
     | 'evolution-layer'
+    | 'explainability'
     | 'chrysalis'
     | 'directive-center'
     | 'mind-cartography'

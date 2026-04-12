@@ -12,7 +12,7 @@
     "ci:build": "npm ci && vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist",
-    "lint": "tsc --noEmit && npm run typecheck --prefix atlas-backend",
+    "lint": "tsc --noEmit && npx tsc --noEmit -p atlas-backend/tsconfig.json",
     "test": "vitest run",
     "test:watch": "vitest"
   },
@@ -25,6 +25,7 @@
     "d3": "^7.9.0",
     "dexie": "^4.4.2",
     "dotenv": "^17.2.3",
+    "immer": "^11.1.4",
     "lucide-react": "^0.546.0",
     "motion": "^12.38.0",
     "react": "^19.0.0",

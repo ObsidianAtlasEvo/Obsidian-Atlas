@@ -34,6 +34,21 @@ export function atlasHttpEnabled(): boolean {
   return Boolean(getAtlasApiBase()) || import.meta.env.DEV || isAtlasSameOriginApi();
 }
 
+/**
+ * Whether Atlas **chat** should call the HTTP backend (`/v1/chat/omni-stream`) instead of browser → Ollama only.
+ *
+ * `atlasHttpEnabled()` alone is often **false** in production when `VITE_ATLAS_SAME_ORIGIN` was not set at build
+ * time; Rollup then tree-shakes the omni client out of `dist/`, so `grep omni-stream` finds nothing even though
+ * the server proxies `/api`. This helper defaults to **true** in production builds unless
+ * `VITE_ATLAS_LOCAL_OLLAMA=true` (or `1`) opts into an Ollama-only bundle.
+ */
+export function atlasChatUseHttpBackend(): boolean {
+  if (atlasHttpEnabled()) return true;
+  const localOnly = import.meta.env.VITE_ATLAS_LOCAL_OLLAMA;
+  if (localOnly === 'true' || localOnly === '1') return false;
+  return import.meta.env.PROD;
+}
+
 const PROXY_API_PREFIX = '/api';
 
 /** Backend paths like `/v1/auth/session`, `/v1/chat/omni-stream`. */
