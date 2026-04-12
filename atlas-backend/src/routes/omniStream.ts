@@ -28,6 +28,7 @@ import {
   swarmPlanToGroqRoutingDecision,
 } from '../services/intelligence/swarmOrchestrator.js';
 import { streamGroqChat } from '../services/intelligence/universalAdapter.js';
+import { buildPrimeDirective } from '../services/intelligence/primeDirective.js';
 import {
   QuotaExceededError,
   SystemDeepResearchUnavailableError,
@@ -316,9 +317,16 @@ export function registerOmniStreamRoutes(app: FastifyInstance): void {
             plan: null,
           });
 
+          const primeDirective = buildPrimeDirective(userId);
+          const primedMessages: { role: 'system' | 'user' | 'assistant'; content: string }[] = [
+            { role: 'system', content: primeDirective },
+            ...(messagesWithRouting as { role: 'system' | 'user' | 'assistant'; content: string }[])
+              .filter((m) => m.role !== 'system'),
+          ];
+
           const directOut = await streamGroqChat({
             model: env.cloudChatModel,
-            messages: messagesWithRouting as { role: 'system' | 'user' | 'assistant'; content: string }[],
+            messages: primedMessages,
             onDelta,
             timeoutMs: 120_000,
           });
