@@ -357,13 +357,13 @@ export function HomeView({ state, setState, onInteraction }: HomeViewProps) {
     const searchVal = overrideQuery || query;
     if (!searchVal.trim()) return;
 
-    setIsAnalyzing(true);
     setError(null);
     const controller = new AbortController();
     setAbortController(controller);
 
     console.log('Starting search for:', searchVal);
     try {
+      setIsAnalyzing(true);
       // 1. Generate Resonance Context Packet (Pre-synthesis)
       const resonanceContext = ResonanceEngine.getContextPacket(searchVal, {
         threads: state.resonance.threads,
