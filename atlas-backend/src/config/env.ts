@@ -268,7 +268,7 @@ export const env = {
   /** Quota-backed system research; BYOK users never consume this. */
   systemTavilyApiKey:
     raw.SYSTEM_TAVILY_API_KEY?.trim() || raw.TAVILY_API_KEY?.trim() || undefined,
-  consensusGeminiModel: raw.CONSENSUS_GEMINI_MODEL?.trim() || 'gemini-1.5-pro',
+  consensusGeminiModel: raw.CONSENSUS_GEMINI_MODEL?.trim() || 'gemini-2.5-flash',
   consensusGroqAnalystModel: raw.CONSENSUS_GROQ_ANALYST_MODEL?.trim() || 'llama-3.3-70b-versatile',
   consensusGroqAltModel: raw.CONSENSUS_GROQ_ALT_MODEL?.trim() || 'mixtral-8x7b-32768',
   consensusGroqJudgeModel: raw.CONSENSUS_GROQ_JUDGE_MODEL?.trim() || 'llama-3.3-70b-versatile',

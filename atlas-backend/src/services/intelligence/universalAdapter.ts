@@ -352,7 +352,7 @@ export async function streamRegistryModel(params: {
       throw new Error('OpenRouter (or OpenAI) credentials not configured for this model');
     }
     case 'gemini_sdk': {
-      const model = entry.apiModel || env.geminiModel?.trim() || 'gemini-1.5-pro';
+      const model = entry.apiModel || env.geminiModel?.trim() || 'gemini-2.5-flash';
       return streamGeminiChat({
         model,
         messages,
