@@ -34,6 +34,7 @@ import orchestrateRoutes from './routes/orchestrate.js';
 import embeddingsRoutes from './routes/embeddings.js';
 import modelRoutes from './routes/models.js';
 import { registerGapLedgerRoutes } from './routes/gapLedgerRoutes.js';
+import { registerChangeControlRoutes } from './routes/changeControlRoutes.js';
 import { loadPersistedJobs } from './services/inference/queueManager.js';
 
 // ---------------------------------------------------------------------------
@@ -143,6 +144,7 @@ await app.register(async (protected_app) => {
   registerRetentionRoutes(protected_app);
   registerGovernanceConsoleRoutes(protected_app);
   registerGapLedgerRoutes(protected_app);
+  registerChangeControlRoutes(protected_app);
 });
 registerDegradedModeRoutes(app);
 registerExplanationRoutes(app);
