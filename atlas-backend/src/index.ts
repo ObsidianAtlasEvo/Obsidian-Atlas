@@ -26,6 +26,9 @@ import { initAutoRecovery } from './services/governance/degraded/recoveryOrchest
 import { registerExplanationRoutes } from './routes/explanationRoutes.js';
 import { registerRetentionRoutes } from './routes/retentionRoutes.js';
 import { registerGovernanceConsoleRoutes } from './routes/governanceConsoleRoutes.js';
+import orchestrateRoutes from './routes/orchestrate.js';
+import embeddingsRoutes from './routes/embeddings.js';
+import modelRoutes from './routes/models.js';
 import { loadPersistedJobs } from './services/inference/queueManager.js';
 
 initSqlite();
@@ -96,6 +99,9 @@ registerDegradedModeRoutes(app);
 registerExplanationRoutes(app);
 registerRetentionRoutes(app);
 registerGovernanceConsoleRoutes(app);
+await app.register(orchestrateRoutes);
+await app.register(embeddingsRoutes);
+await app.register(modelRoutes);
 
 // POST /chat forwards to the handler registered as POST /v1/chat (same body, no model call here).
 app.post('/chat', async (request: FastifyRequest, reply: FastifyReply) => {
