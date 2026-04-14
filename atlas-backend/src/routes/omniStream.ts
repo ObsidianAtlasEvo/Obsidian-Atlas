@@ -363,7 +363,7 @@ export function registerOmniStreamRoutes(app: FastifyInstance): void {
         result.surface !== 'god_mode_local' &&
         !result.surface.startsWith('god_mode');
 
-      // Send done immediately with the raw LLM response — never block user delivery on Overseer
+      // Send done immediately with the raw LLM response — user receives it without waiting for Overseer
       sseWrite(raw, 'done', {
         traceId,
         requestId,
@@ -378,38 +378,53 @@ export function registerOmniStreamRoutes(app: FastifyInstance): void {
           lineOfInquiry: lineOfInquiry ?? null,
         },
       });
+
+      // ── Overseer annotation: run concurrently with stream end, emit before closing ────────────
+      // Start Overseer immediately (was already accumulating in parallel during streaming).
+      // Await with a tight budget so we never hold the stream open indefinitely.
+      const OVERSEER_SSE_TIMEOUT_MS = 5_000;
+      let overseerResult: import('../services/governance/overseerService.js').OverseerResult | null = null;
+      try {
+        const overseerPromise = applyOverseerLens(userId, result.fullText, {
+          query: userPrompt,
+          mode: routing.mode ?? 'default',
+          userId,
+          conversationId: traceId,
+          modelOutputs: [],
+        });
+        // Race against timeout so we never block user delivery by more than OVERSEER_SSE_TIMEOUT_MS
+        overseerResult = await Promise.race([
+          overseerPromise,
+          new Promise<null>((resolve) => setTimeout(() => resolve(null), OVERSEER_SSE_TIMEOUT_MS)),
+        ]);
+      } catch {
+        overseerResult = null;
+      }
+
+      if (overseerResult) {
+        sseWrite(raw, 'overseer_annotation', {
+          constitutional_check: overseerResult.constitutionalFlags,
+          gap_summary: overseerResult.gapsFound,
+          synthesis_notes: overseerResult.synthesisNotes,
+          was_personalized: overseerResult.wasPersonalized,
+          degraded: overseerResult.degraded,
+        });
+      }
+
       raw.end();
 
-      // Overseer lens runs async — trains on response, personalizes future outputs (non-blocking)
-      Promise.resolve().then(async () => {
-        try {
-          const overseerResult = await applyOverseerLens(userId, result.fullText, {
-            query: userPrompt,
-            mode: routing.mode ?? 'default',
-            userId,
-            conversationId: traceId,
-            modelOutputs: [],
-          });
-          triggerEvolutionAfterOmniResponse({
-            traceId,
-            userId,
-            userMessage: userPrompt,
-            assistantResponse: overseerResult.response,
-            requestMessages,
-            verifiedEmail,
-          });
-        } catch {
-          // Overseer failure is non-fatal — evolution will retry on next interaction
-          triggerEvolutionAfterOmniResponse({
-            traceId,
-            userId,
-            userMessage: userPrompt,
-            assistantResponse: result.fullText,
-            requestMessages,
-            verifiedEmail,
-          });
-        }
-      }).catch(() => { /* silent — never crash the server over background Overseer */ });
+      // Trigger evolution pipeline with the (potentially overseer-refined) response
+      const finalResponse = overseerResult?.response ?? result.fullText;
+      Promise.resolve().then(() => {
+        triggerEvolutionAfterOmniResponse({
+          traceId,
+          userId,
+          userMessage: userPrompt,
+          assistantResponse: finalResponse,
+          requestMessages,
+          verifiedEmail,
+        });
+      }).catch(() => { /* non-fatal */ });
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       request.log.error(e);

@@ -11,6 +11,7 @@ import {
   type RegistryModelId,
 } from './llmRegistry.js';
 import { buildConstitutionalVerificationBundle } from './constitutionalContext.js';
+import { getActiveFeatureFlags } from '../evolution/policyStore.js';
 import { buildPrimeDirective, messagesWithPrimeDirective, type DelegatorMessage } from './primeDirective.js';
 import {
   buildChiefRoutingPayload,
@@ -232,6 +233,8 @@ export interface PlanSwarmExecutionInput {
   policyProfile: PolicyProfile;
   mirrorforge?: Partial<MirrorforgeState> | undefined;
   signal?: AbortSignal;
+  /** Optional: used to read active feature flags for plan overrides. */
+  userId?: string;
 }
 
 /**
@@ -319,6 +322,50 @@ export async function planSwarmExecution(input: PlanSwarmExecutionInput): Promis
     let guarded = await enforceSovereignLocalGpu(parsed, input.sovereignEligible, input.signal);
     guarded = stripLocalForPublic(guarded);
     guarded = enforcePlanRegistryAndCredentials(guarded);
+
+    // Feature flag override: if advanced_reasoning_mode is active, bias toward swarm.
+    if (input.userId && guarded.strategy === 'direct') {
+      const flags = getActiveFeatureFlags(input.userId);
+      const armFlag = flags.find((f) => f.feature === 'advanced_reasoning_mode');
+      if (armFlag && armFlag.confidence >= 0.7) {
+        guarded = {
+          strategy: 'swarm',
+          steps: [
+            { step: 1, model: guarded.model, task: 'Primary synthesis' },
+            { step: 2, model: DEFAULT_SWARM_MODEL_ID, task: 'Critical review and gap analysis' },
+          ],
+          reason: `feature_flag:advanced_reasoning_mode(confidence=${armFlag.confidence.toFixed(2)})`,
+        };
+        guarded = enforcePlanRegistryAndCredentials(guarded);
+      }
+    }
+
+    // mind_coherence override: if resonance confidence is critically low, force multi-agent review.
+    if (input.userId && guarded.strategy !== 'swarm') {
+      try {
+        const { getDb } = await import('../../db/sqlite.js');
+        const db = getDb();
+        const coherenceRow = db
+          .prepare(`SELECT confidence FROM resonance_state WHERE user_id = ?`)
+          .get(input.userId) as { confidence: number } | undefined;
+        const coherence = coherenceRow?.confidence ?? 1.0;
+        if (coherence < 0.4) {
+          const baseModel = guarded.strategy === 'direct' ? guarded.model : DEFAULT_SWARM_MODEL_ID;
+          guarded = {
+            strategy: 'swarm',
+            steps: [
+              { step: 1, model: baseModel, task: 'Primary synthesis' },
+              { step: 2, model: DEFAULT_SWARM_MODEL_ID, task: 'Coherence stabilization — cross-check and reconcile' },
+            ],
+            reason: `mind_coherence_low(${coherence.toFixed(3)})`,
+          };
+          guarded = enforcePlanRegistryAndCredentials(guarded);
+        }
+      } catch {
+        // resonance_state table may not exist yet — safe to skip
+      }
+    }
+
     return guarded;
   } catch {
     return { strategy: 'direct', model: DEFAULT_SWARM_MODEL_ID, reason: 'chief_exception' };
