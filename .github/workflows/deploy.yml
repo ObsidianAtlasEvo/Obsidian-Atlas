@@ -58,7 +58,7 @@ jobs:
       - name: Typecheck backend
         run: npm run typecheck --prefix atlas-backend
 
-  # ── 2. Deploy via Cloudflare Tunnel ─────────────────────────────────────────
+  # ── 2. Deploy via direct SSH ─────────────────────────────────────────────────
   deploy:
     name: Deploy to obsidianatlastech.com
     runs-on: ubuntu-latest
@@ -73,18 +73,12 @@ jobs:
       url: https://obsidianatlastech.com
 
     steps:
-      - name: Install cloudflared
-        run: |
-          curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb \
-            -o cloudflared.deb
-          sudo dpkg -i cloudflared.deb
-          cloudflared --version
-
-      - name: Configure SSH via Cloudflare Tunnel
+      - name: Configure SSH
         env:
           VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
-          CF_TUNNEL_HOSTNAME: ${{ secrets.CF_TUNNEL_HOSTNAME }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
           VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_PORT: ${{ secrets.VPS_PORT }}
         run: |
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
@@ -96,10 +90,10 @@ jobs:
           # Build SSH config with printf — no heredoc, no YAML conflict
           {
             printf 'Host atlas-vps\n'
-            printf 'HostName %s\n' "$CF_TUNNEL_HOSTNAME"
+            printf 'HostName %s\n' "$VPS_HOST"
             printf 'User %s\n' "$VPS_USER"
+            printf 'Port %s\n' "$VPS_PORT"
             printf 'IdentityFile ~/.ssh/atlas_deploy\n'
-            printf 'ProxyCommand cloudflared access ssh --hostname %%h\n'
             printf 'StrictHostKeyChecking no\n'
             printf 'UserKnownHostsFile /dev/null\n'
             printf 'ServerAliveInterval 30\n'
@@ -111,10 +105,10 @@ jobs:
           echo "SSH config:"
           cat ~/.ssh/config
 
-          echo "Testing tunnel connection..."
-          ssh atlas-vps "echo OK connected as \$(whoami) on \$(hostname)"
+          echo "Testing SSH connection..."
+          ssh atlas-vps "echo OK connected as $(whoami) on $(hostname)"
 
-      - name: Deploy via Cloudflare Tunnel
+      - name: Deploy via SSH
         run: |
           ssh atlas-vps 'bash -s' <<'REMOTE'
           set -euo pipefail
@@ -223,4 +217,4 @@ jobs:
         if: failure()
         run: |
           echo "::error::Deploy FAILED for commit ${{ github.sha }}"
-          echo "::error::Check the tunnel deploy step above for the root cause."
+          echo "::error::Check the SSH deploy step above for the root cause."
