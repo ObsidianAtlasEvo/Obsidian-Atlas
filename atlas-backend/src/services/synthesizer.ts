@@ -12,6 +12,7 @@
 
 import { complete } from './ollama.js';
 import { config } from '../config.js';
+import { env } from '../config/env.js';
 import type { ModelResponse } from './orchestrator.js';
 
 // ── Public types ──────────────────────────────────────────────────────────────
@@ -57,6 +58,52 @@ export interface SynthesisResult {
   atlasJudgment: string;
   /** 0–1: how confident Atlas is in the synthesis */
   confidence: number;
+}
+
+// ── Cloud completion fallback (reuses the same OpenAI-compatible endpoint
+//    configured for the intelligence router) ──────────────────────────────
+
+async function completeViaCloud(
+  messages: Array<{ role: string; content: string }>,
+  opts: { temperature?: number; maxTokens?: number; timeoutMs?: number } = {},
+): Promise<string> {
+  const base = env.cloudOpenAiBaseUrl?.replace(/\/$/, '') ?? '';
+  const apiKey = env.cloudOpenAiApiKey?.trim() ?? '';
+  const model = env.cloudChatModel?.trim() ?? '';
+
+  if (!base || !apiKey || !model) {
+    throw new Error(
+      'Cloud synthesis requires ATLAS_CLOUD_OPENAI_BASE_URL / ATLAS_CLOUD_OPENAI_API_KEY / ATLAS_CLOUD_CHAT_MODEL (or GROQ_API_KEY).',
+    );
+  }
+
+  const res = await fetch(`${base}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model,
+      messages: messages.map((m) => ({ role: m.role, content: m.content })),
+      temperature: opts.temperature ?? 0.4,
+      max_tokens: opts.maxTokens ?? 6000,
+      stream: false,
+    }),
+    signal: opts.timeoutMs ? AbortSignal.timeout(opts.timeoutMs) : undefined,
+  });
+
+  if (!res.ok) {
+    const detail = await res.text().catch(() => '');
+    throw new Error(`Cloud synthesis failed (${res.status}): ${detail.slice(0, 300)}`);
+  }
+
+  const data = (await res.json()) as {
+    choices?: Array<{ message?: { content?: string } }>;
+  };
+  const text = data.choices?.[0]?.message?.content?.trim();
+  if (!text) throw new Error('Cloud synthesis returned empty content');
+  return text;
 }
 
 // ── Synthesis prompt builder ──────────────────────────────────────────────────
@@ -257,16 +304,25 @@ export class Synthesizer {
 
     const synthesisPrompt = buildSynthesisPrompt(request);
 
-    const rawResponse = await complete(
-      [{ role: 'user', content: synthesisPrompt }],
-      {
-        model: config.chatModel,
+    const messages = [{ role: 'user' as const, content: synthesisPrompt }];
+
+    let rawResponse: string;
+    if (env.disableLocalOllama) {
+      // Cloud path — route through the configured OpenAI-compatible provider
+      rawResponse = await completeViaCloud(messages, {
         temperature: 0.4,
-        // Allow more tokens for a synthesis that may be long
         maxTokens: 6000,
         timeoutMs: 120_000,
-      },
-    );
+      });
+    } else {
+      // Sovereign owner path — use local Ollama
+      rawResponse = await complete(messages, {
+        model: config.chatModel,
+        temperature: 0.4,
+        maxTokens: 6000,
+        timeoutMs: 120_000,
+      });
+    }
 
     return parseAtlasResponse(rawResponse, request);
   }
