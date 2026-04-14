@@ -93,30 +93,26 @@ jobs:
           printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/atlas_deploy
           chmod 600 ~/.ssh/atlas_deploy
 
-          # Write SSH config using Python to avoid YAML << heredoc conflict
-          python3 - <<'PYEOF'
-          import os
-          config = f"""Host atlas-vps
-HostName {os.environ['CF_TUNNEL_HOSTNAME']}
-User {os.environ['VPS_USER']}
-IdentityFile ~/.ssh/atlas_deploy
-ProxyCommand cloudflared access ssh --hostname %h
-StrictHostKeyChecking no
-UserKnownHostsFile /dev/null
-ServerAliveInterval 30
-ServerAliveCountMax 5
-ConnectTimeout 30
-"""
-          with open(os.path.expanduser('~/.ssh/config'), 'w') as f:
-              f.write(config)
-          print("SSH config written:")
-          print(config)
-          PYEOF
-
+          # Build SSH config with printf — no heredoc, no YAML conflict
+          {
+            printf 'Host atlas-vps\n'
+            printf 'HostName %s\n' "$CF_TUNNEL_HOSTNAME"
+            printf 'User %s\n' "$VPS_USER"
+            printf 'IdentityFile ~/.ssh/atlas_deploy\n'
+            printf 'ProxyCommand cloudflared access ssh --hostname %%h\n'
+            printf 'StrictHostKeyChecking no\n'
+            printf 'UserKnownHostsFile /dev/null\n'
+            printf 'ServerAliveInterval 30\n'
+            printf 'ServerAliveCountMax 5\n'
+            printf 'ConnectTimeout 30\n'
+          } > ~/.ssh/config
           chmod 600 ~/.ssh/config
 
+          echo "SSH config:"
+          cat ~/.ssh/config
+
           echo "Testing tunnel connection..."
-          ssh atlas-vps "echo '✓ Tunnel OK — connected as $(whoami) on $(hostname)'"
+          ssh atlas-vps "echo OK connected as \$(whoami) on \$(hostname)"
 
       - name: Deploy via Cloudflare Tunnel
         run: |
