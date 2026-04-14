@@ -140,7 +140,7 @@ jobs:
           echo "      ✓ Done"
 
           echo "[3/8] Building frontend..."
-          npm run build
+          VITE_ATLAS_SAME_ORIGIN=true npm run build
           echo "      ✓ dist/ ready"
 
           echo "[4/8] Installing backend deps..."
@@ -188,9 +188,15 @@ jobs:
             echo "      ⚠ No migrations dir — skipping"
           fi
 
-          echo "[8/8] Reloading nginx..."
-          sudo nginx -t && sudo nginx -s reload || true
-          echo "      ✓ nginx reloaded"
+          echo "[8/8] Reloading web server..."
+          if command -v caddy &>/dev/null; then
+            sudo caddy reload --config /etc/caddy/Caddyfile --force 2>/dev/null || sudo systemctl reload caddy 2>/dev/null || true
+            echo "      ✓ Caddy reloaded"
+          fi
+          if command -v nginx &>/dev/null; then
+            sudo nginx -t && sudo nginx -s reload || true
+            echo "      ✓ nginx reloaded"
+          fi
 
           echo ""
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
