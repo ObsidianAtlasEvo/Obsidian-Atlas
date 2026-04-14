@@ -120,6 +120,11 @@ export function registerOmniStreamRoutes(app: FastifyInstance): void {
 
     touchChronosActivity(userId);
 
+    // Attach session BEFORE hijacking — must complete before reply is taken over
+    // so that auth errors can still return proper HTTP status codes.
+    await attachAtlasSession(request);
+    const verifiedEmail = getVerifiedUserEmail(request);
+
     try {
       assertChatQuotaAllows(userId);
     } catch (e) {
@@ -140,8 +145,7 @@ export function registerOmniStreamRoutes(app: FastifyInstance): void {
     const raw = reply.raw;
 
     try {
-      await attachAtlasSession(request);
-      const verifiedEmail = getVerifiedUserEmail(request);
+      // verifiedEmail resolved above (before hijack)
       const lane = env.disableLocalOllama ? 'public_swarm' : resolveOmniComputeLane(verifiedEmail);
 
       sseWrite(raw, 'status', {
