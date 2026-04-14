@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import { appendAtlasSftJsonl, appendApprovedSftExample } from './datasetWriter.js';
+import { appendAtlasSftJsonl, appendApprovedSftExample, appendEvalToSqlite } from './datasetWriter.js';
 import { evaluateExchange } from './evalEngine.js';
 import { saveEvolutionGap } from './gapStore.js';
 import { evolvePolicyTelemetryFromEval } from '../autonomy/policyEvolver.js';
@@ -12,7 +12,10 @@ import {
 } from './subsystemEvolvers.js';
 import { applyExplicitPolicyCorrections } from './policyStore.js';
 import { extractMemoryCandidates } from '../memory/memoryExtractor.js';
-import { saveMemory, saveTrace } from '../memory/memoryStore.js';
+import { saveMemory, saveTrace, listMemoriesByKind, listRecentTraces } from '../memory/memoryStore.js';
+import { analyzeDrift } from '../driftDetection.js';
+import type { DriftAnalysisContext } from '../driftDetection.js';
+import { appendAutonomyLog } from '../autonomy/autonomyLog.js';
 import type { ModelProvider } from '../model/modelProvider.js';
 import { env } from '../../config/env.js';
 import type { ChatRole } from '../../types/atlas.js';
@@ -97,6 +100,13 @@ async function runEvolutionJob(job: EvolutionJobPayload): Promise<void> {
     /* policy telemetry evolution is best-effort */
   }
 
+  // Persist eval scores to SQLite for queryable history (fire-and-forget)
+  try {
+    appendEvalToSqlite(userId, evalResult);
+  } catch {
+    /* eval history write is best-effort */
+  }
+
   const memoriesPersisted: { id: string; summary: string }[] = [];
   for (const c of candidates) {
     if (c.confidence < env.memoryConfidenceThreshold) continue;
@@ -167,6 +177,37 @@ async function runEvolutionJob(job: EvolutionJobPayload): Promise<void> {
     evolveResonanceModel(userId, subsystemCtx),
     evolveGoalMemory(userId, subsystemCtx),
   ]);
+
+  // Drift detection: analyze recent behavior for misalignment with stated values/goals
+  try {
+    const valueMemories = listMemoriesByKind(userId, 'identity', 20);
+    const goalMemories = listMemoriesByKind(userId, 'goal', 20);
+    const recentTraces = listRecentTraces(userId, 20);
+
+    const driftCtx: DriftAnalysisContext = {
+      currentValues: valueMemories.map((m) => m.summary),
+      currentGoals: goalMemories.map((m) => m.summary),
+      recentActions: recentTraces.map((t) => t.assistantResponse),
+      recentQuestions: recentTraces.map((t) => t.userMessage),
+      doctrine: [],
+      timeframeDays: 7,
+    };
+
+    const driftSignals = analyzeDrift(driftCtx);
+    for (const signal of driftSignals) {
+      if (signal.severity === 'high') {
+        appendAutonomyLog({
+          userId,
+          kind: 'drift-detection',
+          message: `[${signal.type}] ${signal.description} — evidence: ${signal.evidence.join('; ')}`,
+          decisionJson: JSON.stringify(signal),
+          status: 'warning',
+        });
+      }
+    }
+  } catch (err) {
+    console.warn('[evolution] drift detection failed (non-fatal):', err);
+  }
 
   pipelineEvents.emit('complete', {
     traceId,
