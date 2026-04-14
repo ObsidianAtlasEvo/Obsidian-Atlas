@@ -1,4 +1,7 @@
 import './bootstrapEnv.js';
+import { validateEnv } from './validateEnv.js';
+validateEnv();
+
 import cookie from '@fastify/cookie';
 import cors from '@fastify/cors';
 import Fastify, { type FastifyReply, type FastifyRequest } from 'fastify';
