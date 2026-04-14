@@ -86,6 +86,17 @@ jobs:
           script: |
             set -euo pipefail
 
+            # Source NVM if present (non-interactive SSH sessions don't load .bashrc)
+            export NVM_DIR="$HOME/.nvm"
+            [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh" --no-use
+
+            # Resolve PM2 path for non-interactive SSH sessions
+            PM2_BIN=$(command -v pm2 2>/dev/null || \
+              ls ~/.nvm/versions/node/*/bin/pm2 2>/dev/null | tail -1 || \
+              ls /usr/local/bin/pm2 2>/dev/null || \
+              ls /usr/bin/pm2 2>/dev/null || \
+              echo "pm2")
+
             DEPLOY_DIR="${{ secrets.VPS_APP_PATH }}"
             TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S UTC')
 
@@ -134,22 +145,22 @@ jobs:
             fi
 
             # ── Reload PM2 (zero-downtime) ──────────────────────────────────
-            if pm2 list | grep -q "atlas-api"; then
-              pm2 reload atlas-api --update-env
+            if $PM2_BIN list | grep -q "atlas-api"; then
+              $PM2_BIN reload atlas-api --update-env
             else
               # First deploy — start via ecosystem config or bare pm2 start
               if [ -f ecosystem.config.cjs ]; then
-                pm2 start ecosystem.config.cjs --env production
+                $PM2_BIN start ecosystem.config.cjs --env production
               else
                 cd atlas-backend
-                pm2 start dist/index.js --name atlas-api --node-args="--max-old-space-size=512"
+                $PM2_BIN start dist/index.js --name atlas-api --node-args="--max-old-space-size=512"
                 cd ..
               fi
-              pm2 save
+              $PM2_BIN save
             fi
 
             # ── Ensure PM2 survives reboots ────────────────────────────────
-            pm2 save
+            $PM2_BIN save
             echo "      ✓ PM2 process list saved"
             echo "      ✓ PM2 reloaded"
 
