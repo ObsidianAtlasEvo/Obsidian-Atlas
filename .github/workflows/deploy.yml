@@ -153,6 +153,25 @@ jobs:
             echo "      ✓ PM2 process list saved"
             echo "      ✓ PM2 reloaded"
 
+            # ── Run SQLite schema migrations ────────────────────────────────
+            echo "[7/8] Running database migrations..."
+            MIGRATION_DIR="$DEPLOY_DIR/atlas-backend/migrations"
+            DB_PATH="$DEPLOY_DIR/atlas-backend/data/atlas.db"
+            if [ -d "$MIGRATION_DIR" ]; then
+              for migration in $(ls "$MIGRATION_DIR"/*.sql 2>/dev/null | sort); do
+                echo "      Applying: $(basename $migration)"
+                sqlite3 "$DB_PATH" < "$migration" || true
+              done
+              echo "      ✓ Migrations applied"
+            else
+              echo "      ⚠ No migrations directory found — skipping"
+            fi
+
+            # ── Reload nginx to pick up any config changes ───────────────────
+            echo "[8/8] Reloading nginx..."
+            sudo nginx -t && sudo nginx -s reload || true
+            echo "      ✓ nginx reloaded"
+
             echo ""
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
             echo "  ✅ Deploy complete!"

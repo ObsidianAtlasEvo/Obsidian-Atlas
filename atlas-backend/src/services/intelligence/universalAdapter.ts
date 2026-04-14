@@ -187,7 +187,7 @@ export async function streamGeminiChat(params: {
   let full = '';
 
   try {
-    const stream = await ai.getGenerativeModel({ model: "gemini-1.5-flash" }).generateContentStream({
+    const stream = await ai.getGenerativeModel({ model: params.model?.trim() || env.geminiModel?.trim() || 'gemini-2.0-flash' }).generateContentStream({
       contents,
       systemInstruction: system || undefined,
       generationConfig: {
@@ -476,7 +476,7 @@ export async function completeGeminiChat(params: {
   const controller = new AbortController();
   const t = params.timeoutMs ? setTimeout(() => controller.abort(), params.timeoutMs) : undefined;
   try {
-    const response = await ai.getGenerativeModel({ model: "gemini-1.5-flash" }).generateContent({
+    const response = await ai.getGenerativeModel({ model: params.model?.trim() || env.geminiModel?.trim() || 'gemini-2.0-flash' }).generateContent({
       contents,
       systemInstruction: system || undefined,
       generationConfig: {
