@@ -102,7 +102,8 @@ async function pump(): Promise<void> {
 
 function getSupabaseClient(): { from: (table: string) => Record<string, unknown> } | null {
   const url = process.env.SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const key =
+    process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.SUPABASE_SERVICE_KEY;
   if (!url || !key) return null;
   // Dynamic import would be ideal but we keep it sync-friendly.
   // We use global fetch to avoid a hard dependency on @supabase/supabase-js.
@@ -115,7 +116,8 @@ async function supabaseRest(
   body?: unknown
 ): Promise<{ ok: boolean; data?: unknown }> {
   const url = process.env.SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const key =
+    process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.SUPABASE_SERVICE_KEY;
   if (!url || !key) return { ok: false };
 
   try {

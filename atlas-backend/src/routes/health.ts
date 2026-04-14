@@ -40,7 +40,8 @@ export default async function healthRoutes(app: FastifyInstance): Promise<void> 
       // 1. Supabase (live query against atlas_feature_flags)
       probeWithTimeout('supabase', async () => {
         const url = process.env.SUPABASE_URL;
-        const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+        const key =
+          process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.SUPABASE_SERVICE_KEY;
         if (!url || !key) throw new Error('SUPABASE credentials not set');
         // Use the PostgREST root endpoint — returns 200 with API metadata
         // regardless of which tables exist. Avoids 400s from missing tables.
