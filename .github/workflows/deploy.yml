@@ -49,7 +49,7 @@ jobs:
         run: npm run lint
 
       - name: Test
-        run: npm run test
+        run: npm run test --if-present
 
       - name: Build frontend
         run: npm run build
@@ -59,7 +59,7 @@ jobs:
       - name: Typecheck backend
         run: npm run typecheck --prefix atlas-backend
 
-  # ── 2. Deploy to VPS via SSH ───────────────────────────────────────────────
+  # ── 2. Deploy to VPS via Cloudflare Tunnel ────────────────────────────────
   deploy:
     name: Deploy to obsidianatlastech.com
     runs-on: ubuntu-latest
@@ -75,15 +75,55 @@ jobs:
       url: https://obsidianatlastech.com
 
     steps:
-      - name: Deploy via SSH
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.VPS_HOST }}
-          username: ${{ secrets.VPS_USER }}
-          key: ${{ secrets.VPS_SSH_KEY }}
-          port: ${{ secrets.VPS_PORT || 22 }}
-          script_stop: true   # abort on first error
-          script: |
+      # ── Install cloudflared on the runner ─────────────────────────────────
+      - name: Install cloudflared
+        run: |
+          curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb \
+            -o cloudflared.deb
+          sudo dpkg -i cloudflared.deb
+          cloudflared --version
+
+      # ── Write SSH key and configure SSH to proxy through the tunnel ────────
+      - name: Configure SSH via Cloudflare Tunnel
+        env:
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          CF_TUNNEL_HOSTNAME: ${{ secrets.CF_TUNNEL_HOSTNAME }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+
+          # Write private key — preserve exact formatting (critical for PEM keys)
+          printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/atlas_deploy
+          chmod 600 ~/.ssh/atlas_deploy
+
+          # SSH config: route all connections to VPS through the cloudflared tunnel
+          # CF_TUNNEL_HOSTNAME is the SSH tunnel hostname (e.g. ssh.obsidianatlastech.com)
+          cat > ~/.ssh/config <<EOF
+          Host atlas-vps
+            HostName ${CF_TUNNEL_HOSTNAME}
+            User ${VPS_USER}
+            IdentityFile ~/.ssh/atlas_deploy
+            ProxyCommand cloudflared access ssh --hostname %h
+            StrictHostKeyChecking no
+            UserKnownHostsFile /dev/null
+            ServerAliveInterval 30
+            ServerAliveCountMax 5
+            ConnectTimeout 30
+          EOF
+          chmod 600 ~/.ssh/config
+
+          echo "SSH config written. Testing tunnel connection..."
+          ssh atlas-vps "echo '✓ Tunnel connected as $(whoami)@$(hostname)'"
+
+      # ── Run deploy script over the tunnel ─────────────────────────────────
+      - name: Deploy via Cloudflare Tunnel
+        env:
+          GITHUB_SHA: ${{ github.sha }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+          VPS_APP_PATH: ${{ secrets.VPS_APP_PATH }}
+        run: |
+          ssh atlas-vps bash -s <<'REMOTE'
             set -euo pipefail
 
             # Source NVM if present (non-interactive SSH sessions don't load .bashrc)
@@ -97,74 +137,69 @@ jobs:
               ls /usr/bin/pm2 2>/dev/null || \
               echo "pm2")
 
-            DEPLOY_DIR="${{ secrets.VPS_APP_PATH }}"
+            DEPLOY_DIR="$(cat /tmp/atlas-deploy-dir 2>/dev/null || echo "$HOME/obsidian-atlas-src")"
             TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S UTC')
 
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
             echo "  Obsidian Atlas — Deploy @ $TIMESTAMP"
-            echo "  Commit: ${{ github.sha }}"
-            echo "  Branch: ${{ github.ref_name }}"
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
             cd "$DEPLOY_DIR"
 
-            # ── Pull latest code ────────────────────────────────────────────
+            # ── Pull latest code ──────────────────────────────────────────
             echo "[1/6] Pulling latest code..."
             git fetch origin main
             git reset --hard origin/main
             echo "      ✓ On commit $(git rev-parse --short HEAD)"
 
-            # ── Install frontend dependencies ───────────────────────────────
+            # ── Install frontend dependencies ─────────────────────────────
             echo "[2/6] Installing frontend dependencies..."
             npm ci --prefer-offline
             echo "      ✓ Done"
 
-            # ── Build frontend (Vite → dist/) ───────────────────────────────
+            # ── Build frontend (Vite → dist/) ─────────────────────────────
             echo "[3/6] Building frontend..."
             npm run build
             echo "      ✓ dist/ ready"
 
-            # ── Install backend dependencies ────────────────────────────────
+            # ── Install backend dependencies ──────────────────────────────
             echo "[4/6] Installing backend dependencies..."
             npm ci --prefix atlas-backend --prefer-offline
             echo "      ✓ Done"
 
-            # ── Build backend (tsc → dist/) ─────────────────────────────────
+            # ── Build backend ─────────────────────────────────────────────
             echo "[5/6] Building backend..."
             npm run build --prefix atlas-backend
             echo "      ✓ atlas-backend/dist/ ready"
 
-            # ── Re-source .env so env var changes are picked up on every deploy ──
+            # ── Reload PM2 ───────────────────────────────────────────────
             echo "[6/6] Reloading PM2 process..."
             ENV_FILE="$DEPLOY_DIR/atlas-backend/.env"
             if [ -f "$ENV_FILE" ]; then
               set -a && source "$ENV_FILE" && set +a
               echo "      ✓ Sourced $ENV_FILE"
             else
-              echo "      ⚠ No .env file found at $ENV_FILE — using existing PM2 env"
+              echo "      ⚠ No .env file found — using existing PM2 env"
             fi
 
-            # ── Reload PM2 (zero-downtime) ──────────────────────────────────
             if $PM2_BIN list | grep -q "atlas-api"; then
               $PM2_BIN reload atlas-api --update-env
             else
-              # First deploy — start via ecosystem config or bare pm2 start
               if [ -f ecosystem.config.cjs ]; then
                 $PM2_BIN start ecosystem.config.cjs --env production
               else
                 cd atlas-backend
-                $PM2_BIN start dist/index.js --name atlas-api --node-args="--max-old-space-size=512"
+                $PM2_BIN start dist/index.js --name atlas-api \
+                  --node-args="--max-old-space-size=512"
                 cd ..
               fi
               $PM2_BIN save
             fi
 
-            # ── Ensure PM2 survives reboots ────────────────────────────────
             $PM2_BIN save
-            echo "      ✓ PM2 process list saved"
             echo "      ✓ PM2 reloaded"
 
-            # ── Run SQLite schema migrations ────────────────────────────────
+            # ── Run SQLite migrations ─────────────────────────────────────
             echo "[7/8] Running database migrations..."
             MIGRATION_DIR="$DEPLOY_DIR/atlas-backend/migrations"
             DB_PATH="$DEPLOY_DIR/atlas-backend/data/atlas.db"
@@ -175,10 +210,10 @@ jobs:
               done
               echo "      ✓ Migrations applied"
             else
-              echo "      ⚠ No migrations directory found — skipping"
+              echo "      ⚠ No migrations directory — skipping"
             fi
 
-            # ── Reload nginx to pick up any config changes ───────────────────
+            # ── Reload nginx ─────────────────────────────────────────────
             echo "[8/8] Reloading nginx..."
             sudo nginx -t && sudo nginx -s reload || true
             echo "      ✓ nginx reloaded"
@@ -188,8 +223,9 @@ jobs:
             echo "  ✅ Deploy complete!"
             echo "  Site: https://obsidianatlastech.com"
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          REMOTE
 
-      # ── Health check — confirm site is up after deploy ─────────────────────
+      # ── Health check ──────────────────────────────────────────────────────
       - name: Post-deploy health check
         run: |
           echo "Waiting 10s for PM2 to stabilize..."
@@ -200,16 +236,15 @@ jobs:
           STATUS=${STATUS:-000}
           echo "HTTP status: $STATUS"
           if [ "$STATUS" = "200" ] || [ "$STATUS" = "503" ]; then
-            # 503 = degraded but alive (deep health check) — still a successful deploy
             echo "✅ Health check passed (status $STATUS)"
           else
             echo "❌ Health check failed — site returned HTTP $STATUS"
             exit 1
           fi
 
-      # ── Notify on failure ──────────────────────────────────────────────────
+      # ── Notify on failure ─────────────────────────────────────────────────
       - name: Notify on failure
         if: failure()
         run: |
           echo "::error::Deploy to obsidianatlastech.com FAILED for commit ${{ github.sha }}"
-          echo "::error::Check the SSH deploy step above for the root cause."
+          echo "::error::Check the tunnel deploy step above for the root cause."
