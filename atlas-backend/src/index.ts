@@ -116,11 +116,11 @@ await app.register(orchestrateRoutes);
 await app.register(embeddingsRoutes);
 await app.register(modelRoutes);
 
-// POST /chat forwards to the handler registered as POST /v1/chat (same body, no model call here).
+// POST /chat forwards to the handler registered as POST /v1/chat/omni-stream (same body, no model call here).
 app.post('/chat', async (request: FastifyRequest, reply: FastifyReply) => {
   const res = await app.inject({
     method: 'POST',
-    url: '/v1/chat',
+    url: '/v1/chat/omni-stream',
     payload: request.body as Record<string, unknown>,
     headers: { 'content-type': 'application/json' },
   });
@@ -147,7 +147,7 @@ app
     }
     app.log.info(
       { host: env.host, port: env.port, ollamaBaseUrl: env.ollamaBaseUrl },
-      'atlas ready  GET /health  POST /chat  POST /v1/chat'
+      'atlas ready  GET /health  POST /chat  POST /v1/chat/omni-stream'
     );
     app.log.info({ corsOrigins: env.corsOrigins }, 'cors origins');
     startPolling();
