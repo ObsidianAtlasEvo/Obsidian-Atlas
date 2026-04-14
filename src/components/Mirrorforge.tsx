@@ -52,7 +52,6 @@ export function Mirrorforge({ state, setState }: MirrorforgeProps) {
         input,
         activeMode.label,
         state.userModel,
-        { userId: atlasTraceUserId(state), channel: ATLAS_TRACE_CHANNEL.mirrorforge }
       );
       setMirrorLog((prev) => [...prev, { role: 'atlas', text: atlasResponse || '(empty response)' }]);
     } catch (e) {

@@ -89,10 +89,7 @@ export function CrucibleView({ state, setState }: CrucibleViewProps) {
     };
 
     try {
-      const response = await conductCrucibleSession(session, state.userModel, topic, {
-        userId: atlasTraceUserId(state),
-        channel: ATLAS_TRACE_CHANNEL.crucible,
-      });
+      const response = await conductCrucibleSession(session, state.userModel, topic);
       setResult(response.atlasResponse);
       const at = new Date().toISOString();
       setLastRunAt(at);

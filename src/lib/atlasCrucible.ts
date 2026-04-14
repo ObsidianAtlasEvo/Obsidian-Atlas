@@ -41,6 +41,6 @@ Respond with a structured critique. Use Markdown with sections:
 ### Reforged Version`;
 
   const atlasResponse = await backendComplete(prompt);
-  const epistemicCategory: CrucibleExchange['epistemicCategory'] = 'critique';
+  const epistemicCategory: CrucibleExchange['epistemicCategory'] = 'synthesis';
   return { atlasResponse, epistemicCategory };
 }
