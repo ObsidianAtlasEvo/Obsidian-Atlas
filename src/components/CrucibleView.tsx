@@ -22,7 +22,7 @@ import { cn } from '../lib/utils';
 import { coerceActiveMode } from '../lib/atlasWayfinding';
 import { AppState, CrucibleMode, CrucibleIntensity, CrucibleSession, CrucibleExchange } from '../types';
 import { ATLAS_TRACE_CHANNEL, atlasTraceUserId } from '../lib/atlasTraceContext';
-import { conductCrucibleSession } from '../services/ollamaService';
+import { conductCrucibleSession } from '../lib/atlasCrucible';
 
 interface CrucibleViewProps {
   state: AppState;

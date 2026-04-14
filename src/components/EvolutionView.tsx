@@ -3,7 +3,7 @@ import { AppState, GrowthMilestone, IdentityDiff, RecurringLoop } from '../types
 import { motion } from 'motion/react';
 import { Brain, GitBranch, RefreshCw, Star, ArrowRight, Clock, Shield, Zap, AlertCircle, Activity } from 'lucide-react';
 import { cn } from '../lib/utils';
-import { globalEvolutionEngine } from '../services/ollamaService';
+import { globalEvolutionEngine } from '../lib/atlasEvolution';
 
 interface EvolutionViewProps {
   state: AppState;

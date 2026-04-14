@@ -19,7 +19,7 @@ import {
 } from 'lucide-react';
 import { AppState, MirrorforgeModel } from '../types';
 import { cn } from '../lib/utils';
-import { conductMirrorforgeReflection } from '../services/ollamaService';
+import { conductMirrorforgeReflection } from '../lib/atlasMirrorforge';
 import { ATLAS_TRACE_CHANNEL, atlasTraceUserId } from '../lib/atlasTraceContext';
 
 interface MirrorforgeProps {
