@@ -1,5 +1,5 @@
 import { ResonanceThread, ResonanceTier } from "./types";
-import { ollamaComplete, parseJsonFromAssistant } from "../services/ollamaClient";
+import { backendComplete as ollamaComplete, parseJsonFromBackend as parseJsonFromAssistant } from "../lib/backendInference";
 
 /**
  * Resonance-Aware Summarization.
