@@ -13,7 +13,7 @@ on:
 
 concurrency:
   group: deploy-production
-  cancel-in-progress: false  # never cancel an in-flight deploy
+  cancel-in-progress: false
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -81,19 +81,24 @@ jobs:
           cloudflared --version
 
       - name: Configure SSH via Cloudflare Tunnel
+        env:
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          CF_TUNNEL_HOSTNAME: ${{ secrets.CF_TUNNEL_HOSTNAME }}
+          VPS_USER: ${{ secrets.VPS_USER }}
         run: |
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
 
-          # Write private key — printf preserves exact newlines (critical for PEM)
+          # Write private key — printf preserves exact PEM newlines
           printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/atlas_deploy
           chmod 600 ~/.ssh/atlas_deploy
 
-          # Write SSH config with NO leading whitespace — SSH config parser is strict
-          cat > ~/.ssh/config << EOF
-Host atlas-vps
-HostName $CF_TUNNEL_HOSTNAME
-User $VPS_USER
+          # Write SSH config using Python to avoid YAML << heredoc conflict
+          python3 - <<'PYEOF'
+          import os
+          config = f"""Host atlas-vps
+HostName {os.environ['CF_TUNNEL_HOSTNAME']}
+User {os.environ['VPS_USER']}
 IdentityFile ~/.ssh/atlas_deploy
 ProxyCommand cloudflared access ssh --hostname %h
 StrictHostKeyChecking no
@@ -101,112 +106,107 @@ UserKnownHostsFile /dev/null
 ServerAliveInterval 30
 ServerAliveCountMax 5
 ConnectTimeout 30
-EOF
+"""
+          with open(os.path.expanduser('~/.ssh/config'), 'w') as f:
+              f.write(config)
+          print("SSH config written:")
+          print(config)
+          PYEOF
+
           chmod 600 ~/.ssh/config
 
-          echo "SSH config:"
-          cat ~/.ssh/config
-
           echo "Testing tunnel connection..."
-          ssh atlas-vps "echo '✓ Tunnel OK as $(whoami) on $(hostname)'"
-        env:
-          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
-          CF_TUNNEL_HOSTNAME: ${{ secrets.CF_TUNNEL_HOSTNAME }}
-          VPS_USER: ${{ secrets.VPS_USER }}
+          ssh atlas-vps "echo '✓ Tunnel OK — connected as $(whoami) on $(hostname)'"
 
       - name: Deploy via Cloudflare Tunnel
         run: |
-          ssh atlas-vps bash << 'REMOTE'
-            set -euo pipefail
+          ssh atlas-vps 'bash -s' <<'REMOTE'
+          set -euo pipefail
 
-            export NVM_DIR="$HOME/.nvm"
-            [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh" --no-use
+          export NVM_DIR="$HOME/.nvm"
+          [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh" --no-use
 
-            PM2_BIN=$(command -v pm2 2>/dev/null || \
-              ls ~/.nvm/versions/node/*/bin/pm2 2>/dev/null | tail -1 || \
-              ls /usr/local/bin/pm2 2>/dev/null || \
-              ls /usr/bin/pm2 2>/dev/null || \
-              echo "pm2")
+          PM2_BIN=$(command -v pm2 2>/dev/null \
+            || ls ~/.nvm/versions/node/*/bin/pm2 2>/dev/null | tail -1 \
+            || ls /usr/local/bin/pm2 /usr/bin/pm2 2>/dev/null | head -1 \
+            || echo "pm2")
 
-            DEPLOY_DIR="$HOME/obsidian-atlas-src"
-            # Override with stored path if set
-            [ -f /tmp/atlas-deploy-dir ] && DEPLOY_DIR="$(cat /tmp/atlas-deploy-dir)"
+          DEPLOY_DIR="/var/www/obsidian-atlas-src"
+          TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S UTC')
 
-            TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S UTC')
-            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-            echo "  Obsidian Atlas — Deploy @ $TIMESTAMP"
-            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  Obsidian Atlas — Deploy @ $TIMESTAMP"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-            cd "$DEPLOY_DIR"
+          cd "$DEPLOY_DIR"
 
-            echo "[1/8] Pulling latest code..."
-            git fetch origin main
-            git reset --hard origin/main
-            echo "      ✓ $(git rev-parse --short HEAD)"
+          echo "[1/8] Pulling latest code..."
+          git fetch origin main
+          git reset --hard origin/main
+          echo "      ✓ $(git rev-parse --short HEAD)"
 
-            echo "[2/8] Installing frontend deps..."
-            npm ci --prefer-offline
-            echo "      ✓ Done"
+          echo "[2/8] Installing frontend deps..."
+          npm ci --prefer-offline
+          echo "      ✓ Done"
 
-            echo "[3/8] Building frontend..."
-            npm run build
-            echo "      ✓ dist/ ready"
+          echo "[3/8] Building frontend..."
+          npm run build
+          echo "      ✓ dist/ ready"
 
-            echo "[4/8] Installing backend deps..."
-            npm ci --prefix atlas-backend --prefer-offline
-            echo "      ✓ Done"
+          echo "[4/8] Installing backend deps..."
+          npm ci --prefix atlas-backend --prefer-offline
+          echo "      ✓ Done"
 
-            echo "[5/8] Building backend..."
-            npm run build --prefix atlas-backend
-            echo "      ✓ atlas-backend/dist/ ready"
+          echo "[5/8] Building backend..."
+          npm run build --prefix atlas-backend
+          echo "      ✓ atlas-backend/dist/ ready"
 
-            echo "[6/8] Reloading PM2..."
-            ENV_FILE="$DEPLOY_DIR/atlas-backend/.env"
-            if [ -f "$ENV_FILE" ]; then
-              set -a && source "$ENV_FILE" && set +a
-              echo "      ✓ Sourced .env"
+          echo "[6/8] Reloading PM2..."
+          ENV_FILE="$DEPLOY_DIR/atlas-backend/.env"
+          if [ -f "$ENV_FILE" ]; then
+            set -a && source "$ENV_FILE" && set +a
+            echo "      ✓ Sourced .env"
+          else
+            echo "      ⚠ No .env found — using existing PM2 env"
+          fi
+
+          if $PM2_BIN list | grep -q "atlas-api"; then
+            $PM2_BIN reload atlas-api --update-env
+          else
+            if [ -f ecosystem.config.cjs ]; then
+              $PM2_BIN start ecosystem.config.cjs --env production
             else
-              echo "      ⚠ No .env found — using existing PM2 env"
+              cd atlas-backend
+              $PM2_BIN start dist/index.js --name atlas-api \
+                --node-args="--max-old-space-size=512"
+              cd ..
             fi
+          fi
+          $PM2_BIN save
+          echo "      ✓ PM2 reloaded"
 
-            if $PM2_BIN list | grep -q "atlas-api"; then
-              $PM2_BIN reload atlas-api --update-env
-            else
-              if [ -f ecosystem.config.cjs ]; then
-                $PM2_BIN start ecosystem.config.cjs --env production
-              else
-                cd atlas-backend
-                $PM2_BIN start dist/index.js --name atlas-api \
-                  --node-args="--max-old-space-size=512"
-                cd ..
-              fi
-              $PM2_BIN save
-            fi
-            $PM2_BIN save
-            echo "      ✓ PM2 reloaded"
+          echo "[7/8] Running migrations..."
+          MIGRATION_DIR="$DEPLOY_DIR/atlas-backend/migrations"
+          DB_PATH="$DEPLOY_DIR/atlas-backend/data/atlas.db"
+          if [ -d "$MIGRATION_DIR" ]; then
+            for migration in $(ls "$MIGRATION_DIR"/*.sql 2>/dev/null | sort); do
+              echo "      Applying: $(basename $migration)"
+              sqlite3 "$DB_PATH" < "$migration" || true
+            done
+            echo "      ✓ Migrations applied"
+          else
+            echo "      ⚠ No migrations dir — skipping"
+          fi
 
-            echo "[7/8] Running migrations..."
-            MIGRATION_DIR="$DEPLOY_DIR/atlas-backend/migrations"
-            DB_PATH="$DEPLOY_DIR/atlas-backend/data/atlas.db"
-            if [ -d "$MIGRATION_DIR" ]; then
-              for migration in $(ls "$MIGRATION_DIR"/*.sql 2>/dev/null | sort); do
-                echo "      Applying: $(basename $migration)"
-                sqlite3 "$DB_PATH" < "$migration" || true
-              done
-              echo "      ✓ Migrations applied"
-            else
-              echo "      ⚠ No migrations dir — skipping"
-            fi
+          echo "[8/8] Reloading nginx..."
+          sudo nginx -t && sudo nginx -s reload || true
+          echo "      ✓ nginx reloaded"
 
-            echo "[8/8] Reloading nginx..."
-            sudo nginx -t && sudo nginx -s reload || true
-            echo "      ✓ nginx reloaded"
-
-            echo ""
-            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-            echo "  ✅ Deploy complete!"
-            echo "  Site: https://obsidianatlastech.com"
-            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  ✅ Deploy complete!"
+          echo "  Site: https://obsidianatlastech.com"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           REMOTE
 
       - name: Post-deploy health check
