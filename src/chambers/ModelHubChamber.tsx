@@ -325,22 +325,22 @@ const MODELS: ModelDef[] = [
   },
   // Google
   {
-    id: 'google/gemini-1.5-pro',
+    id: 'google/gemini-2.5-flash',
     provider: 'google',
-    name: 'Gemini 1.5 Pro',
+    name: 'Gemini 2.5 Flash',
     description: 'Google\'s multimodal frontier model',
     tier: 'paid',
     strengths: ['Long context', 'Multimodal', 'Code'],
-    contextWindow: 2000000,
+    contextWindow: 1000000,
     estimatedCostPer1k: 0.0035,
     isLocal: false,
     requiresApiKey: true,
     enabled: true,
   },
   {
-    id: 'google/gemini-1.5-flash',
+    id: 'google/gemini-2.0-flash',
     provider: 'google',
-    name: 'Gemini 1.5 Flash',
+    name: 'Gemini 2.0 Flash',
     description: 'Fast, affordable Gemini variant',
     tier: 'paid',
     strengths: ['Speed', 'Multimodal', 'Summarization'],
@@ -531,9 +531,9 @@ const MOCK_ORCHESTRATION: OrchestrationResult = {
       expanded: false,
     },
     {
-      modelId: 'google/gemini-1.5-pro',
+      modelId: 'google/gemini-2.5-flash',
       provider: 'google',
-      modelName: 'Gemini 1.5 Pro',
+      modelName: 'Gemini 2.5 Flash',
       content:
         'Scope insensitivity — our inability to scale our emotional response proportionally to scale. With global-scale problems (climate, AI risk, pandemics) dominating the agenda, the mismatch between felt urgency and actual magnitude leads to both under-reaction and over-reaction.',
       durationMs: 3100,
@@ -566,7 +566,7 @@ const MOCK_ORCHESTRATION: OrchestrationResult = {
   synthesis: {
     content:
       'The convergence of your six advisor models points to a single meta-theme: 2025 is the year cognitive biases became structurally reinforced by the information environment itself. The availability heuristic (Llama), automation bias (GPT-4o), confirmation bias (Claude), and scope insensitivity (Gemini) are not independent phenomena — they are facets of a deeper epistemic problem: algorithmic systems that profit from bias amplification have made self-correction structurally harder.\n\nApplying your doctrine: you have historically prioritized calibration over confidence. The illusion of explanatory depth (DeepSeek) aligns most closely with your logged cognitive vulnerabilities. The advisor consensus points to automation bias as the most novel and highest-stakes bias of 2025 — but your constitution flags sycophancy risk in agreeing with the plurality. My synthesis: the illusion of explanatory depth is your personal highest-leverage target, because it is the bias that makes all other biases invisible to you.',
-    sourcesUsed: ['Llama 3.2', 'GPT-4o', 'Claude 3.5 Sonnet', 'Gemini 1.5 Pro', 'DeepSeek R1'],
+    sourcesUsed: ['Llama 3.2', 'GPT-4o', 'Claude 3.5 Sonnet', 'Gemini 2.5 Flash', 'DeepSeek R1'],
     consensusAreas: [
       'All models agree the information environment structurally amplifies bias',
       'Algorithmic personalization is a root cause, not a symptom',
