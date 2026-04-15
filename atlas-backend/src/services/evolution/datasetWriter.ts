@@ -18,8 +18,29 @@ export interface SftJsonlRow {
   };
 }
 
+/**
+ * Sanitise a user-supplied path segment so it cannot escape the base directory.
+ * Strips directory separators and rejects traversal patterns.
+ */
+function sanitizePathSegment(segment: string): string {
+  const sanitized = path.basename(segment).replace(/[^a-zA-Z0-9_\-\.]/g, '_');
+  if (!sanitized || sanitized === '.' || sanitized === '..') {
+    throw new Error(`Invalid path segment: ${segment}`);
+  }
+  return sanitized;
+}
+
 function sftPath(userId: string): string {
-  const dir = path.join(env.dataDir, 'datasets', userId);
+  const safeUserId = sanitizePathSegment(userId);
+  const baseDir = path.resolve(env.dataDir, 'datasets');
+  const dir = path.join(baseDir, safeUserId);
+
+  // Verify resolved path stays within the base directory
+  const resolved = path.resolve(dir);
+  if (!resolved.startsWith(baseDir)) {
+    throw new Error('Path traversal detected');
+  }
+
   fs.mkdirSync(dir, { recursive: true });
   return path.join(dir, 'sft.jsonl');
 }

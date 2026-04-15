@@ -105,7 +105,8 @@ export class GoogleProvider implements ModelProvider {
       },
     };
 
-    const url = `${GOOGLE_BASE_URL}/${modelName}:generateContent?key=${apiKey}`;
+    // Pass key via header instead of URL query param to avoid leaking in logs/referrers.
+    const url = `${GOOGLE_BASE_URL}/${modelName}:generateContent`;
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -113,7 +114,10 @@ export class GoogleProvider implements ModelProvider {
     try {
       const response = await fetch(url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-goog-api-key': apiKey,
+        },
         body: JSON.stringify(body),
         signal: controller.signal,
       });
