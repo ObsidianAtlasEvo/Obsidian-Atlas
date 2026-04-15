@@ -237,6 +237,11 @@ pre {
 
   body {
     overflow-y: auto;
+    overflow-x: hidden;
+  }
+
+  #root {
+    min-height: 100dvh;
   }
 
   .atlas-desktop-nav {
