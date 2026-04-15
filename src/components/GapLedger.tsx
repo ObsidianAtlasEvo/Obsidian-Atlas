@@ -1,18 +1,7 @@
 // Atlas-Audit: [EXEC-MODE] Verified — Repair-from-gap routes Home inquiry surface via coerceActiveMode('today-in-atlas', prev.activeMode).
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { AppState, Gap } from '../types';
-import { db, handleFirestoreError, OperationType } from '../services/firebase';
-import {
-  collection,
-  query,
-  orderBy,
-  onSnapshot,
-  doc,
-  updateDoc,
-  addDoc,
-  Timestamp,
-  type QuerySnapshot,
-} from 'firebase/firestore';
+import { atlasApiUrl } from '../lib/atlasApi';
 import { motion, AnimatePresence } from 'motion/react';
 import { Target, AlertTriangle, CheckCircle, Clock, Search, Filter, Plus, ChevronRight, RefreshCw } from 'lucide-react';
 import { coerceActiveMode } from '../lib/atlasWayfinding';
@@ -29,19 +18,24 @@ export function GapLedger({ state, setState }: GapLedgerProps) {
   const [filter, setFilter] = useState<'all' | 'critical' | 'high' | 'medium' | 'low'>('all');
   const [repairingGapId, setRepairingGapId] = useState<string | null>(null);
 
-  useEffect(() => {
-    const q = query(collection(db, 'gap_ledger'), orderBy('detectedAt', 'desc'));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const s = snapshot as QuerySnapshot;
-      const gapData = s.docs.map((d) => ({ id: d.id, ...d.data() } as Gap));
-      setGaps(gapData);
+  const fetchGaps = useCallback(async () => {
+    try {
+      const res = await fetch(atlasApiUrl('/v1/governance/gaps'), {
+        credentials: 'include',
+      });
+      if (!res.ok) throw new Error(`Failed to fetch gaps: ${res.status}`);
+      const data = (await res.json()) as Gap[];
+      setGaps(data);
+    } catch (err) {
+      console.error('[GapLedger] fetch error:', err);
+    } finally {
       setLoading(false);
-    }, (error) => {
-      handleFirestoreError(error, OperationType.LIST, 'gap_ledger');
-    });
-
-    return () => unsubscribe();
+    }
   }, []);
+
+  useEffect(() => {
+    fetchGaps();
+  }, [fetchGaps]);
 
   const filteredGaps = filter === 'all' ? gaps : gaps.filter(g => g.severity === filter);
 
@@ -89,7 +83,7 @@ export function GapLedger({ state, setState }: GapLedgerProps) {
           <div className="py-20 text-center text-stone uppercase tracking-widest opacity-30">No Gaps Identified in this Tier</div>
         ) : (
           filteredGaps.map((gap) => (
-            <motion.div 
+            <motion.div
               key={gap.id}
               initial={{ opacity: 0, y: 4 }}
               animate={{ opacity: 1, y: 0 }}
@@ -109,7 +103,7 @@ export function GapLedger({ state, setState }: GapLedgerProps) {
               </div>
               <div className="flex items-center gap-8">
                 {gap.status === 'identified' && (
-                  <button 
+                  <button
                     onClick={() => {
                       setRepairingGapId(gap.id);
                       setState((prev) => ({
@@ -127,8 +121,8 @@ export function GapLedger({ state, setState }: GapLedgerProps) {
                     disabled={repairingGapId === gap.id}
                     className={cn(
                       "px-3 py-1.5 border text-[8px] uppercase tracking-widest transition-all duration-300 flex items-center gap-2",
-                      repairingGapId === gap.id 
-                        ? "border-gold-500/20 text-gold-500/40 cursor-not-allowed" 
+                      repairingGapId === gap.id
+                        ? "border-gold-500/20 text-gold-500/40 cursor-not-allowed"
                         : "border-gold-500/40 text-gold-500 hover:bg-gold-500/10 active:scale-95"
                     )}
                   >

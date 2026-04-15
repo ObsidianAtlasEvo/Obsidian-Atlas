@@ -775,6 +775,22 @@ CREATE TABLE IF NOT EXISTS mind_map_snapshots (
 CREATE INDEX IF NOT EXISTS idx_mm_snap_user ON mind_map_snapshots(user_id, created_at DESC);
 `;
 
+/** Gap Ledger — governance gaps formerly stored in Firestore. */
+const GAP_LEDGER_TABLES = `
+CREATE TABLE IF NOT EXISTS governance_gaps (
+  id TEXT PRIMARY KEY NOT NULL,
+  title TEXT NOT NULL,
+  description TEXT NOT NULL,
+  severity TEXT NOT NULL DEFAULT 'medium',
+  status TEXT NOT NULL DEFAULT 'identified',
+  notes TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_governance_gaps_status ON governance_gaps(status);
+CREATE INDEX IF NOT EXISTS idx_governance_gaps_created ON governance_gaps(created_at DESC);
+`;
+
 /** Phase 4 §5 — Data Retention & Deletion tables. */
 const RETENTION_TABLES = `
 CREATE TABLE IF NOT EXISTS atlas_sovereign_audit (
@@ -865,6 +881,7 @@ export function initSqlite(): Database.Database {
   database.exec(SOVEREIGNTY_LAYER_V5);
   database.exec(SOVEREIGNTY_LAYER_V6);
   database.exec(RETENTION_TABLES);
+  database.exec(GAP_LEDGER_TABLES);
   migratePolicyProfileColumns(database);
   migrateSectionVIIIContinuity(database);
   migrateArchivedAtIndexes(database);
