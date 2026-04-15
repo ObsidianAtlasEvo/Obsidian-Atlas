@@ -82,7 +82,7 @@ await app.register(cors, {
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'X-Atlas-Verified-Email'],
 });
 
 await registerRateLimit(app);
@@ -122,7 +122,11 @@ app.post('/chat', async (request: FastifyRequest, reply: FastifyReply) => {
     method: 'POST',
     url: '/v1/chat/omni-stream',
     payload: request.body as Record<string, unknown>,
-    headers: { 'content-type': 'application/json' },
+    headers: {
+      'content-type': 'application/json',
+      // Forward session cookie so /v1/chat is authenticated (fix: was always unauthenticated)
+      ...(request.headers.cookie ? { cookie: request.headers.cookie } : {}),
+    },
   });
   reply.code(res.statusCode);
   const ct = res.headers['content-type'];
