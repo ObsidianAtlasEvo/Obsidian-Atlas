@@ -161,7 +161,7 @@ jobs:
           fi
 
           if $PM2_BIN list | grep -q "atlas-api"; then
-            $PM2_BIN reload atlas-api --update-env
+            $PM2_BIN restart atlas-api --update-env
           else
             if [ -f ecosystem.config.cjs ]; then
               $PM2_BIN start ecosystem.config.cjs --env production
