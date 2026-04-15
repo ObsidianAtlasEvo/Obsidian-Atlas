@@ -22,7 +22,8 @@ export function isSovereignResponseMode(s: string): s is SovereignResponseMode {
   return (SOVEREIGN_RESPONSE_MODES as readonly string[]).includes(s);
 }
 
-const TRUTH_PRESSURE = /\b(truth pressure|truth chamber|steel-?man|steelman|devil'?s advocate|challenge (me|this)|assumption audit|red team)\b/i;
+const TRUTH_PRESSURE = /\b(truth pressure|truth chamber|steel-?man|steelman|devil'?s advocate|challenge (me|this)|assumption audit|red team|falsifiable|behavioral mechanism|disconfirm|self-concept|under pressure|blind spots?|adversarial test|hard truth|calibration test|calibrate me|compensatory|what drives me|what i am optimizing)\b/i;
+const TRUTH_PRESSURE_COMPOUND = /\b(psychological)\b.{0,30}\b(read|analysis|profile)\b/i;
 const DECISION = /\b(should i|which option|decide between|tradeoff|commit to|walk away|say yes)\b/i;
 const CONTRADICTION = /\b(contradict|in tension with|both be true|inconsistent|doesn'?t align)\b/i;
 const CONSTITUTION = /\b(constitution|non-negotiable|aligned with my values|violat|red line)\b/i;
@@ -37,7 +38,7 @@ const SELF_REV = /\b(think better|reasoning habit|mental model|self correction|h
  */
 export function inferSovereignResponseMode(userText: string): SovereignResponseMode {
   const t = userText.trim();
-  if (TRUTH_PRESSURE.test(t)) return 'truth_pressure';
+  if (TRUTH_PRESSURE.test(t) || TRUTH_PRESSURE_COMPOUND.test(t)) return 'truth_pressure';
   if (LEGACY.test(t)) return 'legacy_extraction';
   if (CONTRADICTION.test(t)) return 'contradiction_analysis';
   if (CONSTITUTION.test(t)) return 'constitutional_alignment';
@@ -54,7 +55,21 @@ export function sovereignModeDirective(mode: SovereignResponseMode): string {
     'Preserve real uncertainty; do not synthesize false certainty. If structured ledgers are silent, say so. Stay precise and non-theatrical.';
   switch (mode) {
     case 'truth_pressure':
-      return `MODE: TRUTH_PRESSURE. Apply disciplined challenge: unsupported claims, missing evidence, ego-protective readings, principle–behavior gaps. ${common} Offer specific pressure points and what would falsify the user's narrative.`;
+      return `MODE: TRUTH_PRESSURE. Apply disciplined challenge: unsupported claims, missing evidence, ego-protective readings, principle–behavior gaps. ${common} Offer specific pressure points and what would falsify the user's narrative.
+
+PROHIBITED IN THIS MODE:
+- Generic personality-test language ("you tend to overanalyze", "you may internalize stress")
+- Therapy-speak ("self-validation protocol", "internalized stress", "external locus of control")
+- Generic trait labels without behavioral specificity
+- Recycled phrasing from prior turns
+- Hedged non-statements ("you might possibly tend to sometimes...")
+- Affirmational framing disguised as analysis
+
+REQUIRED IN THIS MODE:
+- Every inference must be specific to this user's stated profile, not a generic "analytical type"
+- Every inference must name the exact mechanism, not describe it in psychological jargon
+- Disconfirmation criteria must be concrete observable behaviors, not vague counter-trait descriptions
+- Write with the authority of someone who has actually read the person, not a test that outputs personality categories`;
     case 'decision_support':
       return `MODE: DECISION_SUPPORT. Use decision history, tradeoffs, and constitution. Name reversible vs irreversible. Separate emotional relief from strategic cost. ${common}`;
     case 'constitutional_alignment':

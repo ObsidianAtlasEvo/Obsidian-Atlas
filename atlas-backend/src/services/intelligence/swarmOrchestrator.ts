@@ -506,9 +506,20 @@ export async function executeSwarmPipeline(input: {
     ...baseMessages.slice(0, 1),
     {
       role: 'user',
-      content: `You are consolidating swarm work into ONE final user-facing answer (same identity as the system preamble). Be concise unless the user asked for depth.
+      content: `You are the final synthesis layer for Obsidian Atlas. You have received outputs from multiple specialist models that each addressed part of the user's request. Your job is to synthesize them into ONE unified, non-duplicated response.
 
---- SWARM_RAW_OUTPUTS ---
+Rules:
+- Remove any duplicate sections. If two specialists answered the same question, keep the stronger answer and discard the weaker.
+- Unify the voice — the final output must read as one coherent document, not a collection of pastes.
+- Do not add new content. Only synthesize what the specialists produced.
+- Preserve all numbered sections and structure from the original request.
+- Never output section headers more than once.
+- Output ONLY the final synthesized response. No meta-commentary about the synthesis process.
+
+ORIGINAL_USER_REQUEST:
+${lastUserRaw}
+
+--- SPECIALIST_OUTPUTS ---
 ${combined.slice(0, 100_000)}`,
     },
   ];

@@ -78,6 +78,31 @@ const omniBodySchema = z.object({
     .min(1),
 });
 
+/** Safety net: strip duplicate numbered section headers (e.g. ## 1. appearing twice). */
+function deduplicateSections(text: string): string {
+  const lines = text.split('\n');
+  const seenHeaders = new Set<string>();
+  const result: string[] = [];
+  let skipUntilNextHeader = false;
+
+  for (const line of lines) {
+    const isHeader = /^#{1,3}\s+\d+[\.\)]/.test(line) || /^\*\*\d+[\.\)]/.test(line);
+    if (isHeader) {
+      const normalized = line.trim().toLowerCase().replace(/\s+/g, ' ');
+      if (seenHeaders.has(normalized)) {
+        skipUntilNextHeader = true;
+        continue;
+      }
+      seenHeaders.add(normalized);
+      skipUntilNextHeader = false;
+    }
+    if (!skipUntilNextHeader) {
+      result.push(line);
+    }
+  }
+  return result.join('\n');
+}
+
 function passesQualityGate(
   query: string,
   response: string
@@ -374,6 +399,9 @@ export function registerOmniStreamRoutes(app: FastifyInstance): void {
       }
 
       recordChatTokenUsage(userId, undefined, undefined);
+
+      // Deduplication safety net: strip duplicate numbered section headers
+      result.fullText = deduplicateSections(result.fullText);
 
       // Quality gate: append note if issues detected (non-blocking)
       const qg = passesQualityGate(userPrompt, result.fullText);
