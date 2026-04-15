@@ -19,6 +19,7 @@ import { loadUserProfile, saveUserProfile, loadJournal, saveJournalEntry,
          loadDoctrine, saveDoctrine, deleteDoctrine, loadDirectives,
          saveDirective, deleteDirective, upsertUserProfile, generateId, nowISO } from '../lib/persistence';
 import { auth, onAuthStateChanged } from 'firebase/auth';
+import { syncToBackend, hydrateFromBackend, migrateLocalToBackend } from '../lib/sovereignSync';
 
 import type {
   AppState,
@@ -312,6 +313,56 @@ export const useAtlasStore = create<AtlasStore>()(
       if (current === 'auth' || current === 'onboarding') {
         set({ activeMode: 'atlas' });
       }
+
+      // Sovereign sync: hydrate from backend SQLite (backend wins if non-empty)
+      const email = get().currentUser?.email;
+      if (email) {
+        // Migrate local data to backend on first run
+        migrateLocalToBackend('journal', email, get().journal.map((e) => ({
+          id: e.id, user_id: email, title: e.title ?? '', content: e.content ?? '',
+          mood: (e as unknown as Record<string, unknown>).mood ?? null,
+          tags: JSON.stringify((e as unknown as Record<string, unknown>).tags ?? []),
+          assistance_mode: e.assistanceMode ?? null,
+          analysis: typeof e.analysis === 'string' ? e.analysis : e.analysis ? JSON.stringify(e.analysis) : null,
+          created_at: e.timestamp ?? nowISO(), updated_at: e.timestamp ?? nowISO(),
+        })), '/v1/cognitive/journal/entries').catch(console.warn);
+
+        migrateLocalToBackend('doctrine', email, get().userModel.doctrine.map((d) => ({
+          id: d.id, userId: email, layer: d.category ?? 'principle',
+          title: d.title ?? '', body: d.content ?? '', origin: 'user',
+        })), '/v1/cognitive/doctrine/nodes').catch(console.warn);
+
+        // Hydrate from backend
+        hydrateFromBackend<{ entries: Array<{ id: string; title: string; content: string; mood?: string; tags: string; assistance_mode?: string; analysis?: string; created_at: string }> }>(
+          '/v1/cognitive/journal/entries', email, (data) => {
+            if (data.entries?.length) {
+              set({ journal: data.entries.map((e) => ({
+                id: e.id, title: e.title, content: e.content, timestamp: e.created_at,
+                assistanceMode: (e.assistance_mode ?? undefined) as JournalEntry['assistanceMode'],
+                analysis: e.analysis ? (() => { try { return JSON.parse(e.analysis!); } catch { return e.analysis; } })() : undefined,
+                isPinned: false,
+              })) as JournalEntry[] });
+            }
+          }
+        ).catch(console.warn);
+
+        hydrateFromBackend<{ nodes: Array<{ id: string; title: string; body: string; layer: string; created_at: string }> }>(
+          '/v1/cognitive/doctrine/nodes', email, (data) => {
+            if (data.nodes?.length) {
+              set((state) => ({
+                userModel: {
+                  ...state.userModel,
+                  doctrine: data.nodes.map((n) => ({
+                    id: n.id, title: n.title, content: n.body,
+                    category: n.layer as PersonalDoctrine['category'],
+                    version: 1, connections: { decisions: [], patterns: [], contradictions: [] },
+                  })) as PersonalDoctrine[],
+                },
+              }));
+            }
+          }
+        ).catch(console.warn);
+      }
     } catch (err) {
       console.error('[Atlas] hydrateUserData error:', err);
     }
@@ -351,17 +402,33 @@ export const useAtlasStore = create<AtlasStore>()(
 
   addJournalEntry: async (entryData) => {
     const uid = get().currentUser?.uid;
+    const email = get().currentUser?.email;
     const entry: JournalEntry = {
       ...entryData,
       id: generateId(),
     };
     set((state) => ({ journal: [entry, ...state.journal] }));
     if (uid) await saveJournalEntry(uid, entry).catch(console.error);
+    if (email) {
+      syncToBackend('/v1/cognitive/journal/entries', 'POST', {
+        id: entry.id,
+        user_id: email,
+        title: entry.title ?? '',
+        content: entry.content ?? '',
+        mood: (entry as unknown as Record<string, unknown>).mood ?? null,
+        tags: JSON.stringify((entry as unknown as Record<string, unknown>).tags ?? []),
+        assistance_mode: entry.assistanceMode ?? null,
+        analysis: typeof entry.analysis === 'string' ? entry.analysis : entry.analysis ? JSON.stringify(entry.analysis) : null,
+        created_at: entry.timestamp ?? nowISO(),
+        updated_at: entry.timestamp ?? nowISO(),
+      }).catch(console.warn);
+    }
     return entry;
   },
 
   updateJournalEntry: async (id, partial) => {
     const uid = get().currentUser?.uid;
+    const email = get().currentUser?.email;
     set((state) => ({
       journal: state.journal.map((e) =>
         e.id === id ? { ...e, ...partial } : e
@@ -371,12 +438,25 @@ export const useAtlasStore = create<AtlasStore>()(
       const updated = get().journal.find((e) => e.id === id);
       if (updated) await saveJournalEntry(uid, updated).catch(console.error);
     }
+    if (email) {
+      syncToBackend(`/v1/cognitive/journal/entries/${id}`, 'PUT', {
+        userId: email,
+        ...(partial.title != null ? { title: partial.title } : {}),
+        ...(partial.content != null ? { content: partial.content } : {}),
+        ...(partial.assistanceMode != null ? { assistance_mode: partial.assistanceMode } : {}),
+        ...(partial.analysis != null ? { analysis: typeof partial.analysis === 'string' ? partial.analysis : JSON.stringify(partial.analysis) } : {}),
+      }).catch(console.warn);
+    }
   },
 
   removeJournalEntry: async (id) => {
     const uid = get().currentUser?.uid;
+    const email = get().currentUser?.email;
     set((state) => ({ journal: state.journal.filter((e) => e.id !== id) }));
     if (uid) await deleteJournalEntry(uid, id).catch(console.error);
+    if (email) {
+      syncToBackend(`/v1/cognitive/journal/entries/${id}`, 'DELETE', { userId: email }).catch(console.warn);
+    }
   },
 
   pinJournalEntry: async (id, pinned) => {
@@ -394,6 +474,7 @@ export const useAtlasStore = create<AtlasStore>()(
 
   addDecision: async (data) => {
     const uid = get().currentUser?.uid;
+    const email = get().currentUser?.email;
     const decision: Decision = {
       ...data,
       id: generateId(),
@@ -401,6 +482,13 @@ export const useAtlasStore = create<AtlasStore>()(
     } as Decision;
     set((state) => ({ decisions: [decision, ...state.decisions] }));
     if (uid) await saveDecision(uid, decision).catch(console.error);
+    if (email) {
+      syncToBackend('/v1/cognitive/decisions', 'POST', {
+        userId: email,
+        statement: decision.title ?? '',
+        context: (decision as unknown as Record<string, unknown>).context ?? '',
+      }).catch(console.warn);
+    }
     return decision;
   },
 
@@ -438,6 +526,7 @@ export const useAtlasStore = create<AtlasStore>()(
 
   addDoctrineItem: async (data) => {
     const uid = get().currentUser?.uid;
+    const email = get().currentUser?.email;
     const item: PersonalDoctrine = { ...data, id: generateId() } as PersonalDoctrine;
     set((state) => ({
       userModel: {
@@ -446,11 +535,22 @@ export const useAtlasStore = create<AtlasStore>()(
       },
     }));
     if (uid) await saveDoctrine(uid, item).catch(console.error);
+    if (email) {
+      syncToBackend('/v1/cognitive/doctrine/nodes', 'POST', {
+        id: item.id,
+        userId: email,
+        layer: item.category ?? 'principle',
+        title: item.title ?? '',
+        body: item.content ?? '',
+        origin: 'user',
+      }).catch(console.warn);
+    }
     return item;
   },
 
   updateDoctrineItem: async (id, partial) => {
     const uid = get().currentUser?.uid;
+    const email = get().currentUser?.email;
     set((state) => ({
       userModel: {
         ...state.userModel,
@@ -463,10 +563,19 @@ export const useAtlasStore = create<AtlasStore>()(
       const updated = get().userModel.doctrine.find((d) => d.id === id);
       if (updated) await saveDoctrine(uid, updated).catch(console.error);
     }
+    if (email) {
+      syncToBackend(`/v1/cognitive/doctrine/nodes/${id}`, 'PUT', {
+        userId: email,
+        ...(partial.title != null ? { title: partial.title } : {}),
+        ...(partial.content != null ? { body: partial.content } : {}),
+        ...(partial.category != null ? { layer: partial.category } : {}),
+      }).catch(console.warn);
+    }
   },
 
   removeDoctrineItem: async (id) => {
     const uid = get().currentUser?.uid;
+    const email = get().currentUser?.email;
     set((state) => ({
       userModel: {
         ...state.userModel,
@@ -474,6 +583,9 @@ export const useAtlasStore = create<AtlasStore>()(
       },
     }));
     if (uid) await deleteDoctrine(uid, id).catch(console.error);
+    if (email) {
+      syncToBackend(`/v1/cognitive/doctrine/nodes/${id}`, 'DELETE', { userId: email }).catch(console.warn);
+    }
   },
 
   // ── Directives ────────────────────────────────────────────────────────
@@ -655,6 +767,7 @@ export const useAtlasStore = create<AtlasStore>()(
     })),
 
   addConstitutionValue: (data) => {
+    const email = get().currentUser?.email;
     const value: ConstitutionValue = { ...data, id: generateId() };
     set((state) => ({
       constitution: {
@@ -662,9 +775,15 @@ export const useAtlasStore = create<AtlasStore>()(
         values: [...state.constitution.values, value],
       },
     }));
+    if (email) {
+      syncToBackend('/v1/cognitive/constitution/clauses', 'POST', {
+        userId: email, clauseType: 'core_value', title: value.title ?? '', body: value.description ?? '',
+      }).catch(console.warn);
+    }
   },
 
   addConstitutionGoal: (data) => {
+    const email = get().currentUser?.email;
     const goal: ConstitutionGoal = { ...data, id: generateId() };
     set((state) => ({
       constitution: {
@@ -672,6 +791,11 @@ export const useAtlasStore = create<AtlasStore>()(
         goals: [...state.constitution.goals, goal],
       },
     }));
+    if (email) {
+      syncToBackend('/v1/cognitive/constitution/clauses', 'POST', {
+        userId: email, clauseType: 'long_term_aim', title: goal.title ?? '', body: goal.description ?? '',
+      }).catch(console.warn);
+    }
   },
 
   removeConstitutionValue: (id) =>
@@ -707,6 +831,7 @@ export const useAtlasStore = create<AtlasStore>()(
     })),
 
   addConstitutionStandard: (data) => {
+    const email = get().currentUser?.email;
     const standard: ConstitutionStandard = { ...data, id: generateId() };
     set((state) => ({
       constitution: {
@@ -714,6 +839,11 @@ export const useAtlasStore = create<AtlasStore>()(
         standards: [...state.constitution.standards, standard],
       },
     }));
+    if (email) {
+      syncToBackend('/v1/cognitive/constitution/clauses', 'POST', {
+        userId: email, clauseType: 'standard', title: standard.threshold ?? '', body: standard.description ?? '',
+      }).catch(console.warn);
+    }
   },
 
   removeConstitutionStandard: (id) =>
@@ -725,6 +855,7 @@ export const useAtlasStore = create<AtlasStore>()(
     })),
 
   addConstitutionMotive: (data) => {
+    const email = get().currentUser?.email;
     const motive: ConstitutionMotive = { ...data, id: generateId() };
     set((state) => ({
       constitution: {
@@ -732,6 +863,11 @@ export const useAtlasStore = create<AtlasStore>()(
         motives: [...state.constitution.motives, motive],
       },
     }));
+    if (email) {
+      syncToBackend('/v1/cognitive/constitution/clauses', 'POST', {
+        userId: email, clauseType: 'identity_commitment', title: motive.driver ?? '', body: '',
+      }).catch(console.warn);
+    }
   },
 
   removeConstitutionMotive: (id) =>
@@ -743,6 +879,7 @@ export const useAtlasStore = create<AtlasStore>()(
     })),
 
   addConstitutionTension: (data) => {
+    const email = get().currentUser?.email;
     const tension: ConstitutionTension = { ...data, id: generateId() };
     set((state) => ({
       constitution: {
@@ -750,6 +887,13 @@ export const useAtlasStore = create<AtlasStore>()(
         tensions: [...state.constitution.tensions, tension],
       },
     }));
+    if (email) {
+      syncToBackend('/v1/cognitive/constitution/clauses', 'POST', {
+        userId: email, clauseType: 'operating_principle',
+        title: `${tension.poleA ?? ''} vs ${tension.poleB ?? ''}`,
+        body: tension.description ?? '',
+      }).catch(console.warn);
+    }
   },
 
   removeConstitutionTension: (id) =>

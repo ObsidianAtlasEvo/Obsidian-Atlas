@@ -30,6 +30,8 @@ import { initAutoRecovery } from './services/governance/degraded/recoveryOrchest
 import { registerExplanationRoutes } from './routes/explanationRoutes.js';
 import { registerRetentionRoutes } from './routes/retentionRoutes.js';
 import { registerGovernanceConsoleRoutes } from './routes/governanceConsoleRoutes.js';
+import { registerJournalRoutes } from './routes/journalRoutes.js';
+import { registerDoctrineRoutes } from './routes/doctrineRoutes.js';
 import orchestrateRoutes from './routes/orchestrate.js';
 import embeddingsRoutes from './routes/embeddings.js';
 import modelRoutes from './routes/models.js';
@@ -145,6 +147,8 @@ await app.register(async (protected_app) => {
   registerGovernanceConsoleRoutes(protected_app);
   registerGapLedgerRoutes(protected_app);
   registerChangeControlRoutes(protected_app);
+  registerJournalRoutes(protected_app);
+  registerDoctrineRoutes(protected_app);
 });
 registerDegradedModeRoutes(app);
 registerExplanationRoutes(app);
