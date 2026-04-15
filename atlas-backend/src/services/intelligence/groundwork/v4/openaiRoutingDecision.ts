@@ -33,7 +33,7 @@
  *   OmniRouter (heuristic) → classifyWithNano() → routeToOpenAIPath() → swarm
  */
 
-import { env } from '../env';
+import { env } from '../../../../config/env.js';
 import {
   OpenAIRateLimitError,
   OpenAITimeoutError,

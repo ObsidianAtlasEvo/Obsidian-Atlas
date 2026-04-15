@@ -30,6 +30,13 @@
 
 import Stripe from 'stripe';
 import type { Database } from 'better-sqlite3';
+
+// Stripe v22 (API 2026-03-25) removed current_period_end from Subscription and
+// subscription from Invoice. These fields still exist at runtime for the older
+// API version this groundwork code targets. Cast through this augmented type.
+// TODO: remove when code is promoted to the latest Stripe API version.
+type SubscriptionWithPeriod = Stripe.Subscription & { current_period_end: number | null };
+type InvoiceWithSubscription = Stripe.Invoice & { subscription?: string | Stripe.Subscription | null };
 import {
   type SubscriptionRecord,
   type SubscriptionTier,
@@ -55,8 +62,9 @@ function requireEnv(key: string): string {
 
 function getStripeClient(): Stripe {
   const secretKey = requireEnv('STRIPE_SECRET_KEY');
+  // TODO: update apiVersion to match installed stripe SDK when Phase 3 is promoted
   return new Stripe(secretKey, {
-    apiVersion: '2025-06-30.basil' as Stripe.LatestApiVersion,
+    apiVersion: '2025-06-30.basil' as unknown as '2026-03-25.dahlia',
     typescript: true,
   });
 }
@@ -324,7 +332,7 @@ export async function syncSubscriptionFromStripe(
   const stripe = getStripeClient();
   const subscription = await stripe.subscriptions.retrieve(subscriptionId, {
     expand: ['items.data.price'],
-  });
+  }) as unknown as SubscriptionWithPeriod;
 
   const existingRecord = getByStripeSubscriptionId(db, subscriptionId);
   if (!existingRecord) {
@@ -412,16 +420,16 @@ export async function handleWebhookEvent(
       await handleCheckoutSessionCompleted(event.data.object, db);
       break;
     case 'customer.subscription.updated':
-      await handleSubscriptionUpdated(event.data.object, db);
+      await handleSubscriptionUpdated(event.data.object as SubscriptionWithPeriod, db);
       break;
     case 'customer.subscription.deleted':
-      await handleSubscriptionDeleted(event.data.object, db);
+      await handleSubscriptionDeleted(event.data.object as SubscriptionWithPeriod, db);
       break;
     case 'invoice.payment_succeeded':
-      await handleInvoicePaymentSucceeded(event.data.object, db);
+      await handleInvoicePaymentSucceeded(event.data.object as InvoiceWithSubscription, db);
       break;
     case 'invoice.payment_failed':
-      await handleInvoicePaymentFailed(event.data.object, db);
+      await handleInvoicePaymentFailed(event.data.object as InvoiceWithSubscription, db);
       break;
     default:
       // Unhandled event types — acknowledged but not processed
@@ -494,7 +502,7 @@ async function handleCheckoutSessionCompleted(
 }
 
 async function handleSubscriptionUpdated(
-  subscription: Stripe.Subscription,
+  subscription: SubscriptionWithPeriod,
   db: Database
 ): Promise<void> {
   const customerId =
@@ -537,7 +545,7 @@ async function handleSubscriptionUpdated(
 }
 
 async function handleSubscriptionDeleted(
-  subscription: Stripe.Subscription,
+  subscription: SubscriptionWithPeriod,
   db: Database
 ): Promise<void> {
   const customerId =
@@ -571,7 +579,7 @@ async function handleSubscriptionDeleted(
 }
 
 async function handleInvoicePaymentSucceeded(
-  invoice: Stripe.Invoice,
+  invoice: InvoiceWithSubscription,
   db: Database
 ): Promise<void> {
   const customerId =
@@ -611,7 +619,7 @@ async function handleInvoicePaymentSucceeded(
 }
 
 async function handleInvoicePaymentFailed(
-  invoice: Stripe.Invoice,
+  invoice: InvoiceWithSubscription,
   db: Database
 ): Promise<void> {
   const customerId =

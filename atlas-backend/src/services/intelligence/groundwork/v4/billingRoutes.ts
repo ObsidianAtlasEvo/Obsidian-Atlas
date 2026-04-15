@@ -66,7 +66,7 @@ import {
 // Rate limit references
 // ---------------------------------------------------------------------------
 
-import { RATE_LIMITS } from '../plugins/rateLimit.js';
+import { RATE_LIMITS } from '../../../../plugins/rateLimit.js';
 
 // ---------------------------------------------------------------------------
 // Session type — matches what attachAtlasSession injects into the request

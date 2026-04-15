@@ -39,7 +39,7 @@
  * Embeddings use /v1/embeddings — a separate endpoint entirely.
  */
 
-import { env } from '../env';
+import { env } from '../../../../config/env.js';
 import {
   GenerateInput,
   GenerateOutput,
