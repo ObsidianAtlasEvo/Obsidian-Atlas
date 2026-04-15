@@ -14,6 +14,11 @@ import { buildConstitutionalVerificationBundle } from './constitutionalContext.j
 import { getActiveFeatureFlags } from '../evolution/policyStore.js';
 import { buildPrimeDirective, messagesWithPrimeDirective, type DelegatorMessage } from './primeDirective.js';
 import {
+  inferSovereignResponseMode,
+  sovereignModeDirective,
+  type SovereignResponseMode,
+} from './sovereigntyResponseRouter.js';
+import {
   buildChiefRoutingPayload,
   type MirrorforgeState,
   userTelemetryFromPolicyProfile,
@@ -210,6 +215,7 @@ OPERATIONAL LAW:
 - When GROQ_ROUTING_DIRECTIVES.bias_heavy_models is true, prefer gemini-2.5-flash, claude-3-5-sonnet, gpt-4o, or a short swarm over a single shallow Groq pass.
 - When GROQ_ROUTING_DIRECTIVES.skip_premium_for_speed is true, avoid premium-tier models unless indispensable.
 - Use "swarm" when steps genuinely require different modalities (e.g. huge read → structured matrix). Keep steps ≤ 6 when possible.
+- For prompts requiring unified psychological analysis, philosophical depth, personal calibration, self-concept examination, or holistic identity work: ALWAYS use "direct" or "delegate" strategy, NEVER "swarm". These prompts need a single coherent voice — splitting them into sub-tasks produces fragmented, duplicated, generic output.
 - If you are unsure, {"strategy":"direct","model":"groq-llama3-70b","reason":"default safe path"}.
 
 You will receive ROUTING_PAYLOAD_JSON with ROUTING_METADATA, UserTelemetry, MirrorforgeSignal, and GROQ_ROUTING_DIRECTIVES. Obey it.`;
@@ -425,16 +431,7 @@ export async function executeSwarmPipeline(input: {
   const { onDelta, onSwarmTicker, signal, timeoutMs } = input;
   const plan = input.plan;
 
-  const runEntry = async (entry: LlmRegistryEntry, msgs: UniversalMessage[]) => {
-    return streamRegistryModel({
-      entry,
-      messages: msgs,
-      onDelta,
-      signal,
-      timeoutMs,
-    });
-  };
-
+  // For direct/delegate strategies, stream directly to the client — single model, no synthesis needed.
   if (plan.strategy === 'direct' || plan.strategy === 'delegate') {
     const entry = getRegistryEntry(plan.model);
     if (!entry) {
@@ -449,12 +446,28 @@ export async function executeSwarmPipeline(input: {
       step: 1,
       model: entry.id,
     });
-    const { fullText, model } = await runEntry(entry, baseMessages);
+    const { fullText, model } = await streamRegistryModel({
+      entry,
+      messages: baseMessages,
+      onDelta,
+      signal,
+      timeoutMs,
+    });
     return { fullText, surface: plan.strategy === 'delegate' ? 'delegate' : 'direct', model };
   }
 
+  // ── Swarm strategy: collect step outputs silently, then stream only the synthesis ──
   const lastUserRaw = lastUserFromClient(input.messages);
-  const systemContent = prepared[0]!.content;
+
+  // Detect sovereign response mode from user text so swarm steps and synthesis
+  // receive the full mode directive (e.g. truth_pressure anti-therapy-speak rules).
+  const detectedMode: SovereignResponseMode = inferSovereignResponseMode(lastUserRaw);
+  const modeDirective = sovereignModeDirective(detectedMode);
+
+  const baseSystemContent = prepared[0]!.content;
+  // Inject mode directive into swarm system prompt so steps respect truth_pressure, etc.
+  const systemContent = `${baseSystemContent}\n\n---\n${modeDirective}`;
+
   const dialog = prepared.slice(1);
   const historySnippet = dialog
     .map((m) => `${m.role}: ${m.content}`)
@@ -491,7 +504,16 @@ export async function executeSwarmPipeline(input: {
       { role: 'system', content: systemContent },
       { role: 'user', content: stepUser },
     ];
-    const { fullText } = await runEntry(entry, stepMessages);
+
+    // Collect step output silently — do NOT stream intermediate steps to the client.
+    // Only the final synthesis pass streams via onDelta.
+    const { fullText } = await streamRegistryModel({
+      entry,
+      messages: stepMessages,
+      onDelta: () => {},  // silent — step output collected, not streamed
+      signal,
+      timeoutMs,
+    });
     outputs.push(`Step ${s.step} (${entry.id}):\n${fullText}`);
   }
 
@@ -506,15 +528,17 @@ export async function executeSwarmPipeline(input: {
     ...baseMessages.slice(0, 1),
     {
       role: 'user',
-      content: `You are the final synthesis layer for Obsidian Atlas. You have received outputs from multiple specialist models that each addressed part of the user's request. Your job is to synthesize them into ONE unified, non-duplicated response.
+      content: `You are the final synthesis layer for Obsidian Atlas. You have received outputs from ${outputs.length} specialist models that each addressed part of the user's request. Your job is to merge them into exactly ONE unified response.
 
-Rules:
-- Remove any duplicate sections. If two specialists answered the same question, keep the stronger answer and discard the weaker.
-- Unify the voice — the final output must read as one coherent document, not a collection of pastes.
-- Do not add new content. Only synthesize what the specialists produced.
-- Preserve all numbered sections and structure from the original request.
-- Never output section headers more than once.
-- Output ONLY the final synthesized response. No meta-commentary about the synthesis process.
+ABSOLUTE RULES — violations will be treated as synthesis failure:
+1. The output MUST contain each numbered section or topic AT MOST ONCE. If two specialists answered the same section, keep the stronger answer and discard the weaker. NEVER output the same section header twice.
+2. Unify the voice — the final output must read as one coherent document written by one author, not a collection of pastes from different sources.
+3. Do not add new content. Only synthesize what the specialists produced.
+4. Do not include ANY meta-commentary about the synthesis process, the specialists, or the steps.
+5. If a specialist produced content that is redundant with another specialist's output, OMIT the redundant version entirely.
+6. Output ONLY the final merged response — nothing else.
+
+${modeDirective}
 
 ORIGINAL_USER_REQUEST:
 ${lastUserRaw}
