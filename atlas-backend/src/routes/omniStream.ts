@@ -40,9 +40,8 @@ function sanitizeErrorMessage(msg: string): string {
   if (
     msg.includes('[GoogleGenerativeAI Error]') ||
     msg.includes('GoogleGenerativeAI') ||
-    (msg.includes('503') && msg.includes('Service Unavailable')) ||
+    (msg.includes('503') && (msg.includes('Service Unavailable') || msg.includes('overloaded'))) ||
     msg.includes('high demand') ||
-    msg.includes('overloaded') ||
     (msg.includes('429') && (msg.includes('Rate limit') || msg.includes('Too Many Requests'))) ||
     msg.includes('RESOURCE_EXHAUSTED')
   ) {
