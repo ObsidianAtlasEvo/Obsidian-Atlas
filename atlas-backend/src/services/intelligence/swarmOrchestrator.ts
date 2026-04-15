@@ -592,7 +592,7 @@ export async function executeGroqGeminiDualConsensus(input: {
   const geminiLane: UniversalMessage[] = [
     {
       role: 'system',
-      content: `${buildPrimeDirective(userId)}\n\nYou are the Gemini 1.5 Pro reasoning lane.\n${SHARED_LANE_RULES}`,
+      content: `${buildPrimeDirective(userId)}\n\nYou are the Gemini 2.5 Flash reasoning lane.\n${SHARED_LANE_RULES}`,
     },
     { role: 'user', content: laneUserContent },
   ];
