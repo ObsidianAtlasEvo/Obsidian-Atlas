@@ -13,6 +13,7 @@ import { listRecentEvolutionGaps } from '../evolution/gapStore.js';
 import { getDb } from '../../db/sqlite.js';
 import type { ModelProvider } from '../model/modelProvider.js';
 import { createOllamaModelProvider } from '../model/ollamaClient.js';
+import { createGroqModelProvider } from '../model/groqModelProvider.js';
 import { appendAutonomyLog } from './autonomyLog.js';
 
 // ---------------------------------------------------------------------------
@@ -436,7 +437,7 @@ async function chronosTick(model: ModelProvider): Promise<void> {
 }
 
 /** Start interval worker; no overlap thanks to chronosInFlight + idle gate. */
-export function startChronosScheduler(model: ModelProvider = createOllamaModelProvider()): void {
+export function startChronosScheduler(model: ModelProvider = createGroqModelProvider()): void {
   if (schedulerHandle) return;
   schedulerHandle = setInterval(() => {
     void chronosTick(model);

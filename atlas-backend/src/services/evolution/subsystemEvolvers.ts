@@ -47,6 +47,13 @@ export async function evolveSystemPrompt(userId: string, ctx: SubsystemEvalConte
       last_score REAL DEFAULT 0.5,
       updated_at TEXT DEFAULT (datetime('now'))
     )`);
+    // Migrate: add columns that may be missing from tables created before this schema version
+    for (const migration of [
+      `ALTER TABLE user_prompt_addenda ADD COLUMN avg_response_score REAL DEFAULT 0.5`,
+      `ALTER TABLE user_prompt_addenda ADD COLUMN last_score REAL DEFAULT 0.5`,
+    ]) {
+      try { db.exec(migration); } catch { /* column already exists — safe to ignore */ }
+    }
 
     // Read current state
     const row = db

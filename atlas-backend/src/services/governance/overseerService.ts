@@ -404,7 +404,12 @@ export async function applyOverseerLens(
     };
   } catch (err) {
     // Pipeline failed mid-flight — degrade gracefully, never block user
-    console.error('[OverseerService] pipeline error:', err);
+    // TPD (tokens per day) exhaustion is end-of-day normal behaviour — suppress the log noise
+    const errMsg = err instanceof Error ? err.message : String(err);
+    const isTPD = errMsg.includes('per day') || errMsg.includes('tokens per day') || errMsg.includes('TPD');
+    if (!isTPD) {
+      console.error('[OverseerService] pipeline error:', err);
+    }
     recordTraining(userId, context.query, rawResponse, ['pipeline_error']);
     return {
       response: rawResponse,
