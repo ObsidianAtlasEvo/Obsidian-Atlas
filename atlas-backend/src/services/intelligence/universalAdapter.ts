@@ -9,18 +9,22 @@ export type StreamDeltaHandler = (textDelta: string) => void;
 /** User-facing message when every model in the fallback chain has failed. */
 export const TRANSIENT_USER_MESSAGE = 'Atlas is momentarily overloaded. Please try again in a few seconds.';
 
-/** Detect Google Gemini transient capacity / rate-limit errors. */
+/** Detect Google Gemini transient capacity / rate-limit errors.
+ *
+ * IMPORTANT: Only match Gemini-specific error patterns. Bare '503' / '429'
+ * substrings also appear in Groq / OpenRouter errors and must NOT be caught
+ * here — otherwise the fallback chain treats non-Gemini failures as retryable
+ * Gemini issues, exhausts all models, and emits the overload message.
+ */
 export function isGeminiTransient(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : String(err);
   return (
-    msg.includes('503') ||
-    msg.includes('Service Unavailable') ||
+    msg.includes('[GoogleGenerativeAI Error]') ||
+    msg.includes('GoogleGenerativeAI') ||
+    (msg.includes('503') && (msg.includes('Service Unavailable') || msg.includes('overloaded') || msg.includes('models/'))) ||
     msg.includes('high demand') ||
-    msg.includes('overloaded') ||
-    msg.includes('429') ||
-    msg.includes('Rate limit') ||
-    msg.includes('RESOURCE_EXHAUSTED') ||
-    msg.includes('Too Many Requests')
+    (msg.includes('429') && (msg.includes('Resource has been exhausted') || msg.includes('RESOURCE_EXHAUSTED') || msg.includes('models/'))) ||
+    msg.includes('RESOURCE_EXHAUSTED')
   );
 }
 
@@ -274,7 +278,7 @@ export async function streamGeminiChat(params: {
     }
   }
 
-  // Attempt 4: fall back to Groq
+  // Attempt 4: fall back to Groq (cap tokens to avoid Groq free-tier TPM limit)
   const groqAuth = resolveGroqAuth();
   if (groqAuth) {
     try {
@@ -285,12 +289,31 @@ export async function streamGeminiChat(params: {
         messages: params.messages,
         onDelta: params.onDelta,
         temperature: params.temperature,
-        maxTokens: 4096,
+        maxTokens: 2048,
         signal: params.signal,
         timeoutMs: params.timeoutMs,
       });
-    } catch {
-      // Groq also failed — fall through to clean error
+    } catch (groqErr) {
+      // Groq 429 (rate limit): wait and retry once before giving up
+      const groqMsg = groqErr instanceof Error ? groqErr.message : String(groqErr);
+      if (groqMsg.includes('429') || groqMsg.includes('Rate limit') || groqMsg.includes('Too Many Requests')) {
+        await delay(3000);
+        try {
+          return await streamOpenAiCompatibleChat({
+            baseUrl: groqAuth.base,
+            apiKey: groqAuth.apiKey,
+            model: 'llama-3.3-70b-versatile',
+            messages: params.messages,
+            onDelta: params.onDelta,
+            temperature: params.temperature,
+            maxTokens: 2048,
+            signal: params.signal,
+            timeoutMs: params.timeoutMs,
+          });
+        } catch {
+          // Second attempt also failed — fall through to clean error
+        }
+      }
     }
   }
 
@@ -403,7 +426,7 @@ export async function streamRegistryModel(params: {
         model,
         messages,
         onDelta,
-        maxTokens: 4096,
+        maxTokens: 2048,
         signal,
         timeoutMs,
       });
@@ -618,7 +641,7 @@ export async function completeGeminiChat(params: {
     }
   }
 
-  // Attempt 4: fall back to Groq
+  // Attempt 4: fall back to Groq (cap tokens to stay within free-tier TPM)
   const groqAuth = resolveGroqAuth();
   if (groqAuth) {
     try {
@@ -628,11 +651,30 @@ export async function completeGeminiChat(params: {
         model: 'llama-3.3-70b-versatile',
         messages: params.messages,
         temperature: params.temperature,
+        maxTokens: 2048,
         signal: params.signal,
         timeoutMs: params.timeoutMs,
       });
-    } catch {
-      // Groq also failed
+    } catch (groqErr) {
+      // Groq 429 (rate limit): wait and retry once before giving up
+      const groqMsg = groqErr instanceof Error ? groqErr.message : String(groqErr);
+      if (groqMsg.includes('429') || groqMsg.includes('Rate limit') || groqMsg.includes('Too Many Requests')) {
+        await delay(3000);
+        try {
+          return await completeOpenAiCompatibleChat({
+            baseUrl: groqAuth.base,
+            apiKey: groqAuth.apiKey,
+            model: 'llama-3.3-70b-versatile',
+            messages: params.messages,
+            temperature: params.temperature,
+            maxTokens: 2048,
+            signal: params.signal,
+            timeoutMs: params.timeoutMs,
+          });
+        } catch {
+          // Second attempt also failed
+        }
+      }
     }
   }
 
@@ -657,7 +699,7 @@ export async function streamGroqChat(params: {
     messages: params.messages,
     onDelta: params.onDelta,
     temperature: params.temperature,
-    maxTokens: 4096,
+    maxTokens: 2048,
     signal: params.signal,
     timeoutMs: params.timeoutMs,
   });

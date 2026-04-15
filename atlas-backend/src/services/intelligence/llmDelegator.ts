@@ -50,7 +50,7 @@ async function groqChatNonStream(
     model,
     messages: openAiStyleMessages(msgs),
     temperature: options.temperature ?? 0.2,
-    max_tokens: options.maxTokens ?? 4096,
+    max_tokens: options.maxTokens ?? 2048,
     stream: false,
   };
   if (options.jsonMode) body.response_format = { type: 'json_object' };
@@ -93,7 +93,7 @@ async function groqChatStream(
     model,
     messages: openAiStyleMessages(msgs),
     temperature: options.temperature ?? 0.35,
-    max_tokens: 4096,
+    max_tokens: 2048,
     stream: true,
   };
 
@@ -255,11 +255,19 @@ async function geminiGenerateStream(
     }
   }
 
-  // Attempt 4: fall back to Groq streaming
+  // Attempt 4: fall back to Groq streaming (retry once on 429 rate limit)
   try {
     return await groqChatStream(msgs, onDelta, { temperature: 0.35, ...options });
-  } catch {
-    // Groq also failed
+  } catch (groqErr) {
+    const groqMsg = groqErr instanceof Error ? groqErr.message : String(groqErr);
+    if (groqMsg.includes('429') || groqMsg.includes('Rate limit') || groqMsg.includes('Too Many Requests')) {
+      await delayMs(3000);
+      try {
+        return await groqChatStream(msgs, onDelta, { temperature: 0.35, ...options });
+      } catch {
+        // Second attempt also failed
+      }
+    }
   }
 
   throw new Error(TRANSIENT_USER_MESSAGE);
