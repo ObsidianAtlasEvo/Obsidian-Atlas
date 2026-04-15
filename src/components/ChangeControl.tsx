@@ -1,17 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { AppState, ChangeProposal } from '../types';
-import { db, handleFirestoreError, OperationType, logAudit } from '../services/firebase';
-import {
-  collection,
-  query,
-  orderBy,
-  onSnapshot,
-  doc,
-  updateDoc,
-  addDoc,
-  Timestamp,
-  type QuerySnapshot,
-} from 'firebase/firestore';
+import { atlasApiUrl } from '../lib/atlasApi';
 import { motion, AnimatePresence } from 'motion/react';
 import { GitBranch, CheckCircle, AlertTriangle, Clock, Search, Filter, Plus, ChevronRight, ShieldCheck, RefreshCw } from 'lucide-react';
 import { cn } from '../lib/utils';
@@ -22,29 +11,54 @@ interface ChangeControlProps {
   setState: React.Dispatch<React.SetStateAction<AppState>>;
 }
 
+/** Map backend row (snake_case, epoch timestamps) → ChangeProposal shape the UI expects. */
+function toProposal(row: Record<string, unknown>): ChangeProposal {
+  return {
+    id: row.id as string,
+    title: row.title as string,
+    description: row.description as string,
+    class: (typeof row.class === 'number' ? row.class : 1) as ChangeProposal['class'],
+    status: (row.status ?? 'proposed') as ChangeProposal['status'],
+    proposedBy: (row.proposedBy ?? 'system') as string,
+    approvedBy: row.approvedBy as string | undefined,
+    createdAt: row.createdAt
+      ? new Date(typeof row.createdAt === 'number' ? row.createdAt : String(row.createdAt)).toISOString()
+      : new Date().toISOString(),
+    deployedAt: row.deployedAt as string | undefined,
+    rollbackSafe: Boolean(row.rollbackSafe),
+  };
+}
+
 export function ChangeControl({ state, setState }: ChangeControlProps) {
   const [proposals, setProposals] = useState<ChangeProposal[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<'all' | 'proposed' | 'approved' | 'executing' | 'deployed' | 'rolled_back'>('all');
   const changeControlStore = useChangeControlStore();
 
-  useEffect(() => {
-    const q = query(collection(db, 'change_control'), orderBy('createdAt', 'desc'));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const s = snapshot as QuerySnapshot;
-      const proposalData = s.docs.map((d) => ({ id: d.id, ...d.data() } as ChangeProposal));
-      setProposals(proposalData);
+  const fetchProposals = useCallback(async () => {
+    try {
+      const res = await fetch(atlasApiUrl('/v1/governance/changes'));
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      const rows: Record<string, unknown>[] = data.changes ?? [];
+      setProposals(rows.map(toProposal));
+    } catch (err) {
+      console.error('[ChangeControl] fetch failed:', err);
+    } finally {
       setLoading(false);
-    }, (error) => {
-      handleFirestoreError(error, OperationType.LIST, 'change_control');
-    });
-
-    return () => unsubscribe();
+    }
   }, []);
+
+  useEffect(() => {
+    fetchProposals();
+    const interval = setInterval(fetchProposals, 10_000);
+    return () => clearInterval(interval);
+  }, [fetchProposals]);
 
   const handleApprove = async (proposal: ChangeProposal) => {
     if (state.currentUser?.email) {
       await changeControlStore.executeRepair(proposal, state.currentUser.email);
+      fetchProposals();
     }
   };
 
@@ -89,7 +103,7 @@ export function ChangeControl({ state, setState }: ChangeControlProps) {
           <div className="py-20 text-center text-stone uppercase tracking-widest opacity-30">No Proposals in this State</div>
         ) : (
           filteredProposals.map((proposal) => (
-            <motion.div 
+            <motion.div
               key={proposal.id}
               initial={{ opacity: 0, x: -10 }}
               animate={{ opacity: 1, x: 0 }}
@@ -113,9 +127,9 @@ export function ChangeControl({ state, setState }: ChangeControlProps) {
                   </div>
                 </div>
                 <div className="flex flex-col items-end gap-2">
-                  <span className={cn("text-[10px] font-bold uppercase tracking-widest px-3 py-1 border rounded-full", 
-                    proposal.status === 'proposed' ? 'text-gold-500 border-gold-500/20 bg-gold-500/5' : 
-                    proposal.status === 'approved' ? 'text-teal border-teal/20 bg-teal/5' : 
+                  <span className={cn("text-[10px] font-bold uppercase tracking-widest px-3 py-1 border rounded-full",
+                    proposal.status === 'proposed' ? 'text-gold-500 border-gold-500/20 bg-gold-500/5' :
+                    proposal.status === 'approved' ? 'text-teal border-teal/20 bg-teal/5' :
                     'text-stone border-stone-800/20 bg-stone-800/5'
                   )}>
                     {proposal.status}
@@ -143,9 +157,9 @@ export function ChangeControl({ state, setState }: ChangeControlProps) {
                     </span>
                   </div>
                 </div>
-                
+
                 {proposal.status === 'proposed' && proposal.class >= 3 && (
-                  <button 
+                  <button
                     onClick={() => handleApprove(proposal)}
                     disabled={changeControlStore.isMutating}
                     className="px-6 py-2 bg-gold-500 text-obsidian font-bold uppercase tracking-widest text-[10px] hover:bg-ivory transition-all duration-300 flex items-center gap-2 disabled:opacity-50"
@@ -162,7 +176,7 @@ export function ChangeControl({ state, setState }: ChangeControlProps) {
                   </button>
                 )}
               </div>
-              
+
               {changeControlStore.activeMutationId === proposal.id && changeControlStore.mutationLogs.length > 0 && (
                 <div className="mt-4 p-4 bg-obsidian border border-stone-800 rounded-sm font-mono text-[10px] text-stone space-y-1">
                   {changeControlStore.mutationLogs.map((log, idx) => (
