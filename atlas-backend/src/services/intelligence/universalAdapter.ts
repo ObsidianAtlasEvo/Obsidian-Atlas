@@ -104,6 +104,7 @@ async function streamOpenAiCompatibleChat(params: {
   messages: UniversalMessage[];
   onDelta: StreamDeltaHandler;
   temperature?: number;
+  maxTokens?: number;
   signal?: AbortSignal;
   timeoutMs?: number;
   extraHeaders?: Record<string, string>;
@@ -113,6 +114,7 @@ async function streamOpenAiCompatibleChat(params: {
     messages: openAiStyleMessages(params.messages),
     temperature: params.temperature ?? 0.35,
     stream: true,
+    ...(params.maxTokens ? { max_tokens: params.maxTokens } : {}),
   };
 
   const controller = new AbortController();
@@ -283,6 +285,7 @@ export async function streamGeminiChat(params: {
         messages: params.messages,
         onDelta: params.onDelta,
         temperature: params.temperature,
+        maxTokens: 4096,
         signal: params.signal,
         timeoutMs: params.timeoutMs,
       });
@@ -400,6 +403,7 @@ export async function streamRegistryModel(params: {
         model,
         messages,
         onDelta,
+        maxTokens: 4096,
         signal,
         timeoutMs,
       });
@@ -476,6 +480,7 @@ export async function completeOpenAiCompatibleChat(params: {
   model: string;
   messages: UniversalMessage[];
   temperature?: number;
+  maxTokens?: number;
   signal?: AbortSignal;
   timeoutMs?: number;
 }): Promise<{ text: string; model: string }> {
@@ -484,6 +489,7 @@ export async function completeOpenAiCompatibleChat(params: {
     messages: openAiStyleMessages(params.messages),
     temperature: params.temperature ?? 0.25,
     stream: false,
+    ...(params.maxTokens ? { max_tokens: params.maxTokens } : {}),
   };
 
   const controller = new AbortController();
@@ -651,6 +657,7 @@ export async function streamGroqChat(params: {
     messages: params.messages,
     onDelta: params.onDelta,
     temperature: params.temperature,
+    maxTokens: 4096,
     signal: params.signal,
     timeoutMs: params.timeoutMs,
   });

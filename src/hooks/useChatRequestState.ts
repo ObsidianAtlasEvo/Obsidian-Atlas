@@ -23,7 +23,11 @@ export type ChatRequestStatus =
   | 'aborted'
   | 'stale';
 
-const WATCHDOG_MS = 30_000;
+/** Max silence between tokens once streaming has started. */
+const WATCHDOG_MS = 45_000;
+
+/** Max wait for the very first token (backend may retry multiple models). */
+const INITIAL_WATCHDOG_MS = 90_000;
 
 interface RequestState {
   status: ChatRequestStatus;
@@ -53,13 +57,22 @@ export function useChatRequestState() {
   }, []);
 
   const startWatchdog = useCallback(
-    (onTimeout: () => void) => {
+    (onTimeout: () => void, ms = WATCHDOG_MS) => {
       clearWatchdog();
-      stateRef.current.watchdogTimer = setTimeout(onTimeout, WATCHDOG_MS);
+      stateRef.current.watchdogTimer = setTimeout(onTimeout, ms);
     },
     [clearWatchdog],
   );
 
+  /** Start with the longer initial budget (waiting for first token). */
+  const startInitialWatchdog = useCallback(
+    (onTimeout: () => void) => {
+      startWatchdog(onTimeout, INITIAL_WATCHDOG_MS);
+    },
+    [startWatchdog],
+  );
+
+  /** Reset to the shorter inter-token watchdog (streaming has begun). */
   const resetWatchdog = useCallback(
     (onTimeout: () => void) => {
       startWatchdog(onTimeout);
@@ -120,6 +133,7 @@ export function useChatRequestState() {
     begin,
     abortCurrent,
     startWatchdog,
+    startInitialWatchdog,
     resetWatchdog,
     clearWatchdog,
     get status() {

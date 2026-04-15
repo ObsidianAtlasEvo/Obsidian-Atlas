@@ -449,10 +449,10 @@ export default function AtlasChamber() {
       cleanupThinking();
       setIsStreaming(false);
       request.transition('timed_out');
-      finalizeMessage(assistantMsgId, { requestStatus: 'timed_out', error: 'Request timed out — no response received within 30 seconds.' });
+      finalizeMessage(assistantMsgId, { requestStatus: 'timed_out', error: 'Request timed out — no response received. Please try again.' });
     };
 
-    request.startWatchdog(handleWatchdogTimeout);
+    request.startInitialWatchdog(handleWatchdogTimeout);
 
     const history = buildMessageHistory();
     history.push({ role: 'user', content: text });

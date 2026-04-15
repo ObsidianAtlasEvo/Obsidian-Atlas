@@ -50,7 +50,7 @@ async function groqChatNonStream(
     model,
     messages: openAiStyleMessages(msgs),
     temperature: options.temperature ?? 0.2,
-    max_tokens: options.maxTokens ?? 2048,
+    max_tokens: options.maxTokens ?? 4096,
     stream: false,
   };
   if (options.jsonMode) body.response_format = { type: 'json_object' };
@@ -93,6 +93,7 @@ async function groqChatStream(
     model,
     messages: openAiStyleMessages(msgs),
     temperature: options.temperature ?? 0.35,
+    max_tokens: 4096,
     stream: true,
   };
 
