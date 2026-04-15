@@ -6,6 +6,28 @@ export type UniversalMessage = { role: 'system' | 'user' | 'assistant'; content:
 
 export type StreamDeltaHandler = (textDelta: string) => void;
 
+/** User-facing message when every model in the fallback chain has failed. */
+export const TRANSIENT_USER_MESSAGE = 'Atlas is momentarily overloaded. Please try again in a few seconds.';
+
+/** Detect Google Gemini transient capacity / rate-limit errors. */
+export function isGeminiTransient(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return (
+    msg.includes('503') ||
+    msg.includes('Service Unavailable') ||
+    msg.includes('high demand') ||
+    msg.includes('overloaded') ||
+    msg.includes('429') ||
+    msg.includes('Rate limit') ||
+    msg.includes('RESOURCE_EXHAUSTED') ||
+    msg.includes('Too Many Requests')
+  );
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function openAiStyleMessages(msgs: UniversalMessage[]): { role: string; content: string }[] {
   return msgs.map((m) => ({ role: m.role, content: m.content }));
 }
@@ -158,7 +180,7 @@ async function streamOpenAiCompatibleChat(params: {
   }
 }
 
-export async function streamGeminiChat(params: {
+async function streamGeminiChatRaw(params: {
   model: string;
   messages: UniversalMessage[];
   onDelta: StreamDeltaHandler;
@@ -207,6 +229,69 @@ export async function streamGeminiChat(params: {
   } finally {
     if (t) clearTimeout(t);
   }
+}
+
+/**
+ * Stream Gemini with transient-error fallback chain:
+ * 1. Try requested model
+ * 2. Wait 1.5s, retry same model
+ * 3. Try gemini-2.0-flash (secondary)
+ * 4. Fall back to Groq llama-3.3-70b-versatile
+ * 5. Throw clean user-facing error
+ */
+export async function streamGeminiChat(params: {
+  model: string;
+  messages: UniversalMessage[];
+  onDelta: StreamDeltaHandler;
+  temperature?: number;
+  signal?: AbortSignal;
+  timeoutMs?: number;
+}): Promise<{ fullText: string; model: string }> {
+  // Attempt 1: primary model
+  try {
+    return await streamGeminiChatRaw(params);
+  } catch (err) {
+    if (!isGeminiTransient(err)) throw err;
+  }
+
+  // Attempt 2: retry same model after delay
+  await delay(1500);
+  try {
+    return await streamGeminiChatRaw(params);
+  } catch (err) {
+    if (!isGeminiTransient(err)) throw err;
+  }
+
+  // Attempt 3: secondary Gemini model (gemini-2.0-flash)
+  const secondary = 'gemini-2.0-flash';
+  if (params.model?.trim() !== secondary) {
+    try {
+      return await streamGeminiChatRaw({ ...params, model: secondary });
+    } catch (err) {
+      if (!isGeminiTransient(err)) throw err;
+    }
+  }
+
+  // Attempt 4: fall back to Groq
+  const groqAuth = resolveGroqAuth();
+  if (groqAuth) {
+    try {
+      return await streamOpenAiCompatibleChat({
+        baseUrl: groqAuth.base,
+        apiKey: groqAuth.apiKey,
+        model: 'llama-3.3-70b-versatile',
+        messages: params.messages,
+        onDelta: params.onDelta,
+        temperature: params.temperature,
+        signal: params.signal,
+        timeoutMs: params.timeoutMs,
+      });
+    } catch {
+      // Groq also failed — fall through to clean error
+    }
+  }
+
+  throw new Error(TRANSIENT_USER_MESSAGE);
 }
 
 async function streamOllamaChat(params: {
@@ -449,8 +534,8 @@ export async function completeGroqChat(params: {
   });
 }
 
-/** Non-streaming Gemini completion (consensus lane). */
-export async function completeGeminiChat(params: {
+/** Raw non-streaming Gemini completion (no retry/fallback). */
+async function completeGeminiChatRaw(params: {
   model: string;
   messages: UniversalMessage[];
   temperature?: number;
@@ -489,6 +574,63 @@ export async function completeGeminiChat(params: {
   } finally {
     if (t) clearTimeout(t);
   }
+}
+
+/**
+ * Non-streaming Gemini completion with transient-error fallback chain:
+ * retry → secondary model → Groq → clean error.
+ */
+export async function completeGeminiChat(params: {
+  model: string;
+  messages: UniversalMessage[];
+  temperature?: number;
+  signal?: AbortSignal;
+  timeoutMs?: number;
+}): Promise<{ text: string; model: string }> {
+  // Attempt 1: primary model
+  try {
+    return await completeGeminiChatRaw(params);
+  } catch (err) {
+    if (!isGeminiTransient(err)) throw err;
+  }
+
+  // Attempt 2: retry after delay
+  await delay(1500);
+  try {
+    return await completeGeminiChatRaw(params);
+  } catch (err) {
+    if (!isGeminiTransient(err)) throw err;
+  }
+
+  // Attempt 3: secondary Gemini model
+  const secondary = 'gemini-2.0-flash';
+  if (params.model?.trim() !== secondary) {
+    try {
+      return await completeGeminiChatRaw({ ...params, model: secondary });
+    } catch (err) {
+      if (!isGeminiTransient(err)) throw err;
+    }
+  }
+
+  // Attempt 4: fall back to Groq
+  const groqAuth = resolveGroqAuth();
+  if (groqAuth) {
+    try {
+      return await completeOpenAiCompatibleChat({
+        baseUrl: groqAuth.base,
+        apiKey: groqAuth.apiKey,
+        model: 'llama-3.3-70b-versatile',
+        messages: params.messages,
+        temperature: params.temperature,
+        signal: params.signal,
+        timeoutMs: params.timeoutMs,
+      });
+    } catch {
+      // Groq also failed
+    }
+  }
+
+  throw new Error(TRANSIENT_USER_MESSAGE);
 }
 
 /** Stream final judge output (Maximum Clarity synthesis). */

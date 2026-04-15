@@ -32,7 +32,24 @@ import {
 } from '../services/intelligence/quotaManager.js';
 import { mirrorforgeStateSchema } from '../services/intelligence/telemetryTranslator.js';
 import { isSovereignOwnerEmail } from '../services/intelligence/router.js';
+import { TRANSIENT_USER_MESSAGE } from '../services/intelligence/universalAdapter.js';
 import type { ChatRole } from '../types/atlas.js';
+
+/** Replace raw API error strings (e.g. [GoogleGenerativeAI Error]) with a clean user-facing message. */
+function sanitizeErrorMessage(msg: string): string {
+  if (
+    msg.includes('[GoogleGenerativeAI Error]') ||
+    msg.includes('GoogleGenerativeAI') ||
+    (msg.includes('503') && msg.includes('Service Unavailable')) ||
+    msg.includes('high demand') ||
+    msg.includes('overloaded') ||
+    (msg.includes('429') && (msg.includes('Rate limit') || msg.includes('Too Many Requests'))) ||
+    msg.includes('RESOURCE_EXHAUSTED')
+  ) {
+    return TRANSIENT_USER_MESSAGE;
+  }
+  return msg;
+}
 
 const omniBodySchema = z.object({
   userId: z.string().min(1),
@@ -430,7 +447,7 @@ export function registerOmniStreamRoutes(app: FastifyInstance): void {
         });
       }).catch(() => { /* non-fatal */ });
     } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
+      const rawMessage = e instanceof Error ? e.message : String(e);
       request.log.error(e);
       const code =
         e instanceof QuotaExceededError
@@ -438,7 +455,7 @@ export function registerOmniStreamRoutes(app: FastifyInstance): void {
           : e instanceof SystemDeepResearchUnavailableError
             ? e.code
             : 'internal_error';
-      sseWrite(raw, 'error', { message, code });
+      sseWrite(raw, 'error', { message: sanitizeErrorMessage(rawMessage), code });
       raw.end();
     }
   });

@@ -19,7 +19,7 @@ import {
 } from '../types';
 import { AtlasGraph } from './AtlasGraph';
 import { ATLAS_TRACE_CHANNEL, atlasTraceUserId } from '../lib/atlasTraceContext';
-import { atlasApiUrl, atlasHttpEnabled } from '../lib/atlasApi';
+import { atlasApiUrl, atlasHttpEnabled, sanitizeAtlasError } from '../lib/atlasApi';
 import { LayeredResponse } from './LayeredResponse';
 import { DirectiveIntake } from './DirectiveIntake';
 import { ResonanceEngine } from '../resonance/engine';
@@ -348,7 +348,7 @@ export function HomeView({ state, setState, onInteraction }: HomeViewProps) {
             };
           }
           if (eventName === 'error') {
-            streamError = String(data?.message ?? 'Atlas stream failed');
+            streamError = sanitizeAtlasError(String(data?.message ?? 'Atlas stream failed'));
           }
         }
       }

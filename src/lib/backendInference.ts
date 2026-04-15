@@ -2,7 +2,7 @@
  * Thin wrapper around POST /api/v1/chat/omni-stream for non-streaming (single-turn) inference.
  * Replaces all frontend ollamaComplete() calls so the browser never touches Ollama directly.
  */
-import { atlasApiUrl } from './atlasApi';
+import { atlasApiUrl, sanitizeAtlasError } from './atlasApi';
 
 export async function backendComplete(
   prompt: string,
@@ -50,7 +50,7 @@ export async function backendComplete(
           const payload = JSON.parse(dataStr) as Record<string, unknown>;
           if (eventType === 'delta' && typeof payload.text === 'string') fullText += payload.text;
           if (eventType === 'done') return fullText;
-          if (eventType === 'error') throw new Error(String(payload.message ?? 'Backend error'));
+          if (eventType === 'error') throw new Error(sanitizeAtlasError(String(payload.message ?? 'Backend error')));
         } catch (e) {
           if (e instanceof SyntaxError) continue;
           throw e;
@@ -149,7 +149,7 @@ export function streamBackendChat(
               callbacks.onDone(fullText);
               return;
             } else if (eventType === 'error') {
-              callbacks.onError(String(payload.message ?? 'Server error'), String(payload.code ?? 'SERVER_ERROR'));
+              callbacks.onError(sanitizeAtlasError(String(payload.message ?? 'Server error')), String(payload.code ?? 'SERVER_ERROR'));
               return;
             }
           } catch (e) { if (e instanceof SyntaxError) continue; throw e; }
