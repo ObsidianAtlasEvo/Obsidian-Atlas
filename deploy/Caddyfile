@@ -9,7 +9,7 @@
 #   /ollama/* → local Ollama (optional; strip /ollama) — remove block if unused
 
 obsidianatlastech.com {
-	root * /var/www/obsidian-atlas/dist
+	root * /var/www/obsidian-atlas-src/dist
 	encode gzip zstd
 
 	# Strip /api prefix (same as Vite: /api/v1/foo → upstream /v1/foo)

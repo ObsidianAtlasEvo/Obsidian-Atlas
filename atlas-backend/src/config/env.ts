@@ -25,11 +25,11 @@ const envSchema = z.object({
   DATASET_MIN_AXIS_SCORE: z.coerce.number().min(0).max(10),
   EVOLUTION_LLM_TIMEOUT_MS: z.coerce.number().int().positive(),
   SQLITE_PATH: z.string().min(1),
-  /** Enable background Chronos heartbeat (`true` / `1` to enable). */
+  /** Enable background Chronos heartbeat (defaults to true; set `false` / `0` to disable). */
   CHRONOS_ENABLED: z
     .string()
     .optional()
-    .transform((v) => v === 'true' || v === '1'),
+    .transform((v) => v !== 'false' && v !== '0'),
   CHRONOS_TICK_MS: z.coerce.number().int().positive().optional(),
   /** Skip heartbeat if user interacted within this window (ms). */
   CHRONOS_IDLE_MS: z.coerce.number().int().positive().optional(),
@@ -102,19 +102,21 @@ const envSchema = z.object({
 
 const raw = envSchema.parse({
   HOST: process.env.HOST,
-  PORT: process.env.PORT,
-  OLLAMA_BASE_URL: process.env.OLLAMA_BASE_URL,
-  OLLAMA_CHAT_MODEL: process.env.OLLAMA_CHAT_MODEL,
-  OLLAMA_EMBED_MODEL: process.env.OLLAMA_EMBED_MODEL,
+  PORT: process.env.PORT ?? '3001',
+  // Ollama is optional in cloud/production — default to localhost so schema passes
+  // even when Ollama is not installed. DISABLE_LOCAL_OLLAMA=true routes away from it.
+  OLLAMA_BASE_URL: process.env.OLLAMA_BASE_URL ?? 'http://127.0.0.1:11434',
+  OLLAMA_CHAT_MODEL: process.env.OLLAMA_CHAT_MODEL ?? 'llama3.1:8b',
+  OLLAMA_EMBED_MODEL: process.env.OLLAMA_EMBED_MODEL ?? 'nomic-embed-text',
   OLLAMA_EVOLUTION_MODEL: process.env.OLLAMA_EVOLUTION_MODEL,
   OLLAMA_MODEL_POOL: process.env.OLLAMA_MODEL_POOL,
-  DISABLE_LOCAL_OLLAMA: process.env.DISABLE_LOCAL_OLLAMA,
-  MEMORY_CONFIDENCE_THRESHOLD: process.env.MEMORY_CONFIDENCE_THRESHOLD,
-  DATASET_SCORE_THRESHOLD: process.env.DATASET_SCORE_THRESHOLD,
+  DISABLE_LOCAL_OLLAMA: process.env.DISABLE_LOCAL_OLLAMA ?? 'true',
+  MEMORY_CONFIDENCE_THRESHOLD: process.env.MEMORY_CONFIDENCE_THRESHOLD ?? '0.65',
+  DATASET_SCORE_THRESHOLD: process.env.DATASET_SCORE_THRESHOLD ?? '0.72',
   EVAL_GAP_THRESHOLD: process.env.EVAL_GAP_THRESHOLD ?? '0.42',
   DATASET_MIN_AXIS_SCORE: process.env.DATASET_MIN_AXIS_SCORE ?? '9',
   EVOLUTION_LLM_TIMEOUT_MS: process.env.EVOLUTION_LLM_TIMEOUT_MS ?? '120000',
-  SQLITE_PATH: process.env.SQLITE_PATH,
+  SQLITE_PATH: process.env.SQLITE_PATH ?? '/var/www/obsidian-atlas-src/atlas-backend/data/atlas.db',
   CHRONOS_ENABLED: process.env.CHRONOS_ENABLED,
   CHRONOS_TICK_MS: process.env.CHRONOS_TICK_MS,
   CHRONOS_IDLE_MS: process.env.CHRONOS_IDLE_MS,
@@ -229,7 +231,7 @@ export const env = {
   groqRouterModel: raw.GROQ_ROUTER_MODEL?.trim() || undefined,
   groqDelegateModel: raw.GROQ_DELEGATE_MODEL?.trim() || undefined,
   geminiApiKey: raw.GEMINI_API_KEY?.trim() || undefined,
-  geminiModel: raw.GEMINI_MODEL?.trim() || undefined,
+  geminiModel: raw.GEMINI_MODEL?.trim() || 'gemini-2.5-flash',
   omniRouterTimeoutMs: raw.OMNI_ROUTER_TIMEOUT_MS ?? 12_000,
   /** Local Ollama stream budget for sovereign lane (was 180s; large prompts + slow GPUs need more). */
   omniLocalTimeoutMs: raw.OMNI_LOCAL_TIMEOUT_MS ?? 600_000,
@@ -244,7 +246,7 @@ export const env = {
   /** Quota-backed system research; BYOK users never consume this. */
   systemTavilyApiKey:
     raw.SYSTEM_TAVILY_API_KEY?.trim() || raw.TAVILY_API_KEY?.trim() || undefined,
-  consensusGeminiModel: raw.CONSENSUS_GEMINI_MODEL?.trim() || 'gemini-1.5-pro',
+  consensusGeminiModel: raw.CONSENSUS_GEMINI_MODEL?.trim() || 'gemini-2.5-flash',
   consensusGroqAnalystModel: raw.CONSENSUS_GROQ_ANALYST_MODEL?.trim() || 'llama-3.3-70b-versatile',
   consensusGroqAltModel: raw.CONSENSUS_GROQ_ALT_MODEL?.trim() || 'mixtral-8x7b-32768',
   consensusGroqJudgeModel: raw.CONSENSUS_GROQ_JUDGE_MODEL?.trim() || 'llama-3.3-70b-versatile',

@@ -1,6 +1,6 @@
 import { ResonanceObservation, ResonanceConfidence } from "./types";
 import { RESONANCE_SIGNAL_EXTRACTION_PROMPT } from "./prompts";
-import { ollamaComplete, parseJsonFromAssistant } from "../services/ollamaClient";
+import { backendComplete as ollamaComplete, parseJsonFromBackend as parseJsonFromAssistant } from "../lib/backendInference";
 
 /**
  * Extracts message-level resonance signals from a user message.

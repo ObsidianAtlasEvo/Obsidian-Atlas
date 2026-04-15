@@ -39,7 +39,7 @@ import {
 } from 'lucide-react';
 import { JournalEntry, JournalAssistanceMode, AppState } from '../types';
 import { cn } from '../lib/utils';
-import { analyzeJournalEntry } from '../services/ollamaService';
+import { analyzeJournalEntry } from '../lib/atlasJournalAnalysis';
 
 interface JournalChamberProps {
   state: AppState;

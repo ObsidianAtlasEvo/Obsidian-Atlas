@@ -10,6 +10,7 @@ import { getSemanticLocalIndex } from '../../db/vectorStore.js';
 import { listRecentMemories, listRecentTraces } from '../memory/memoryStore.js';
 import { getPolicyProfile } from '../evolution/policyStore.js';
 import { listRecentEvolutionGaps } from '../evolution/gapStore.js';
+import { getDb } from '../../db/sqlite.js';
 import type { ModelProvider } from '../model/modelProvider.js';
 import { createOllamaModelProvider } from '../model/ollamaClient.js';
 import { appendAutonomyLog } from './autonomyLog.js';
@@ -55,10 +56,21 @@ export function parseChronosDecisionJson(raw: string): ChronosDecision | null {
 // Activity gate (in-memory): user must have hit the API at least once before Chronos runs
 // ---------------------------------------------------------------------------
 
+const MAX_ACTIVITY_ENTRIES = 1000;
 const lastUserActivityMs = new Map<string, number>();
 
 /** Mark recent user-driven API activity (e.g. chat) so Chronos skips while they work. */
 export function touchChronosActivity(userId: string): void {
+  // Evict oldest 10% when at capacity to prevent unbounded growth.
+  if (lastUserActivityMs.size >= MAX_ACTIVITY_ENTRIES) {
+    const toDelete = Math.floor(MAX_ACTIVITY_ENTRIES * 0.1);
+    let deleted = 0;
+    for (const k of lastUserActivityMs.keys()) {
+      if (deleted >= toDelete) break;
+      lastUserActivityMs.delete(k);
+      deleted++;
+    }
+  }
   lastUserActivityMs.set(userId, Date.now());
 }
 
@@ -71,16 +83,21 @@ export function isUserIdleForChronos(userId: string, idleMs: number): boolean {
 
 /** Pick one user who is idle; optional env filter for single-tenant installs. */
 export function nextIdleChronosUser(): string | null {
+  const idle = getIdleUserIds();
+  if (idle.length === 0) return null;
+  return idle[0] ?? null;
+}
+
+/** Return all idle user IDs (respects env filter). */
+export function getIdleUserIds(): string[] {
   const idle = [...lastUserActivityMs.keys()].filter((uid) =>
     isUserIdleForChronos(uid, env.chronosIdleMs)
   );
-  if (idle.length === 0) return null;
   const only = env.chronosUserId;
   if (only) {
-    const hit = idle.find((u) => u === only);
-    return hit ?? null;
+    return idle.filter((u) => u === only);
   }
-  return idle[0] ?? null;
+  return idle;
 }
 
 // ---------------------------------------------------------------------------
@@ -188,6 +205,74 @@ Decide the next autonomous step. Return ONLY the JSON object.`;
 // Heartbeat execution (sequential, one flight)
 // ---------------------------------------------------------------------------
 
+/**
+ * Build a real governance context string for Chronos dispatch actions.
+ * Reads from SQLite governance tables and composes a summary for LLM consumption.
+ */
+function buildGovernanceContextForChronos(userId: string): { userMessage: string; assistantResponse: string } {
+  try {
+    const db = getDb();
+
+    // Recent unfinished business
+    const unfinished = db
+      .prepare(
+        `SELECT title, kind, composite_score FROM unfinished_business_items
+         WHERE user_id = ? AND status = 'open'
+         ORDER BY composite_score DESC LIMIT 5`
+      )
+      .all(userId) as Array<{ title: string; kind: string; composite_score: number }>;
+
+    // Open contradictions
+    const contradictions = db
+      .prepare(
+        `SELECT contradiction_strength, created_at FROM claim_contradictions
+         WHERE user_id = ? AND status = 'open'
+         ORDER BY contradiction_strength DESC LIMIT 5`
+      )
+      .all(userId) as Array<{ contradiction_strength: number; created_at: string }>;
+
+    // Recent memories
+    const memories = listRecentMemories(userId, 5);
+
+    // Recent evolution gaps
+    const gaps = listRecentEvolutionGaps(userId, 4);
+
+    const parts: string[] = ['[GOVERNANCE CONTEXT — Chronos Synthesis Task]'];
+
+    if (unfinished.length > 0) {
+      parts.push('\nOpen unfinished business:');
+      unfinished.forEach((u) => parts.push(`  - [${u.kind}] ${u.title} (score=${u.composite_score.toFixed(2)})`));
+    }
+
+    if (contradictions.length > 0) {
+      parts.push('\nOpen epistemic contradictions:');
+      contradictions.forEach((c) =>
+        parts.push(`  - strength=${c.contradiction_strength.toFixed(2)} since ${c.created_at.slice(0, 10)}`)
+      );
+    }
+
+    if (memories.length > 0) {
+      parts.push('\nRecent memory signals:');
+      memories.forEach((m) => parts.push(`  - [${m.kind}] ${m.summary} (conf=${m.confidence.toFixed(2)})`));
+    }
+
+    if (gaps.length > 0) {
+      parts.push('\nEvolution gaps:');
+      gaps.forEach((g) => parts.push(`  - ${g.reason.slice(0, 120)}`));
+    }
+
+    const userMessage = parts.join('\n');
+    // Use the governance context as both user message and assistant context
+    return { userMessage, assistantResponse: userMessage };
+  } catch {
+    // Tables may not exist — return minimal context
+    return {
+      userMessage: '[Chronos synthesis — governance state unavailable]',
+      assistantResponse: '[governance_context_unavailable]',
+    };
+  }
+}
+
 let chronosInFlight = false;
 let schedulerHandle: ReturnType<typeof setInterval> | null = null;
 
@@ -243,12 +328,93 @@ export async function runChronosHeartbeat(
   }
 }
 
-async function chronosTick(model: ModelProvider): Promise<void> {
-  const userId = nextIdleChronosUser();
-  if (!userId) return;
+async function dispatchChronosAction(userId: string, decision: string): Promise<void> {
+  try {
+    switch (decision) {
+      case 'refine_policy': {
+        const { scheduleEvolutionRun } = await import('../evolution/evolutionPipeline.js');
+        const { createOllamaModelProvider: createModel } = await import('../model/ollamaClient.js');
+        scheduleEvolutionRun({
+          traceId: `chronos-${Date.now()}`,
+          userId,
+          userMessage: '[Chronos scheduled policy refinement]',
+          assistantResponse: '',
+          systemPrompt: '',
+          requestMessages: [],
+          model: createModel(),
+          chatModelLabel: 'chronos_scheduled',
+        });
+        break;
+      }
+      case 'synthesize_graph': {
+        const { scheduleEvolutionRun: scheduleRun } = await import('../evolution/evolutionPipeline.js');
+        const { createOllamaModelProvider: createModel2 } = await import('../model/ollamaClient.js');
+        const graphCtx = buildGovernanceContextForChronos(userId);
+        scheduleRun({
+          traceId: `chronos-graph-${Date.now()}`,
+          userId,
+          userMessage: graphCtx.userMessage,
+          assistantResponse: graphCtx.assistantResponse,
+          systemPrompt: 'You are synthesizing the user\'s cognitive graph. Identify and bridge disconnected knowledge nodes from the governance context provided.',
+          requestMessages: [
+            { role: 'system', content: 'Cognitive graph synthesis task.' },
+            { role: 'user', content: graphCtx.userMessage },
+          ],
+          model: createModel2(),
+          chatModelLabel: 'chronos_graph_synthesis',
+        });
+        break;
+      }
+      case 'deep_research': {
+        const { scheduleEvolutionRun: scheduleDeep } = await import('../evolution/evolutionPipeline.js');
+        const { createOllamaModelProvider: createModel3 } = await import('../model/ollamaClient.js');
+        const researchCtx = buildGovernanceContextForChronos(userId);
+        // Fire Tavily research if API key is configured
+        const { env: envCfg } = await import('../../config/env.js');
+        if (envCfg.tavilyApiKey || envCfg.systemTavilyApiKey) {
+          try {
+            const { runSovereignTavilyResearch } = await import('../intelligence/researchAgent.js');
+            // Extract the most salient gap as the research query
+            const queryMatch = researchCtx.userMessage.match(/\n  - (.+?)(?:\n|$)/);
+            const query = queryMatch ? queryMatch[1].trim() : 'synthesize recent knowledge gaps';
+            runSovereignTavilyResearch({
+              userPrompt: query,
+              tavilyApiKey: (envCfg.systemTavilyApiKey || envCfg.tavilyApiKey)!,
+            }).catch((e: unknown) => console.warn('[Chronos] Tavily research failed:', e));
+          } catch {
+            // researchAgent may not be available — fall through to evolution run
+          }
+        }
+        scheduleDeep({
+          traceId: `chronos-research-${Date.now()}`,
+          userId,
+          userMessage: researchCtx.userMessage,
+          assistantResponse: researchCtx.assistantResponse,
+          systemPrompt: 'You are conducting a deep research pass on the epistemic gaps identified in the governance context. Surface what is unknown or contradictory.',
+          requestMessages: [
+            { role: 'system', content: 'Deep research task.' },
+            { role: 'user', content: researchCtx.userMessage },
+          ],
+          model: createModel3(),
+          chatModelLabel: 'chronos_deep_research',
+        });
+        break;
+      }
+      case 'idle':
+      default:
+        break;
+    }
+  } catch (err) {
+    console.error(`[Chronos] dispatchChronosAction failed for user ${userId}:`, err);
+  }
+}
+
+async function processUserTick(model: ModelProvider, userId: string): Promise<void> {
   try {
     const result = await runChronosHeartbeat(model, userId);
-    if (!result.ok && result.reason !== 'chronos_busy') {
+    if (result.ok) {
+      await dispatchChronosAction(userId, result.decision.action);
+    } else if (result.reason !== 'chronos_busy') {
       console.warn('[chronos] heartbeat skipped or failed:', result.reason);
     }
   } catch (e) {
@@ -260,6 +426,13 @@ async function chronosTick(model: ModelProvider): Promise<void> {
       status: 'error',
     });
   }
+}
+
+async function chronosTick(model: ModelProvider): Promise<void> {
+  const idleUsers = getIdleUserIds();
+  const batch = idleUsers.slice(0, 3);
+  if (batch.length === 0) return;
+  await Promise.allSettled(batch.map((uid) => processUserTick(model, uid)));
 }
 
 /** Start interval worker; no overlap thanks to chronosInFlight + idle gate. */

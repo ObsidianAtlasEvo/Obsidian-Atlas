@@ -1,6 +1,51 @@
 import { getDb } from '../../db/sqlite.js';
 import type { PolicyProfile } from '../../types/atlas.js';
 
+// ---------------------------------------------------------------------------
+// Feature flags
+// ---------------------------------------------------------------------------
+
+export interface ActiveFeatureFlag {
+  feature: string;
+  confidence: number;
+  recommended_at: string;
+  expires_at: string | null;
+}
+
+/**
+ * Returns all non-expired feature flags with confidence > 0 for a user.
+ * Reads from user_feature_recommendations (written by evolveFeatureFlags).
+ */
+export function getActiveFeatureFlags(userId: string): ActiveFeatureFlag[] {
+  const db = getDb();
+  try {
+    const rows = db
+      .prepare(
+        `SELECT feature, confidence, recommended_at, expires_at
+         FROM user_feature_recommendations
+         WHERE user_id = ?
+           AND (expires_at IS NULL OR expires_at > datetime('now'))
+           AND (confidence IS NULL OR confidence > 0)
+         ORDER BY confidence DESC, recommended_at DESC`
+      )
+      .all(userId) as Array<{
+        feature: string;
+        confidence: number | null;
+        recommended_at: string;
+        expires_at: string | null;
+      }>;
+    return rows.map((r) => ({
+      feature: r.feature,
+      confidence: r.confidence ?? 1.0,
+      recommended_at: r.recommended_at,
+      expires_at: r.expires_at,
+    }));
+  } catch {
+    // Table may not exist yet on first run before migration
+    return [];
+  }
+}
+
 const DEFAULTS: Omit<PolicyProfile, 'userId' | 'updatedAt'> = {
   verbosity: 'medium',
   tone: 'analytical',

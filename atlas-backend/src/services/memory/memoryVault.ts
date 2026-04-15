@@ -75,7 +75,7 @@ export async function retrieveRelevantMemories(
          FROM memory_vault
          WHERE user_id = ?
          ORDER BY created_at DESC
-         LIMIT 400`
+         LIMIT 100`
       )
       .all(userId) as Array<{
       id: string;

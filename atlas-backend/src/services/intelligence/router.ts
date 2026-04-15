@@ -22,6 +22,8 @@ let ollamaReachableCache: { at: number; ok: boolean } | null = null;
 const OLLAMA_HEALTH_TTL_MS = 5000;
 
 export async function isLocalOllamaReachable(signal?: AbortSignal): Promise<boolean> {
+  if (!env.ollamaBaseUrl) return false;
+
   const now = Date.now();
   if (ollamaReachableCache && now - ollamaReachableCache.at < OLLAMA_HEALTH_TTL_MS) {
     return ollamaReachableCache.ok;
@@ -184,7 +186,7 @@ export class LocalOllamaAdapter implements IntelligenceSurface {
     let completionTokens: number | undefined;
 
     try {
-      const res = await fetch(`${env.ollamaBaseUrl}/chat`, {
+      const res = await fetch(`${env.ollamaBaseUrl}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
