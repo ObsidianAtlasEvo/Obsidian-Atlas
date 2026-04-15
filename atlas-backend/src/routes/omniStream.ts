@@ -135,6 +135,19 @@ function sseWrite(raw: { write: (s: string) => boolean }, event: string, data: u
   raw.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
 }
 
+/** Run an async task while emitting SSE heartbeats every 15 s to prevent client watchdog timeouts during silent processing. */
+async function withHeartbeat<T>(
+  raw: { write: (s: string) => boolean },
+  task: () => Promise<T>,
+): Promise<T> {
+  const hb = setInterval(() => sseWrite(raw, 'heartbeat', { ts: Date.now() }), 15_000);
+  try {
+    return await task();
+  } finally {
+    clearInterval(hb);
+  }
+}
+
 /**
  * Resonance Chamber: SSE stream with routing status → token deltas → done (+ evolution scheduled).
  */
@@ -297,14 +310,14 @@ export function registerOmniStreamRoutes(app: FastifyInstance): void {
             plan,
           });
           const runPipeline = () =>
-            executeSwarmPipeline({
+            withHeartbeat(raw, () => executeSwarmPipeline({
               userId,
               plan,
               messages: messagesWithRouting,
               onDelta,
               onSwarmTicker: (evt) => sseWrite(raw, 'swarm_ticker', evt),
               timeoutMs: 180_000,
-            });
+            }));
           const useGpuQueue = planUsesLocalOllama(plan) && sovereignEligible;
           const pipeResult = useGpuQueue
             ? await enqueueGpuTask(userId, requestId, runPipeline)
@@ -381,14 +394,14 @@ export function registerOmniStreamRoutes(app: FastifyInstance): void {
           });
 
           const runPipeline = () =>
-            executeSwarmPipeline({
+            withHeartbeat(raw, () => executeSwarmPipeline({
               userId,
               plan,
               messages: messagesWithRouting,
               onDelta,
               onSwarmTicker: (evt) => sseWrite(raw, 'swarm_ticker', evt),
               timeoutMs: 180_000,
-            });
+            }));
 
           const useGpuQueue = planUsesLocalOllama(plan) && sovereignEligible;
           const pipeResult = useGpuQueue

@@ -225,6 +225,8 @@ interface StreamCallbacks {
   onToken: (token: string) => void;
   onDone: (fullText: string, metrics?: { tokens?: number; duration?: number }) => void;
   onError: (message: string, code: string) => void;
+  /** Fires on non-delta progress events (swarm_ticker, status, route, routing) — useful for resetting watchdogs. */
+  onProgress?: () => void;
 }
 
 async function streamOmniChat(
@@ -321,8 +323,16 @@ async function streamOmniChat(
           const code = typeof payload.code === 'string' ? payload.code : 'SERVER_ERROR';
           callbacks.onError(msg, code);
           return;
+        } else if (
+          eventType === 'swarm_ticker' ||
+          eventType === 'status' ||
+          eventType === 'route' ||
+          eventType === 'routing' ||
+          eventType === 'heartbeat'
+        ) {
+          // Progress events prove the server is alive — reset the watchdog
+          callbacks.onProgress?.();
         }
-        // Ignore: status, routing, route, swarm_ticker, overseer_annotation, clarity_terminal
       }
     }
 
@@ -506,6 +516,11 @@ export default function AtlasChamber() {
             store.addResonanceObservation({ timestamp: nowISO(), signal: fullText.slice(0, 200), dimension: 'inquiry', strength: 0.5, context: text.slice(0, 100), sessionId: convId ?? undefined });
             store.addResonanceGraphNode({ label: text.slice(0, 40), type: 'concept', weight: 1 });
           }
+        },
+        onProgress: () => {
+          // Server is alive (swarm_ticker, status, route, etc.) — reset the
+          // watchdog so silent swarm steps don't trip the client timeout.
+          request.resetWatchdog(handleWatchdogTimeout);
         },
         onError: (message, code) => {
           if (persistTimerRef.current) { clearTimeout(persistTimerRef.current); persistTimerRef.current = null; }
