@@ -59,3 +59,20 @@ export function atlasAuthUrl(path: string): string {
   if (base) return `${base}${p}`;
   return p;
 }
+
+const TRANSIENT_USER_MESSAGE = 'Atlas is momentarily overloaded. Please try again in a few seconds.';
+
+/** Replace raw API error strings with a clean user-facing message. */
+export function sanitizeAtlasError(msg: string): string {
+  if (
+    msg.includes('[GoogleGenerativeAI Error]') ||
+    msg.includes('GoogleGenerativeAI') ||
+    (msg.includes('503') && (msg.includes('Service Unavailable') || msg.includes('overloaded'))) ||
+    msg.includes('high demand') ||
+    (msg.includes('429') && (msg.includes('Rate limit') || msg.includes('Too Many Requests'))) ||
+    msg.includes('RESOURCE_EXHAUSTED')
+  ) {
+    return TRANSIENT_USER_MESSAGE;
+  }
+  return msg;
+}

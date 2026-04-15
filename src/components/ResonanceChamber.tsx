@@ -34,7 +34,7 @@ import { ThemeEvolutionView } from '../resonance/ui/ThemeEvolutionView';
 import { ResonanceThread } from '../resonance/types';
 import { QuietPowerQuotaModal } from './Settings/SovereigntyControls';
 import { atlasTraceUserId } from '../lib/atlasTraceContext';
-import { atlasApiUrl, atlasHttpEnabled } from '../lib/atlasApi';
+import { atlasApiUrl, atlasHttpEnabled, sanitizeAtlasError } from '../lib/atlasApi';
 
 function atlasPostureFromAdaptiveDepth(depth: number): 1 | 2 | 3 | 4 | 5 {
   const n = Math.round(Number.isFinite(depth) ? depth : 3);
@@ -198,7 +198,7 @@ export function ResonanceChamber({ state, setState }: ResonanceChamberProps) {
           (event, data) => {
             if (event === 'error') {
               terminalError = {
-                message: String(data?.message ?? 'Request failed'),
+                message: sanitizeAtlasError(String(data?.message ?? 'Request failed')),
                 code: typeof data?.code === 'string' ? data.code : undefined,
               };
               return;

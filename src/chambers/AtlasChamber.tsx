@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useAtlasStore } from '../store/useAtlasStore';
-import { atlasApiUrl } from '../lib/atlasApi';
+import { atlasApiUrl, sanitizeAtlasError } from '../lib/atlasApi';
 import { buildAtlasSystemPrompt } from '../lib/atlasPrompt';
 import { generateId, nowISO } from '../lib/persistence';
 import { useChatRequestState, type ChatRequestStatus } from '../hooks/useChatRequestState';
@@ -317,7 +317,7 @@ async function streamOmniChat(
           callbacks.onDone(fullText, { tokens, duration });
           return;
         } else if (eventType === 'error') {
-          const msg = typeof payload.message === 'string' ? payload.message : 'Unknown server error';
+          const msg = typeof payload.message === 'string' ? sanitizeAtlasError(payload.message) : 'Unknown server error';
           const code = typeof payload.code === 'string' ? payload.code : 'SERVER_ERROR';
           callbacks.onError(msg, code);
           return;

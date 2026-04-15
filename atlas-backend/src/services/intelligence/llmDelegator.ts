@@ -8,6 +8,7 @@ import {
 } from './omniRouter.js';
 import { messagesWithPrimeDirective, type DelegatorMessage } from './primeDirective.js';
 import { isSovereignOwnerEmail } from './router.js';
+import { isGeminiTransient, TRANSIENT_USER_MESSAGE } from './universalAdapter.js';
 import { runMaximumClarityTrack } from './maximumClarityPipeline.js';
 import {
   executeSwarmPipeline,
@@ -169,16 +170,21 @@ function geminiModelId(): string {
   return env.geminiModel?.trim() || 'gemini-2.0-flash';
 }
 
-async function geminiGenerateStream(
+function delayMs(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function geminiGenerateStreamRaw(
   msgs: DelegatorMessage[],
   onDelta: StreamDeltaHandler,
-  options: { signal?: AbortSignal; timeoutMs?: number }
+  options: { signal?: AbortSignal; timeoutMs?: number },
+  modelOverride?: string,
 ): Promise<{ fullText: string; model: string }> {
   const key = env.geminiApiKey?.trim();
   if (!key) throw new Error('Gemini execution requires GEMINI_API_KEY');
 
   const { system, rest } = splitSystemAndRest(msgs);
-  const model = geminiModelId();
+  const model = modelOverride ?? geminiModelId();
   const ai = new GoogleGenerativeAI(key);
 
   const contents = rest.map((m) => ({
@@ -211,6 +217,51 @@ async function geminiGenerateStream(
   } finally {
     if (t) clearTimeout(t);
   }
+}
+
+/**
+ * Gemini streaming with transient-error fallback chain:
+ * retry same model → gemini-2.0-flash → Groq → clean error.
+ */
+async function geminiGenerateStream(
+  msgs: DelegatorMessage[],
+  onDelta: StreamDeltaHandler,
+  options: { signal?: AbortSignal; timeoutMs?: number }
+): Promise<{ fullText: string; model: string }> {
+  // Attempt 1: primary model
+  try {
+    return await geminiGenerateStreamRaw(msgs, onDelta, options);
+  } catch (err) {
+    if (!isGeminiTransient(err)) throw err;
+  }
+
+  // Attempt 2: retry after delay
+  await delayMs(1500);
+  try {
+    return await geminiGenerateStreamRaw(msgs, onDelta, options);
+  } catch (err) {
+    if (!isGeminiTransient(err)) throw err;
+  }
+
+  // Attempt 3: secondary Gemini model
+  const primary = geminiModelId();
+  const secondary = 'gemini-2.0-flash';
+  if (primary !== secondary) {
+    try {
+      return await geminiGenerateStreamRaw(msgs, onDelta, options, secondary);
+    } catch (err) {
+      if (!isGeminiTransient(err)) throw err;
+    }
+  }
+
+  // Attempt 4: fall back to Groq streaming
+  try {
+    return await groqChatStream(msgs, onDelta, { temperature: 0.35, ...options });
+  } catch {
+    // Groq also failed
+  }
+
+  throw new Error(TRANSIENT_USER_MESSAGE);
 }
 
 async function ollamaChatStream(
