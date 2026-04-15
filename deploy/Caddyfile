@@ -17,7 +17,10 @@ obsidianatlastech.com, www.obsidianatlastech.com {
 
 	# Strip /api prefix (same as Vite: /api/v1/foo → upstream /v1/foo)
 	handle_path /api/* {
-		reverse_proxy 127.0.0.1:3001
+		# flush_interval -1 disables buffering so SSE streams reach the browser immediately
+		reverse_proxy 127.0.0.1:3001 {
+			flush_interval -1
+		}
 	}
 
 	handle /auth* {
