@@ -72,6 +72,16 @@ export function registerGovernanceConsoleRoutes(app: FastifyInstance): void {
       });
     }
 
+    // Graceful LLM availability check
+    const { env } = await import('../config/env.js');
+    const hasLlm = !!(env.groqApiKey?.trim() || env.cloudOpenAiApiKey?.trim());
+    if (!hasLlm) {
+      return reply.status(503).send({
+        error: 'llm_not_configured',
+        response: 'KERNEL ERROR: No LLM provider configured. Set GROQ_API_KEY or ATLAS_CLOUD_OPENAI_API_KEY in the backend environment.',
+      });
+    }
+
     try {
       const { complete } = await import('../services/intelligence/llmDelegator.js');
       const prompt = buildGovernancePrompt(command, admin);
@@ -106,6 +116,21 @@ export function registerGovernanceConsoleRoutes(app: FastifyInstance): void {
     if (!admin) {
       return reply.send({
         response: 'UNAUTHORIZED: Sovereign Creator authentication required.',
+        proposalTitle: '',
+        proposalDescription: '',
+        proposalClass: 0,
+        isImmediateUpgrade: false,
+        upgradeImpact: '',
+      });
+    }
+
+    // Graceful LLM availability check
+    const { env: envAi } = await import('../config/env.js');
+    const hasLlmAi = !!(envAi.groqApiKey?.trim() || envAi.cloudOpenAiApiKey?.trim());
+    if (!hasLlmAi) {
+      return reply.status(503).send({
+        error: 'llm_not_configured',
+        response: 'KERNEL ERROR: No LLM provider configured. Set GROQ_API_KEY or ATLAS_CLOUD_OPENAI_API_KEY in the backend environment.',
         proposalTitle: '',
         proposalDescription: '',
         proposalClass: 0,
