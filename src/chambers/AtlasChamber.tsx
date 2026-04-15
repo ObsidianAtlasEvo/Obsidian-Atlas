@@ -335,6 +335,10 @@ async function streamOmniChat(
   } catch (err: unknown) {
     if (signal.aborted) {
       callbacks.onError('Request was cancelled', 'ABORTED');
+    } else if (fullText) {
+      // Stream broke mid-way but we already have content — deliver it
+      // instead of replacing the visible partial response with an error.
+      callbacks.onDone(fullText, { duration: Date.now() - startTime });
     } else {
       callbacks.onError(err instanceof Error ? err.message : 'Stream read error', 'NETWORK');
     }
@@ -523,8 +527,18 @@ export default function AtlasChamber() {
           }
 
           request.transition('failed');
-          finalizeMessage(assistantMsgId, { requestStatus: 'failed', error: message, content: '' });
-          if (convId) store.updateConversationMessage(convId, assistantMsgId, { requestStatus: 'failed', error: message, content: '' });
+          // If tokens already streamed, preserve accumulated content instead
+          // of wiping it with an error.  The user was reading a partial
+          // response — replacing it with "overloaded" is worse than showing
+          // what we have plus a non-destructive error note.
+          const hasPartial = pendingContentRef.current.length > 0;
+          if (hasPartial) {
+            finalizeMessage(assistantMsgId, { requestStatus: 'completed', content: pendingContentRef.current });
+            if (convId) store.updateConversationMessage(convId, assistantMsgId, { requestStatus: 'completed', content: pendingContentRef.current });
+          } else {
+            finalizeMessage(assistantMsgId, { requestStatus: 'failed', error: message, content: '' });
+            if (convId) store.updateConversationMessage(convId, assistantMsgId, { requestStatus: 'failed', error: message, content: '' });
+          }
         },
       },
       controller.signal,

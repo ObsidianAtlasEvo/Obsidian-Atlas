@@ -448,6 +448,28 @@ export function registerOmniStreamRoutes(app: FastifyInstance): void {
     } catch (e) {
       const rawMessage = e instanceof Error ? e.message : String(e);
       request.log.error(e);
+
+      // If tokens have already been streamed, send a done event with the
+      // accumulated partial text instead of replacing the visible response
+      // with an error message.  The user already saw content — preserving it
+      // is far better than flashing "overloaded" over a half-read answer.
+      if (fullText.length > 0) {
+        request.log.warn(
+          { partialLen: fullText.length },
+          'Error after partial stream; sending accumulated text as done',
+        );
+        sseWrite(raw, 'done', {
+          traceId,
+          requestId,
+          reply: fullText,
+          surface: 'partial_recovery',
+          model: 'unknown',
+          partial: true,
+        });
+        raw.end();
+        return;
+      }
+
       const code =
         e instanceof QuotaExceededError
           ? e.code
