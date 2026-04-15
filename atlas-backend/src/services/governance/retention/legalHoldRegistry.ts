@@ -10,8 +10,7 @@
 import { randomUUID } from 'node:crypto';
 import { getDb } from '../../../db/sqlite.js';
 import { logRetentionEvent } from './retentionAuditTrail.js';
-
-const SOVEREIGN_CREATOR_EMAIL = 'crowleyrc62@gmail.com';
+import { SOVEREIGN_CREATOR_EMAIL } from '../../intelligence/sovereignCreatorDirective.js';
 
 export interface LegalHold {
   id?: string;
