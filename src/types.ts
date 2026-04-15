@@ -800,6 +800,14 @@ export interface UserQuestion {
       posture: number;
       lineOfInquiry: string | null;
     };
+    /** Constitutional review from Overseer — emitted as `overseer_annotation` SSE event. */
+    overseerAnnotation?: {
+      constitutional_check: string[];
+      gap_summary: string[];
+      synthesis_notes: string;
+      was_personalized: boolean;
+      degraded: boolean;
+    };
     followUp?: string;
     layered?: LayeredResponse;
     

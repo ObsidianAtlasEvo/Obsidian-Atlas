@@ -1,4 +1,7 @@
 import './bootstrapEnv.js';
+import { validateEnv } from './validateEnv.js';
+validateEnv();
+
 import cookie from '@fastify/cookie';
 import cors from '@fastify/cors';
 import Fastify, { type FastifyReply, type FastifyRequest } from 'fastify';
@@ -20,6 +23,7 @@ import { registerIntelligenceChambersRoutes } from './routes/intelligenceChamber
 import { registerMindMapRoutes } from './routes/mindMapRoutes.js';
 import { registerSovereigntyRoutes } from './routes/sovereigntyRoutes.js';
 import { registerAuthRoutes } from './routes/authRoutes.js';
+import { attachAtlasSession } from './services/auth/authProvider.js';
 import { registerDegradedModeRoutes } from './routes/degradedModeRoutes.js';
 import { startPolling } from './services/governance/degraded/degradedModeOracle.js';
 import { initAutoRecovery } from './services/governance/degraded/recoveryOrchestrator.js';
@@ -88,26 +92,35 @@ registerAuthRoutes(app);
 registerOllamaCompatRoutes(app);
 registerOmniStreamRoutes(app);
 registerSovereigntyRoutes(app);
-registerCognitiveGovernanceRoutes(app);
-registerLongitudinalRoutes(app);
-registerStrategicModelingRoutes(app);
-registerLegacyRoutes(app);
-registerSovereignOverviewRoutes(app);
-registerIntelligenceChambersRoutes(app);
-registerMindMapRoutes(app);
+// ── Governance routes — all require a valid Atlas session ─────────────────
+await app.register(async (protected_app) => {
+  protected_app.addHook('preHandler', async (request: FastifyRequest, reply: FastifyReply) => {
+    await attachAtlasSession(request);
+    if (!request.atlasVerifiedEmail) {
+      return reply.code(401).send({ error: 'Unauthorized — Atlas session required' });
+    }
+  });
+  registerCognitiveGovernanceRoutes(protected_app);
+  registerLongitudinalRoutes(protected_app);
+  registerStrategicModelingRoutes(protected_app);
+  registerLegacyRoutes(protected_app);
+  registerSovereignOverviewRoutes(protected_app);
+  registerIntelligenceChambersRoutes(protected_app);
+  registerMindMapRoutes(protected_app);
+  registerRetentionRoutes(protected_app);
+  registerGovernanceConsoleRoutes(protected_app);
+});
 registerDegradedModeRoutes(app);
 registerExplanationRoutes(app);
-registerRetentionRoutes(app);
-registerGovernanceConsoleRoutes(app);
 await app.register(orchestrateRoutes);
 await app.register(embeddingsRoutes);
 await app.register(modelRoutes);
 
-// POST /chat forwards to the handler registered as POST /v1/chat (same body, no model call here).
+// POST /chat forwards to the handler registered as POST /v1/chat/omni-stream (same body, no model call here).
 app.post('/chat', async (request: FastifyRequest, reply: FastifyReply) => {
   const res = await app.inject({
     method: 'POST',
-    url: '/v1/chat',
+    url: '/v1/chat/omni-stream',
     payload: request.body as Record<string, unknown>,
     headers: {
       'content-type': 'application/json',
@@ -138,7 +151,7 @@ app
     }
     app.log.info(
       { host: env.host, port: env.port, ollamaBaseUrl: env.ollamaBaseUrl },
-      'atlas ready  GET /health  POST /chat  POST /v1/chat'
+      'atlas ready  GET /health  POST /chat  POST /v1/chat/omni-stream'
     );
     app.log.info({ corsOrigins: env.corsOrigins }, 'cors origins');
     startPolling();

@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import { env } from '../config/env.js';
 import { streamChat } from '../services/ollama.js';
 
 /**
@@ -8,6 +9,19 @@ import { streamChat } from '../services/ollama.js';
  */
 export async function registerOllamaCompatRoutes(app: FastifyInstance): Promise<void> {
   app.post('/api/chat', async (request, reply) => {
+    // Guard: when Ollama is disabled, at least one cloud provider key must be set
+    if (
+      env.disableLocalOllama &&
+      !env.groqApiKey &&
+      !env.geminiApiKey &&
+      !env.openaiApiKey
+    ) {
+      return reply.code(503).send({
+        error:
+          'No cloud provider configured. Set GROQ_API_KEY, GEMINI_API_KEY, or OPENAI_API_KEY.',
+      });
+    }
+
     const body = request.body as {
       model?: string;
       messages: { role: string; content: string }[];
@@ -26,7 +40,7 @@ export async function registerOllamaCompatRoutes(app: FastifyInstance): Promise<
 
     const temperature = body.options?.temperature ?? 0.7;
 
-    // Use streamChat which now routes to Groq when DISABLE_LOCAL_OLLAMA=true
+    // streamChat routes to Groq when DISABLE_LOCAL_OLLAMA=true and GROQ_API_KEY is set
     const stream = streamChat(messages, { temperature });
 
     reply.raw.writeHead(200, {

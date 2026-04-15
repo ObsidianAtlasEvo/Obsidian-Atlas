@@ -231,7 +231,7 @@ export const env = {
   groqRouterModel: raw.GROQ_ROUTER_MODEL?.trim() || undefined,
   groqDelegateModel: raw.GROQ_DELEGATE_MODEL?.trim() || undefined,
   geminiApiKey: raw.GEMINI_API_KEY?.trim() || undefined,
-  geminiModel: raw.GEMINI_MODEL?.trim() || undefined,
+  geminiModel: raw.GEMINI_MODEL?.trim() || 'gemini-2.5-flash',
   omniRouterTimeoutMs: raw.OMNI_ROUTER_TIMEOUT_MS ?? 12_000,
   /** Local Ollama stream budget for sovereign lane (was 180s; large prompts + slow GPUs need more). */
   omniLocalTimeoutMs: raw.OMNI_LOCAL_TIMEOUT_MS ?? 600_000,
@@ -246,7 +246,7 @@ export const env = {
   /** Quota-backed system research; BYOK users never consume this. */
   systemTavilyApiKey:
     raw.SYSTEM_TAVILY_API_KEY?.trim() || raw.TAVILY_API_KEY?.trim() || undefined,
-  consensusGeminiModel: raw.CONSENSUS_GEMINI_MODEL?.trim() || 'gemini-1.5-pro',
+  consensusGeminiModel: raw.CONSENSUS_GEMINI_MODEL?.trim() || 'gemini-2.5-flash',
   consensusGroqAnalystModel: raw.CONSENSUS_GROQ_ANALYST_MODEL?.trim() || 'llama-3.3-70b-versatile',
   consensusGroqAltModel: raw.CONSENSUS_GROQ_ALT_MODEL?.trim() || 'mixtral-8x7b-32768',
   consensusGroqJudgeModel: raw.CONSENSUS_GROQ_JUDGE_MODEL?.trim() || 'llama-3.3-70b-versatile',

@@ -100,7 +100,7 @@ export function evaluateExchangeRules(input: {
   const u = input.userMessage.trim();
   const a = input.assistantResponse.trim();
 
-  let truth = 7;
+  let truth = 5;
   if (u.length < 2) {
     truth = 3;
     reasons.push('rules.truth: trivial user turn');
@@ -110,18 +110,18 @@ export function evaluateExchangeRules(input: {
     reasons.push('rules.truth: weak assistant payload');
   }
 
-  let cognitive = 7;
+  let cognitive = 5;
   if (a.length < 40) {
-    cognitive = 5;
+    cognitive = 3;
     reasons.push('rules.cognitive: short reply');
   } else if (a.length > 12000) {
-    cognitive = 6;
+    cognitive = 4;
     reasons.push('rules.cognitive: possible verbosity');
   }
 
-  let style = 7;
+  let style = 5;
   if (/\b(concise|brief)\b/i.test(u) && a.length > 2500) {
-    style = 5;
+    style = 3;
     reasons.push('rules.style: brevity requested but long reply');
   }
 

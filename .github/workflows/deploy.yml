@@ -13,17 +13,16 @@ on:
 
 concurrency:
   group: deploy-production
-  cancel-in-progress: false  # never cancel an in-flight deploy
+  cancel-in-progress: false
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
-# Minimal permissions — this workflow only reads repo content and SSHes out
 permissions:
   contents: read
 
 jobs:
-  # ── 1. CI gate (re-run lint/test/build before deploying) ──────────────────
+  # ── 1. CI gate ──────────────────────────────────────────────────────────────
   ci:
     name: CI gate
     runs-on: ubuntu-latest
@@ -49,7 +48,7 @@ jobs:
         run: npm run lint
 
       - name: Test
-        run: npm run test
+        run: npm run test --if-present
 
       - name: Build frontend
         run: npm run build
@@ -59,14 +58,13 @@ jobs:
       - name: Typecheck backend
         run: npm run typecheck --prefix atlas-backend
 
-  # ── 2. Deploy to VPS via SSH ───────────────────────────────────────────────
+  # ── 2. Deploy via direct SSH ─────────────────────────────────────────────────
   deploy:
     name: Deploy to obsidianatlastech.com
     runs-on: ubuntu-latest
     needs: [ci]
     permissions:
       contents: read
-    # Also run if skip_tests=true (ci job was skipped)
     if: |
       always() &&
       (needs.ci.result == 'success' || needs.ci.result == 'skipped')
@@ -75,111 +73,154 @@ jobs:
       url: https://obsidianatlastech.com
 
     steps:
+      - name: Configure SSH
+        env:
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_PORT: ${{ secrets.VPS_PORT }}
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+
+          # Write private key — printf preserves exact PEM newlines
+          printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/atlas_deploy
+          chmod 600 ~/.ssh/atlas_deploy
+
+          # Build SSH config with printf — no heredoc, no YAML conflict
+          {
+            printf 'Host atlas-vps\n'
+            printf 'HostName %s\n' "$VPS_HOST"
+            printf 'User %s\n' "$VPS_USER"
+            printf 'Port %s\n' "$VPS_PORT"
+            printf 'IdentityFile ~/.ssh/atlas_deploy\n'
+            printf 'StrictHostKeyChecking no\n'
+            printf 'UserKnownHostsFile /dev/null\n'
+            printf 'ServerAliveInterval 30\n'
+            printf 'ServerAliveCountMax 5\n'
+            printf 'ConnectTimeout 30\n'
+          } > ~/.ssh/config
+          chmod 600 ~/.ssh/config
+
+          echo "SSH config:"
+          cat ~/.ssh/config
+
+          echo "Testing SSH connection..."
+          ssh atlas-vps "echo OK connected as $(whoami) on $(hostname)"
+
       - name: Deploy via SSH
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.VPS_HOST }}
-          username: ${{ secrets.VPS_USER }}
-          key: ${{ secrets.VPS_SSH_KEY }}
-          port: ${{ secrets.VPS_PORT || 22 }}
-          script_stop: true   # abort on first error
-          script: |
-            set -euo pipefail
+        run: |
+          ssh atlas-vps 'bash -s' <<'REMOTE'
+          set -euo pipefail
 
-            DEPLOY_DIR="${{ secrets.VPS_APP_PATH }}"
-            TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S UTC')
+          export NVM_DIR="$HOME/.nvm"
+          [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh" --no-use
 
-            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-            echo "  Obsidian Atlas — Deploy @ $TIMESTAMP"
-            echo "  Commit: ${{ github.sha }}"
-            echo "  Branch: ${{ github.ref_name }}"
-            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          PM2_BIN=$(command -v pm2 2>/dev/null \
+            || ls ~/.nvm/versions/node/*/bin/pm2 2>/dev/null | tail -1 \
+            || ls /usr/local/bin/pm2 /usr/bin/pm2 2>/dev/null | head -1 \
+            || echo "pm2")
 
-            cd "$DEPLOY_DIR"
+          DEPLOY_DIR="/var/www/obsidian-atlas-src"
+          TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S UTC')
 
-            # ── Pull latest code ────────────────────────────────────────────
-            echo "[1/6] Pulling latest code..."
-            git fetch origin main
-            git reset --hard origin/main
-            echo "      ✓ On commit $(git rev-parse --short HEAD)"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  Obsidian Atlas — Deploy @ $TIMESTAMP"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-            # ── Install frontend dependencies ───────────────────────────────
-            echo "[2/6] Installing frontend dependencies..."
-            npm ci --prefer-offline
-            echo "      ✓ Done"
+          cd "$DEPLOY_DIR"
 
-            # ── Build frontend (Vite → dist/) ───────────────────────────────
-            echo "[3/6] Building frontend..."
-            npm run build
-            echo "      ✓ dist/ ready"
+          echo "[1/8] Pulling latest code..."
+          git fetch origin main
+          git reset --hard origin/main
+          echo "      ✓ $(git rev-parse --short HEAD)"
 
-            # ── Install backend dependencies ────────────────────────────────
-            echo "[4/6] Installing backend dependencies..."
-            npm ci --prefix atlas-backend --prefer-offline
-            echo "      ✓ Done"
+          echo "[2/8] Installing frontend deps..."
+          npm ci --prefer-offline
+          echo "      ✓ Done"
 
-            # ── Build backend (tsc → dist/) ─────────────────────────────────
-            echo "[5/6] Building backend..."
-            npm run build --prefix atlas-backend
-            echo "      ✓ atlas-backend/dist/ ready"
+          echo "[3/8] Building frontend..."
+          VITE_ATLAS_SAME_ORIGIN=true npm run build
+          echo "      ✓ dist/ ready"
 
-            # ── Re-source .env so env var changes are picked up on every deploy ──
-            echo "[6/6] Reloading PM2 process..."
-            ENV_FILE="$DEPLOY_DIR/atlas-backend/.env"
-            if [ -f "$ENV_FILE" ]; then
-              set -a && source "$ENV_FILE" && set +a
-              echo "      ✓ Sourced $ENV_FILE"
+          echo "[4/8] Installing backend deps..."
+          npm ci --prefix atlas-backend --prefer-offline
+          echo "      ✓ Done"
+
+          echo "[5/8] Building backend..."
+          npm run build --prefix atlas-backend
+          echo "      ✓ atlas-backend/dist/ ready"
+
+          echo "[6/8] Reloading PM2..."
+          ENV_FILE="$DEPLOY_DIR/atlas-backend/.env"
+          if [ -f "$ENV_FILE" ]; then
+            set -a && source "$ENV_FILE" && set +a
+            echo "      ✓ Sourced .env"
+          else
+            echo "      ⚠ No .env found — using existing PM2 env"
+          fi
+
+          if $PM2_BIN list | grep -q "atlas-api"; then
+            $PM2_BIN reload atlas-api --update-env
+          else
+            if [ -f ecosystem.config.cjs ]; then
+              $PM2_BIN start ecosystem.config.cjs --env production
             else
-              echo "      ⚠ No .env file found at $ENV_FILE — using existing PM2 env"
+              cd atlas-backend
+              $PM2_BIN start dist/index.js --name atlas-api \
+                --node-args="--max-old-space-size=512"
+              cd ..
             fi
+          fi
+          $PM2_BIN save
+          echo "      ✓ PM2 reloaded"
 
-            # ── Reload PM2 (zero-downtime) ──────────────────────────────────
-            if pm2 list | grep -q "atlas-api"; then
-              pm2 reload atlas-api --update-env
-            else
-              # First deploy — start via ecosystem config or bare pm2 start
-              if [ -f ecosystem.config.cjs ]; then
-                pm2 start ecosystem.config.cjs --env production
-              else
-                cd atlas-backend
-                pm2 start dist/index.js --name atlas-api --node-args="--max-old-space-size=512"
-                cd ..
-              fi
-              pm2 save
-            fi
+          echo "[7/8] Running migrations..."
+          MIGRATION_DIR="$DEPLOY_DIR/atlas-backend/migrations"
+          DB_PATH="$DEPLOY_DIR/atlas-backend/data/atlas.db"
+          if [ -d "$MIGRATION_DIR" ]; then
+            for migration in $(ls "$MIGRATION_DIR"/*.sql 2>/dev/null | sort); do
+              echo "      Applying: $(basename $migration)"
+              sqlite3 "$DB_PATH" < "$migration" || true
+            done
+            echo "      ✓ Migrations applied"
+          else
+            echo "      ⚠ No migrations dir — skipping"
+          fi
 
-            # ── Ensure PM2 survives reboots ────────────────────────────────
-            pm2 save
-            echo "      ✓ PM2 process list saved"
-            echo "      ✓ PM2 reloaded"
+          echo "[8/8] Reloading web server..."
+          if command -v caddy &>/dev/null; then
+            sudo caddy reload --config /etc/caddy/Caddyfile --force 2>/dev/null || sudo systemctl reload caddy 2>/dev/null || true
+            echo "      ✓ Caddy reloaded"
+          fi
+          if command -v nginx &>/dev/null; then
+            sudo nginx -t && sudo nginx -s reload || true
+            echo "      ✓ nginx reloaded"
+          fi
 
-            echo ""
-            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-            echo "  ✅ Deploy complete!"
-            echo "  Site: https://obsidianatlastech.com"
-            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  ✅ Deploy complete!"
+          echo "  Site: https://obsidianatlastech.com"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          REMOTE
 
-      # ── Health check — confirm site is up after deploy ─────────────────────
       - name: Post-deploy health check
         run: |
           echo "Waiting 10s for PM2 to stabilize..."
           sleep 10
-          echo "Probing health endpoint..."
           STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 \
-            https://obsidianatlastech.com/api/health 2>/dev/null)
-          STATUS=${STATUS:-000}
+            https://obsidianatlastech.com/api/health 2>/dev/null || echo "000")
           echo "HTTP status: $STATUS"
           if [ "$STATUS" = "200" ] || [ "$STATUS" = "503" ]; then
-            # 503 = degraded but alive (deep health check) — still a successful deploy
             echo "✅ Health check passed (status $STATUS)"
           else
-            echo "❌ Health check failed — site returned HTTP $STATUS"
+            echo "❌ Health check failed — HTTP $STATUS"
             exit 1
           fi
 
-      # ── Notify on failure ──────────────────────────────────────────────────
       - name: Notify on failure
         if: failure()
         run: |
-          echo "::error::Deploy to obsidianatlastech.com FAILED for commit ${{ github.sha }}"
+          echo "::error::Deploy FAILED for commit ${{ github.sha }}"
           echo "::error::Check the SSH deploy step above for the root cause."

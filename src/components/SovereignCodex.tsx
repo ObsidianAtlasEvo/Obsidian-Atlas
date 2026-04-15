@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { HelpCircle, ChevronRight, Shield, Brain, Target, Zap, Activity, BookOpen, Database, Scale, Compass } from 'lucide-react';
 import { cn } from '../lib/utils';
-import { globalEvolutionEngine } from '../services/ollamaService';
+import { globalEvolutionEngine } from '../lib/atlasEvolution';
 
 interface SovereignCodexProps {
   isOpen: boolean;

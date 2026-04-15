@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useAtlasStore } from '../store/useAtlasStore';
-import { complete } from '../lib/ollama';
+import { backendComplete } from '../lib/backendInference';
 import { buildAnalysisPrompt } from '../lib/atlasPrompt';
 import { nowISO } from '../lib/persistence';
 import type { JournalEntry, JournalAssistanceMode } from '@/types';
@@ -256,10 +256,7 @@ Respond with a JSON object with this exact structure:
 Return ONLY valid JSON. No commentary.`);
 
     try {
-      const raw = await complete([
-        { role: 'system', content: 'You are an analytical engine. Return only valid JSON.' },
-        { role: 'user', content: prompt },
-      ], { temperature: 0.3 });
+      const raw = await backendComplete(prompt, { system: 'You are an analytical engine. Return only valid JSON.' });
 
       const jsonMatch = raw.match(/\{[\s\S]*\}/);
       if (!jsonMatch) throw new Error('No JSON found');

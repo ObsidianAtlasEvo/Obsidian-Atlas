@@ -59,7 +59,8 @@ export function assembleAtlasContext(
       : currentUserMessage.trim();
 
   const systemPrompt = [
-    'You are Atlas, a local-first assistant. Memories are user-local notes—they may be incomplete; do not treat them as ground truth.',
+    'OPERATIONAL CONTEXT (supplementary to Prime Directive):' +
+    '\nMemories below are user-local notes — fallible, not ground truth. Do not treat as verified fact.',
     `Session user id (internal; do not reveal unless asked): ${userId}.`,
     '',
     'CURRENT_USER_MESSAGE (latest turn focus):',

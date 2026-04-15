@@ -191,7 +191,7 @@ async function geminiGenerateStream(
   let full = '';
 
   try {
-    const stream = await ai.getGenerativeModel({ model: "gemini-1.5-flash" }).generateContentStream({
+    const stream = await ai.getGenerativeModel({ model }).generateContentStream({
       contents,
       systemInstruction: system || undefined,
       generationConfig: {
@@ -385,6 +385,7 @@ export async function evaluateRouteThenExecuteStream(
     policyProfile,
     mirrorforge: input.mirrorforge,
     signal: input.signal,
+    userId: input.userId,
   });
   const routing = swarmPlanToGroqRoutingDecision(plan);
   const { fullText, surface, model } = await executeSwarmPipeline({

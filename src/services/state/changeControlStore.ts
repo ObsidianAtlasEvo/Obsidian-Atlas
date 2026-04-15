@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { applyStructuralRepair } from '../ollamaService';
+import { applyStructuralRepair } from '../../lib/atlasRepair';
 import { db, handleFirestoreError, OperationType, logAudit } from '../firebase';
 import { doc, updateDoc } from 'firebase/firestore';
 import { ChangeProposal } from '../../types';
