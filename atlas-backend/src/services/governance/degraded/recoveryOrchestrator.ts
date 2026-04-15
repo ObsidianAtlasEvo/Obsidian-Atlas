@@ -188,7 +188,9 @@ export function initAutoRecovery(): void {
     if (MODE_SEVERITY[newMode] > MODE_SEVERITY[lastTriggeredMode]) {
       lastTriggeredMode = newMode;
       console.log(`[recovery] Mode worsened to ${newMode}, auto-triggering recovery plan`);
-      void runRecoveryPlan(newMode);
+      void runRecoveryPlan(newMode).catch((err) => {
+        console.error(`[recovery] Recovery plan failed for mode ${newMode}:`, err);
+      });
     } else {
       lastTriggeredMode = newMode;
     }

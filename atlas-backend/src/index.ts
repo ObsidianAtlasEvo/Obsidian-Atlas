@@ -57,7 +57,11 @@ initSqlite();
 await initSemanticVectorIndex();
 
 // Rehydrate inference queue — mark any stale pending/in_progress jobs from prior run.
-const recoveredJobs = await loadPersistedJobs().catch(() => 0);
+const recoveredJobs = await loadPersistedJobs().catch((err) => {
+  // eslint-disable-next-line no-console -- logged before Fastify instance exists
+  console.warn('[atlas] Failed to recover persisted jobs from Supabase:', err);
+  return 0;
+});
 if (recoveredJobs > 0) {
   // eslint-disable-next-line no-console -- logged before Fastify instance exists
   console.log(`[atlas] recovered ${recoveredJobs} stale inference queue job(s) from Supabase`);
@@ -122,10 +126,10 @@ await app.register(cors, {
 });
 
 await registerRateLimit(app);
-registerHealthRoutes(app);
+await registerHealthRoutes(app);
 registerInferenceQueueRoutes(app);
 registerAuthRoutes(app);
-registerOllamaCompatRoutes(app);
+await registerOllamaCompatRoutes(app);
 registerOmniStreamRoutes(app);
 registerSovereigntyRoutes(app);
 // ── Governance routes — all require a valid Atlas session ─────────────────

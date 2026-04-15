@@ -12,7 +12,6 @@ import { getPolicyProfile } from '../evolution/policyStore.js';
 import { listRecentEvolutionGaps } from '../evolution/gapStore.js';
 import { getDb } from '../../db/sqlite.js';
 import type { ModelProvider } from '../model/modelProvider.js';
-import { createOllamaModelProvider } from '../model/ollamaClient.js';
 import { createGroqModelProvider } from '../model/groqModelProvider.js';
 import { appendAutonomyLog } from './autonomyLog.js';
 
@@ -334,7 +333,7 @@ async function dispatchChronosAction(userId: string, decision: string): Promise<
     switch (decision) {
       case 'refine_policy': {
         const { scheduleEvolutionRun } = await import('../evolution/evolutionPipeline.js');
-        const { createOllamaModelProvider: createModel } = await import('../model/ollamaClient.js');
+        const { createGroqModelProvider: createModel } = await import('../model/groqModelProvider.js');
         scheduleEvolutionRun({
           traceId: `chronos-${Date.now()}`,
           userId,
@@ -349,7 +348,7 @@ async function dispatchChronosAction(userId: string, decision: string): Promise<
       }
       case 'synthesize_graph': {
         const { scheduleEvolutionRun: scheduleRun } = await import('../evolution/evolutionPipeline.js');
-        const { createOllamaModelProvider: createModel2 } = await import('../model/ollamaClient.js');
+        const { createGroqModelProvider: createModel2 } = await import('../model/groqModelProvider.js');
         const graphCtx = buildGovernanceContextForChronos(userId);
         scheduleRun({
           traceId: `chronos-graph-${Date.now()}`,
@@ -368,7 +367,7 @@ async function dispatchChronosAction(userId: string, decision: string): Promise<
       }
       case 'deep_research': {
         const { scheduleEvolutionRun: scheduleDeep } = await import('../evolution/evolutionPipeline.js');
-        const { createOllamaModelProvider: createModel3 } = await import('../model/ollamaClient.js');
+        const { createGroqModelProvider: createModel3 } = await import('../model/groqModelProvider.js');
         const researchCtx = buildGovernanceContextForChronos(userId);
         // Fire Tavily research if API key is configured
         const { env: envCfg } = await import('../../config/env.js');

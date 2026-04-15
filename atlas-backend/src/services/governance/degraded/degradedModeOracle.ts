@@ -144,8 +144,10 @@ async function poll(): Promise<void> {
 export function startPolling(): void {
   if (pollTimer !== null) return;
   // Run an initial poll immediately
-  void poll();
-  pollTimer = setInterval(() => void poll(), POLL_INTERVAL_MS);
+  void poll().catch((err) => {
+    console.warn('[oracle] Initial health poll failed:', err);
+  });
+  pollTimer = setInterval(() => void poll().catch(() => {}), POLL_INTERVAL_MS);
 }
 
 /** Stop the polling interval. */
