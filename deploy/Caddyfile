@@ -1,6 +1,9 @@
 # Obsidian Atlas — same-origin production (HTTPS automatic with Caddy).
 # Adjust root path and domain. Backend: Fastify on 127.0.0.1:3001 (full app: atlas-backend/src/index.ts).
 #
+# DNS: point both apex and www to this host (A/AAAA or ALIAS).
+# Caddy issues one certificate covering both names (SANs).
+#
 #   sudo caddy run --config /path/to/obsidian-atlas/deploy/Caddyfile
 #
 # Routes mirror vite.config.ts dev proxy:
@@ -8,7 +11,7 @@
 #   /auth/* → backend unchanged
 #   /ollama/* → local Ollama (optional; strip /ollama) — remove block if unused
 
-obsidianatlastech.com {
+obsidianatlastech.com, www.obsidianatlastech.com {
 	root * /var/www/obsidian-atlas-src/dist
 	encode gzip zstd
 
