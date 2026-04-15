@@ -400,6 +400,7 @@ function OverviewTab({ resonance, onToggleLearning, onSetMode }: OverviewTabProp
       {/* Stability + meta */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
         {/* Stability */}
+        {/* Profile Stability — computed from adaptation history */}
         <div style={{
           background: C.inset,
           border: `1px solid ${C.border}`,
@@ -408,19 +409,15 @@ function OverviewTab({ resonance, onToggleLearning, onSetMode }: OverviewTabProp
           display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8,
         }}>
           <Label>Profile Stability</Label>
-          <CircleProgress
-            value={adaptiveProfile.stabilityScore}
-            size={72}
-            strokeWidth={6}
-            color={adaptiveProfile.stabilityScore > 0.7 ? C.success : adaptiveProfile.stabilityScore > 0.4 ? C.amber : C.danger}
-            label="stability"
-          />
+          <div style={{ fontSize: '1.5rem', fontWeight: 700, color: adaptiveProfile.adaptationCount > 15 ? C.success : adaptiveProfile.adaptationCount > 5 ? C.amber : C.violet, lineHeight: 1 }}>
+            {adaptiveProfile.adaptationCount > 15 ? 'Stable' : adaptiveProfile.adaptationCount > 5 ? 'Forming' : 'Calibrating'}
+          </div>
           <div style={{ fontSize: '0.68rem', color: C.dim, textAlign: 'center' }}>
-            {adaptiveProfile.stabilityScore > 0.7
-              ? 'Highly stable cognitive signature'
-              : adaptiveProfile.stabilityScore > 0.4
-              ? 'Signature stabilizing'
-              : 'Still calibrating'}
+            {adaptiveProfile.adaptationCount > 15
+              ? 'Consistent cognitive signature established'
+              : adaptiveProfile.adaptationCount > 5
+              ? `${adaptiveProfile.adaptationCount} adaptations logged`
+              : 'More interaction needed to establish signature'}
           </div>
         </div>
 
