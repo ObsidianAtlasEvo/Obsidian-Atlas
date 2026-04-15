@@ -894,6 +894,25 @@ CREATE TABLE IF NOT EXISTS journal_entries (
 CREATE INDEX IF NOT EXISTS idx_journal_entries_user_id ON journal_entries(user_id, created_at DESC);
 `;
 
+/** Phase 3 billing: Stripe subscription tracking per user. */
+const BILLING_SUBSCRIPTION_TABLE = `
+  CREATE TABLE IF NOT EXISTS user_subscriptions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT NOT NULL UNIQUE,
+    stripe_customer_id TEXT,
+    stripe_subscription_id TEXT,
+    tier TEXT NOT NULL DEFAULT 'free',
+    status TEXT NOT NULL DEFAULT 'inactive',
+    current_period_start INTEGER,
+    current_period_end INTEGER,
+    cancel_at_period_end INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_user_subscriptions_user_id ON user_subscriptions(user_id);
+  CREATE INDEX IF NOT EXISTS idx_user_subscriptions_stripe_customer ON user_subscriptions(stripe_customer_id);
+`;
+
 let _db: Database.Database | null = null;
 
 /**
@@ -918,6 +937,7 @@ export function initSqlite(): Database.Database {
   database.exec(GAP_LEDGER_TABLES);
   database.exec(CHANGE_CONTROL_TABLE);
   database.exec(SUBSTRATE_UNIFICATION);
+  database.exec(BILLING_SUBSCRIPTION_TABLE);
   migratePolicyProfileColumns(database);
   migrateSectionVIIIContinuity(database);
   migrateArchivedAtIndexes(database);
