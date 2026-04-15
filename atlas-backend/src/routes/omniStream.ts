@@ -160,6 +160,18 @@ export function registerOmniStreamRoutes(app: FastifyInstance): void {
 
     const raw = reply.raw;
 
+    // Declared outside `try` so the `catch` block can inspect accumulated
+    // tokens when deciding whether to send a partial-recovery `done` vs an
+    // `error` event.  PR #68 added a `fullText.length` check inside `catch`
+    // but left the declaration inside `try`, making it a ReferenceError that
+    // silently killed the error handler — the root cause of the infinite-
+    // thinking regression.
+    let fullText = '';
+    const onDelta = (t: string) => {
+      fullText += t;
+      sseWrite(raw, 'delta', { text: t });
+    };
+
     try {
       // verifiedEmail resolved above (before hijack)
       const lane = env.disableLocalOllama ? 'public_swarm' : resolveOmniComputeLane(verifiedEmail);
@@ -192,12 +204,6 @@ export function registerOmniStreamRoutes(app: FastifyInstance): void {
         .join('\n');
 
       const policyProfile = getPolicyProfile(userId);
-
-      let fullText = '';
-      const onDelta = (t: string) => {
-        fullText += t;
-        sseWrite(raw, 'delta', { text: t });
-      };
 
       let result: { fullText: string; surface: string; model: string };
 
