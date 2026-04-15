@@ -176,7 +176,6 @@ export function ResonanceChamber({ state, setState }: ResonanceChamberProps) {
 
   const handleProcess = async () => {
     if (!inputText.trim()) return;
-    setIsProcessing(true);
     setSwarmActive(false);
     setClarityTerminalLines([]);
     streamAccRef.current = '';
@@ -184,6 +183,7 @@ export function ResonanceChamber({ state, setState }: ResonanceChamberProps) {
     setLabStreamText('');
 
     try {
+      setIsProcessing(true);
       if (useLiveAtlas) {
         let terminalError: { code?: string; message: string } | null = null;
         await consumeOmniSse(

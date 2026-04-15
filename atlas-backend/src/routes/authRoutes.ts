@@ -24,11 +24,15 @@ function sessionCookieOptions(): {
   maxAge: number;
 } {
   const secure = process.env.NODE_ENV === 'production';
+  // 'strict' is safe here because the SPA and API share the same origin
+  // (nginx proxies /api and /auth to the Fastify backend).
+  // Use 'lax' only if the frontend moves to a different domain and
+  // the backend has CORS configured with credentials:true + sameSite:'none'.
   return {
     path: '/',
     httpOnly: true,
     secure,
-    sameSite: 'lax',
+    sameSite: secure ? 'strict' : 'lax',
     maxAge: 60 * 60 * 24 * 7,
   };
 }
@@ -45,14 +49,14 @@ function stateCookieOptions(): {
     path: '/',
     httpOnly: true,
     secure,
-    sameSite: 'lax',
+    sameSite: secure ? 'strict' : 'lax',
     maxAge: STATE_MAX_AGE_SEC,
   };
 }
 
 function clearCookie(reply: FastifyReply, name: string): void {
   const secure = process.env.NODE_ENV === 'production';
-  reply.setCookie(name, '', { path: '/', httpOnly: true, secure, sameSite: 'lax', maxAge: 0 });
+  reply.setCookie(name, '', { path: '/', httpOnly: true, secure, sameSite: secure ? 'strict' : 'lax', maxAge: 0 });
 }
 
 export function registerAuthRoutes(app: FastifyInstance): void {

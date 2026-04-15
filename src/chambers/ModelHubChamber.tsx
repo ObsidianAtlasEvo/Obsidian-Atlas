@@ -2079,7 +2079,7 @@ export default function ModelHubChamber() {
   // Attempt to hydrate models from backend; fall back to constants silently
   useEffect(() => {
     const controller = new AbortController();
-    fetch('/api/v1/models', { signal: controller.signal })
+    fetch('/api/v1/models', { signal: controller.signal, credentials: 'include' })
       .then((res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.json();
@@ -2098,7 +2098,7 @@ export default function ModelHubChamber() {
   // Attempt to load last orchestration result
   useEffect(() => {
     const controller = new AbortController();
-    fetch('/api/v1/orchestration/last', { signal: controller.signal })
+    fetch('/api/v1/orchestration/last', { signal: controller.signal, credentials: 'include' })
       .then((res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.json();

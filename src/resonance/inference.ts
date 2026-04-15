@@ -132,9 +132,51 @@ export class InferenceEngine {
     // Depth Preference
     if (evidence.depth !== undefined) {
       const current = profile.inferredPreferences.responseDepth || { value: ResponseDepth.STANDARD, confidence: 0, evidenceCount: 0, lastReinforcedAt: new Date().toISOString(), stability: 'medium', driftRisk: 'low' };
-      // Note: calculateTraitUpdate works with numbers, but responseDepth is an enum.
-      // We need a numeric mapping for enums if we want to use the same logic.
-      // For now, let's focus on the numeric traits.
+
+      const depthNumericMap: Record<string, number> = {
+        [ResponseDepth.CONCISE]: 0.1,
+        [ResponseDepth.STANDARD]: 0.5,
+        [ResponseDepth.EXPANDED]: 0.65,
+        [ResponseDepth.DEEP]: 0.8,
+        [ResponseDepth.EXPERT_DENSE]: 1.0,
+      };
+      const depthOrder: ResponseDepth[] = [
+        ResponseDepth.CONCISE,
+        ResponseDepth.STANDARD,
+        ResponseDepth.EXPANDED,
+        ResponseDepth.DEEP,
+        ResponseDepth.EXPERT_DENSE,
+      ];
+
+      const currentNumeric = depthNumericMap[current.value] ?? 0.5;
+      const target = evidence.depth;
+      const diff = target - currentNumeric;
+      const DEPTH_TOLERANCE = 0.15;
+
+      let newDepth = current.value;
+      if (Math.abs(diff) > DEPTH_TOLERANCE) {
+        const currentIdx = depthOrder.indexOf(current.value);
+        const nextIdx = diff > 0
+          ? Math.min(currentIdx + 1, depthOrder.length - 1)
+          : Math.max(currentIdx - 1, 0);
+        newDepth = depthOrder[nextIdx] ?? current.value;
+      }
+
+      const newConfidence = clamp(current.confidence + TRAIT_UPDATE_PARAMS.confidenceGrowthRate, 0, 1);
+      const movementMagnitude = Math.abs(diff);
+      const stabilityChange = movementMagnitude < 0.05
+        ? TRAIT_UPDATE_PARAMS.stabilityGainRate
+        : -TRAIT_UPDATE_PARAMS.stabilityDecayRate;
+      const newStability = clamp(this.stabilityToNumeric(current.stability) + stabilityChange, 0, 1);
+
+      profile.inferredPreferences.responseDepth = {
+        value: newDepth,
+        confidence: newConfidence,
+        evidenceCount: current.evidenceCount + 1,
+        lastReinforcedAt: new Date().toISOString(),
+        stability: this.numericToStability(newStability),
+        driftRisk: movementMagnitude > TRAIT_UPDATE_PARAMS.driftDetectionThreshold ? 'high' : 'low',
+      };
     }
 
     // Density Preference

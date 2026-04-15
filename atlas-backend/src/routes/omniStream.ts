@@ -10,6 +10,7 @@ import { attachAtlasSession } from '../services/auth/authProvider.js';
 import { getVerifiedUserEmail } from '../services/auth/requestAuth.js';
 import { getPolicyProfile } from '../services/evolution/policyStore.js';
 import { CognitiveQuotaError, assertChatQuotaAllows, recordChatTokenUsage } from '../services/governance/quotaStore.js';
+import { applyOverseerLens } from '../services/governance/overseerService.js';
 import { enqueueGpuTask, newGpuRequestId } from '../services/inference/queueManager.js';
 import { runMaximumClarityTrack } from '../services/intelligence/maximumClarityPipeline.js';
 import {
@@ -61,6 +62,27 @@ const omniBodySchema = z.object({
     .min(1),
 });
 
+function passesQualityGate(
+  query: string,
+  response: string
+): { pass: boolean; issues: string[] } {
+  const issues: string[] = [];
+  const wordCount = response.trim().split(/\s+/).length;
+  const queryWordCount = query.trim().split(/\s+/).length;
+  if (queryWordCount > 8 && wordCount < 60) {
+    issues.push(`Shallow response: ${wordCount} words for ${queryWordCount}-word query`);
+  }
+  const sycCount = [
+    /great (point|question)/i,
+    /you'?re (absolutely|totally) right/i,
+    /\bbrilliant\b/i,
+    /excellent (point|question)/i,
+    /couldn'?t agree more/i,
+  ].filter((p) => p.test(response)).length;
+  if (sycCount >= 2) issues.push(`Sycophancy: ${sycCount} flattery patterns detected`);
+  return { pass: issues.length === 0, issues };
+}
+
 function lastUserContent(messages: { role: string; content: string }[]): string {
   for (let i = messages.length - 1; i >= 0; i--) {
     if (messages[i]!.role === 'user') return messages[i]!.content;
@@ -98,6 +120,11 @@ export function registerOmniStreamRoutes(app: FastifyInstance): void {
 
     touchChronosActivity(userId);
 
+    // Attach session BEFORE hijacking — must complete before reply is taken over
+    // so that auth errors can still return proper HTTP status codes.
+    await attachAtlasSession(request);
+    const verifiedEmail = getVerifiedUserEmail(request);
+
     try {
       assertChatQuotaAllows(userId);
     } catch (e) {
@@ -118,8 +145,7 @@ export function registerOmniStreamRoutes(app: FastifyInstance): void {
     const raw = reply.raw;
 
     try {
-      await attachAtlasSession(request);
-      const verifiedEmail = getVerifiedUserEmail(request);
+      // verifiedEmail resolved above (before hijack)
       const lane = env.disableLocalOllama ? 'public_swarm' : resolveOmniComputeLane(verifiedEmail);
 
       sseWrite(raw, 'status', {
@@ -327,23 +353,21 @@ export function registerOmniStreamRoutes(app: FastifyInstance): void {
 
       recordChatTokenUsage(userId, undefined, undefined);
 
+      // Quality gate: append note if issues detected (non-blocking)
+      const qg = passesQualityGate(userPrompt, result.fullText);
+      if (!qg.pass) {
+        result.fullText += `\n\n*[Quality note: ${qg.issues.join('; ')}]*`;
+      }
+
       const requestMessages = messages.filter(
         (m): m is { role: ChatRole; content: string } => m.role !== 'system'
       );
-
-      triggerEvolutionAfterOmniResponse({
-        traceId,
-        userId,
-        userMessage: userPrompt,
-        assistantResponse: result.fullText,
-        requestMessages,
-        verifiedEmail,
-      });
 
       const cloudSwarm =
         result.surface !== 'god_mode_local' &&
         !result.surface.startsWith('god_mode');
 
+      // Send done immediately with the raw LLM response — user receives it without waiting for Overseer
       sseWrite(raw, 'done', {
         traceId,
         requestId,
@@ -358,7 +382,53 @@ export function registerOmniStreamRoutes(app: FastifyInstance): void {
           lineOfInquiry: lineOfInquiry ?? null,
         },
       });
+
+      // ── Overseer annotation: run concurrently with stream end, emit before closing ────────────
+      // Start Overseer immediately (was already accumulating in parallel during streaming).
+      // Await with a tight budget so we never hold the stream open indefinitely.
+      const OVERSEER_SSE_TIMEOUT_MS = 5_000;
+      let overseerResult: import('../services/governance/overseerService.js').OverseerResult | null = null;
+      try {
+        const overseerPromise = applyOverseerLens(userId, result.fullText, {
+          query: userPrompt,
+          mode: routing.mode ?? 'default',
+          userId,
+          conversationId: traceId,
+          modelOutputs: [],
+        });
+        // Race against timeout so we never block user delivery by more than OVERSEER_SSE_TIMEOUT_MS
+        overseerResult = await Promise.race([
+          overseerPromise,
+          new Promise<null>((resolve) => setTimeout(() => resolve(null), OVERSEER_SSE_TIMEOUT_MS)),
+        ]);
+      } catch {
+        overseerResult = null;
+      }
+
+      if (overseerResult) {
+        sseWrite(raw, 'overseer_annotation', {
+          constitutional_check: overseerResult.constitutionalFlags,
+          gap_summary: overseerResult.gapsFound,
+          synthesis_notes: overseerResult.synthesisNotes,
+          was_personalized: overseerResult.wasPersonalized,
+          degraded: overseerResult.degraded,
+        });
+      }
+
       raw.end();
+
+      // Trigger evolution pipeline with the (potentially overseer-refined) response
+      const finalResponse = overseerResult?.response ?? result.fullText;
+      Promise.resolve().then(() => {
+        triggerEvolutionAfterOmniResponse({
+          traceId,
+          userId,
+          userMessage: userPrompt,
+          assistantResponse: finalResponse,
+          requestMessages,
+          verifiedEmail,
+        });
+      }).catch(() => { /* non-fatal */ });
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       request.log.error(e);

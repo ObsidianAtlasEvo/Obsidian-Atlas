@@ -5,7 +5,11 @@
  * Five immutable articles + four protected zones.
  * No evolution mutation may violate these articles.
  * Validated before every commit to the mutation ledger.
+ *
+ * Phase 4 addition: enforcePolicy() gate on applyConstitutionalMutation().
  */
+
+import { enforcePolicy, PolicyMutation, PolicyLayer } from '../enforcement/policyEnforcementRuntime.ts';
 
 export type ArticleClass = 'IMMUTABLE' | 'PROTECTED';
 
@@ -159,4 +163,49 @@ export function getImmutableArticles(): ConstitutionalArticle[] {
 
 export function getProtectedArticles(): ConstitutionalArticle[] {
   return CONSTITUTIONAL_ARTICLES.filter((a) => a.class === 'PROTECTED');
+}
+
+/**
+ * Apply a constitutional mutation with full policy enforcement.
+ * Runs enforcePolicy() before validating the instruction against articles.
+ *
+ * @returns The enforcement result combined with constitution validation.
+ */
+export async function applyConstitutionalMutation(
+  mutationId: string,
+  instruction: string,
+  actorId: string
+): Promise<{ enforced: { allowed: boolean; reason: string; auditId: string }; validation: ValidationResult }> {
+  const mutation: PolicyMutation = {
+    id: mutationId,
+    layer: PolicyLayer.CONSTITUTION,
+    action: 'APPLY_CONSTITUTIONAL_MUTATION',
+    target: instruction,
+    actorId,
+    timestamp: new Date(),
+  };
+
+  const enforcement = await enforcePolicy(mutation);
+
+  if (!enforcement.allowed) {
+    return {
+      enforced: {
+        allowed: false,
+        reason: enforcement.reason,
+        auditId: enforcement.auditId,
+      },
+      validation: { valid: false, violations: [] },
+    };
+  }
+
+  const validation = validateMutation(instruction);
+
+  return {
+    enforced: {
+      allowed: true,
+      reason: enforcement.reason,
+      auditId: enforcement.auditId,
+    },
+    validation,
+  };
 }

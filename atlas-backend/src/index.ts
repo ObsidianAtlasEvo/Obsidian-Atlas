@@ -1,4 +1,7 @@
 import './bootstrapEnv.js';
+import { validateEnv } from './validateEnv.js';
+validateEnv();
+
 import cookie from '@fastify/cookie';
 import cors from '@fastify/cors';
 import Fastify, { type FastifyReply, type FastifyRequest } from 'fastify';
@@ -6,12 +9,11 @@ import { env } from './config/env.js';
 import { startChronosScheduler } from './services/autonomy/chronos.js';
 import { initSemanticVectorIndex } from './db/vectorStore.js';
 import { initSqlite } from './db/sqlite.js';
-import registerChatRoutes from './routes/chat.js';
 import registerHealthRoutes from './routes/health.js'
 import { registerRateLimit } from './plugins/rateLimit.js';
 import { registerOllamaCompatRoutes } from './routes/ollamaCompat.js';
 import { registerInferenceQueueRoutes } from './routes/inferenceQueue.js';
-// // // // import { registerOmniStreamRoutes } from './routes/omniStream.js';
+import { registerOmniStreamRoutes } from './routes/omniStream.js';
 import { registerCognitiveGovernanceRoutes } from './routes/cognitiveGovernanceRoutes.js';
 import { registerLongitudinalRoutes } from './routes/longitudinalRoutes.js';
 import { registerStrategicModelingRoutes } from './routes/strategicModelingRoutes.js';
@@ -21,11 +23,37 @@ import { registerIntelligenceChambersRoutes } from './routes/intelligenceChamber
 import { registerMindMapRoutes } from './routes/mindMapRoutes.js';
 import { registerSovereigntyRoutes } from './routes/sovereigntyRoutes.js';
 import { registerAuthRoutes } from './routes/authRoutes.js';
+import { attachAtlasSession } from './services/auth/authProvider.js';
+import { registerDegradedModeRoutes } from './routes/degradedModeRoutes.js';
+import { startPolling } from './services/governance/degraded/degradedModeOracle.js';
+import { initAutoRecovery } from './services/governance/degraded/recoveryOrchestrator.js';
+import { registerExplanationRoutes } from './routes/explanationRoutes.js';
+import { registerRetentionRoutes } from './routes/retentionRoutes.js';
+import { registerGovernanceConsoleRoutes } from './routes/governanceConsoleRoutes.js';
+import orchestrateRoutes from './routes/orchestrate.js';
+import embeddingsRoutes from './routes/embeddings.js';
+import modelRoutes from './routes/models.js';
+import { loadPersistedJobs } from './services/inference/queueManager.js';
 
 initSqlite();
 await initSemanticVectorIndex();
 
-const app = Fastify({ logger: true });
+// Rehydrate inference queue — mark any stale pending/in_progress jobs from prior run.
+const recoveredJobs = await loadPersistedJobs().catch(() => 0);
+if (recoveredJobs > 0) {
+  // eslint-disable-next-line no-console -- logged before Fastify instance exists
+  console.log(`[atlas] recovered ${recoveredJobs} stale inference queue job(s) from Supabase`);
+}
+
+const app = Fastify({
+  logger: {
+    level: process.env.LOG_LEVEL ?? 'info',
+    transport: process.env.NODE_ENV === 'development'
+      ? { target: 'pino-pretty', options: { colorize: true } }
+      : undefined,
+    redact: ['req.headers.authorization', 'req.headers["x-api-key"]', 'req.body.password'],
+  },
+});
 
 app.setErrorHandler((err, request, reply) => {
   request.log.error(err);
@@ -54,32 +82,51 @@ await app.register(cors, {
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'X-Atlas-Verified-Email'],
 });
 
 await registerRateLimit(app);
 registerHealthRoutes(app);
 registerInferenceQueueRoutes(app);
 registerAuthRoutes(app);
-registerChatRoutes(app);
 registerOllamaCompatRoutes(app);
-// // registerOmniStreamRoutes(app);
+registerOmniStreamRoutes(app);
 registerSovereigntyRoutes(app);
-registerCognitiveGovernanceRoutes(app);
-registerLongitudinalRoutes(app);
-registerStrategicModelingRoutes(app);
-registerLegacyRoutes(app);
-registerSovereignOverviewRoutes(app);
-registerIntelligenceChambersRoutes(app);
-registerMindMapRoutes(app);
+// ── Governance routes — all require a valid Atlas session ─────────────────
+await app.register(async (protected_app) => {
+  protected_app.addHook('preHandler', async (request: FastifyRequest, reply: FastifyReply) => {
+    await attachAtlasSession(request);
+    if (!request.atlasVerifiedEmail) {
+      return reply.code(401).send({ error: 'Unauthorized — Atlas session required' });
+    }
+  });
+  registerCognitiveGovernanceRoutes(protected_app);
+  registerLongitudinalRoutes(protected_app);
+  registerStrategicModelingRoutes(protected_app);
+  registerLegacyRoutes(protected_app);
+  registerSovereignOverviewRoutes(protected_app);
+  registerIntelligenceChambersRoutes(protected_app);
+  registerMindMapRoutes(protected_app);
+  registerRetentionRoutes(protected_app);
+  registerGovernanceConsoleRoutes(protected_app);
+});
+registerDegradedModeRoutes(app);
+registerExplanationRoutes(app);
+await app.register(orchestrateRoutes);
+await app.register(embeddingsRoutes);
+await app.register(modelRoutes);
 
-// POST /chat forwards to the handler registered as POST /v1/chat (same body, no model call here).
+// POST /chat forwards to the handler registered as POST /v1/chat/omni-stream (same body, no model call here).
 app.post('/chat', async (request: FastifyRequest, reply: FastifyReply) => {
   const res = await app.inject({
     method: 'POST',
-    url: '/v1/chat',
+    url: '/v1/chat/omni-stream',
     payload: request.body as Record<string, unknown>,
-    headers: { 'content-type': 'application/json' },
+    headers: {
+      'content-type': 'application/json',
+      // Forward session cookie so /v1/chat is authenticated (fix: was always unauthenticated)
+      ...(request.headers.cookie ? { cookie: request.headers.cookie } : {}),
+    },
   });
   reply.code(res.statusCode);
   const ct = res.headers['content-type'];
@@ -97,15 +144,19 @@ app
   .then(() => {
     if (env.chronosEnabled) {
       startChronosScheduler();
-      console.log(
-        `[atlas] chronos enabled  tick=${env.chronosTickMs}ms idle>=${env.chronosIdleMs}ms filterUser=${env.chronosUserId ?? 'any'}`
+      app.log.info(
+        { chronosTickMs: env.chronosTickMs, chronosIdleMs: env.chronosIdleMs, filterUser: env.chronosUserId ?? 'any' },
+        'chronos enabled'
       );
     }
-    console.log(
-      `[atlas] ready  http://${env.host === '0.0.0.0' ? '127.0.0.1' : env.host}:${env.port}  ` +
-        `GET /health  POST /chat  POST /v1/chat  (provider: ollama @ ${env.ollamaBaseUrl})`
+    app.log.info(
+      { host: env.host, port: env.port, ollamaBaseUrl: env.ollamaBaseUrl },
+      'atlas ready  GET /health  POST /chat  POST /v1/chat/omni-stream'
     );
-    console.log(`[atlas] cors origins: ${env.corsOrigins.join(', ')}`);
+    app.log.info({ corsOrigins: env.corsOrigins }, 'cors origins');
+    startPolling();
+    initAutoRecovery();
+    app.log.info('degraded mode oracle started (30s poll interval)');
   })
   .catch((err: unknown) => {
     app.log.error(err);

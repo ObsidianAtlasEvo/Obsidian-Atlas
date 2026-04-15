@@ -283,7 +283,7 @@ const ANTHROPIC_MODELS: ModelDefinition[] = [
 
 const GOOGLE_MODELS: ModelDefinition[] = [
   {
-    id: 'google/gemini-1.5-pro',
+    id: 'google/gemini-2.5-flash',
     provider: 'google',
     name: 'Gemini 1.5 Pro',
     description: "Google's most capable Gemini model. Industry-leading 2M token context, strong at multimodal and long-doc tasks.",
@@ -296,7 +296,7 @@ const GOOGLE_MODELS: ModelDefinition[] = [
     requiresApiKey: true,
   },
   {
-    id: 'google/gemini-1.5-flash',
+    id: 'google/gemini-2.0-flash',
     provider: 'google',
     name: 'Gemini 1.5 Flash',
     description: "Google's fast Gemini variant. Optimized for latency-sensitive tasks with a still-impressive 1M context.",

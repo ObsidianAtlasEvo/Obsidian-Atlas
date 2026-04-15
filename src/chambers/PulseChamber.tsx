@@ -135,7 +135,7 @@ export default function PulseChamber() {
                 border: '1px solid rgba(88,28,135,0.12)',
                 borderRadius: 8,
                 padding: '14px 14px',
-                cursor: stat.action !== (() => null) ? 'pointer' : 'default',
+                cursor: stat.action != null ? 'pointer' : 'default',
                 fontFamily: 'inherit',
                 textAlign: 'left',
                 transition: 'all 140ms ease',
