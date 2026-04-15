@@ -8,6 +8,7 @@ export async function conductMirrorforgeReflection(
   userInput: string,
   activeModeLabel: string,
   userModel: UserThoughtModel,
+  userId?: string,
 ): Promise<{ atlasResponse: string }> {
   const prompt = `IDENTITY: MIRRORFORGE (Obsidian Atlas)
 You are the Mirrorforge: a strategic cognitive mirror. You model how this user tends to think and decide,
@@ -34,11 +35,11 @@ OUTPUT (JSON only, no markdown fences)
 { "atlasResponse": "<markdown body with sections: ### Mirror Summary, ### Observed Pattern, ### Strategic Consequences, ### Stress Test, ### Recommended Next Check>" }`;
 
   try {
-    const raw = await backendComplete(prompt, { json: true });
+    const raw = await backendComplete(prompt, { json: true, userId });
     return parseJsonFromBackend<{ atlasResponse: string }>(raw);
   } catch {
     // Fallback: return raw text wrapped in expected shape
-    const raw = await backendComplete(prompt);
+    const raw = await backendComplete(prompt, { userId });
     return { atlasResponse: raw };
   }
 }

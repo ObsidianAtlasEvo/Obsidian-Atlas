@@ -8,6 +8,7 @@ export async function conductCrucibleSession(
   session: CrucibleSession,
   userModel: UserThoughtModel,
   userInput: string,
+  userId?: string,
 ): Promise<{ atlasResponse: string; epistemicCategory: CrucibleExchange['epistemicCategory']; reasoning?: string }> {
   const userHistory = session.exchanges
     .map((ex) => `User: ${ex.userInput}\nAtlas: ${ex.atlasResponse}`)
@@ -40,7 +41,7 @@ Respond with a structured critique. Use Markdown with sections:
 ### Survivability Verdict
 ### Reforged Version`;
 
-  const atlasResponse = await backendComplete(prompt);
+  const atlasResponse = await backendComplete(prompt, { userId });
   const epistemicCategory: CrucibleExchange['epistemicCategory'] = 'synthesis';
   return { atlasResponse, epistemicCategory };
 }

@@ -256,7 +256,9 @@ Respond with a JSON object with this exact structure:
 Return ONLY valid JSON. No commentary.`);
 
     try {
-      const raw = await backendComplete(prompt, { system: 'You are an analytical engine. Return only valid JSON.' });
+      const currentUser = useAtlasStore.getState().currentUser;
+      const userId = currentUser?.uid ?? currentUser?.email ?? 'anonymous';
+      const raw = await backendComplete(prompt, { system: 'You are an analytical engine. Return only valid JSON.', userId });
 
       const jsonMatch = raw.match(/\{[\s\S]*\}/);
       if (!jsonMatch) throw new Error('No JSON found');

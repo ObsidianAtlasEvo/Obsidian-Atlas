@@ -9,6 +9,7 @@ export async function analyzeJournalEntry(
   mode: JournalAssistanceMode,
   userModel: UserThoughtModel,
   customPrompt?: string,
+  userId?: string,
 ): Promise<NonNullable<JournalEntry['analysis']>> {
   const modeInstructions: Record<JournalAssistanceMode, string> = {
     'reflective-mirror': 'MODE: Reflective Mirror\nPOSTURE: Clear, calm, reflective.\nGOAL: Help the user understand emotional/conceptual currents, repeating patterns, contradictions.\nTONE: Perceptive, steady, clarifying.',
@@ -48,7 +49,7 @@ Return ONLY valid JSON with this exact shape:
   "suggestedRefinements": ["string"]
 }`;
 
-  const raw = await backendComplete(prompt, { json: true });
+  const raw = await backendComplete(prompt, { json: true, userId });
   try {
     const parsed = parseJsonFromBackend<NonNullable<JournalEntry['analysis']>>(raw);
     return {

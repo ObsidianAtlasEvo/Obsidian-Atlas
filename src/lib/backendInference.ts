@@ -6,7 +6,7 @@ import { atlasApiUrl } from './atlasApi';
 
 export async function backendComplete(
   prompt: string,
-  opts?: { system?: string; signal?: AbortSignal; json?: boolean }
+  opts?: { system?: string; signal?: AbortSignal; json?: boolean; userId?: string; posture?: number }
 ): Promise<string> {
   const messages: { role: string; content: string }[] = [];
   if (opts?.system) messages.push({ role: 'system', content: opts.system });
@@ -16,7 +16,7 @@ export async function backendComplete(
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ userId: 'system', messages, posture: 3 }),
+    body: JSON.stringify({ userId: opts?.userId ?? 'system', messages, posture: opts?.posture ?? 3 }),
     signal: opts?.signal,
   });
 
@@ -86,7 +86,7 @@ interface StreamCallbacks {
 export function streamBackendChat(
   messages: { role: string; content: string }[],
   callbacks: StreamCallbacks,
-  opts?: { posture?: number },
+  opts?: { posture?: number; userId?: string },
 ): AbortController {
   const controller = new AbortController();
   const { signal } = controller;
@@ -99,7 +99,7 @@ export function streamBackendChat(
       response = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: 'system', messages, posture: opts?.posture ?? 3 }),
+        body: JSON.stringify({ userId: opts?.userId ?? 'system', messages, posture: opts?.posture ?? 3 }),
         signal,
       });
     } catch (err: unknown) {

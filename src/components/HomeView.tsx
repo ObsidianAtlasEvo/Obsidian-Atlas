@@ -478,7 +478,8 @@ export function HomeView({ state, setState, onInteraction }: HomeViewProps) {
             profiles: state.resonance.profiles,
             threads: state.resonance.threads,
             graph: state.resonance.graph
-          }
+          },
+          atlasTraceUserId(state),
         ),
         new Promise<null>((resolve) => setTimeout(() => resolve(null), 8_000)),
       ]).catch(() => null);

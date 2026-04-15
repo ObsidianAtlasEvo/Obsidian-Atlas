@@ -16,6 +16,7 @@ import { saveMemory, saveTrace, listMemoriesByKind, listRecentTraces } from '../
 import { analyzeDrift } from '../driftDetection.js';
 import type { DriftAnalysisContext } from '../driftDetection.js';
 import { appendAutonomyLog } from '../autonomy/autonomyLog.js';
+import { getDb } from '../../db/sqlite.js';
 import type { ModelProvider } from '../model/modelProvider.js';
 import { env } from '../../config/env.js';
 import type { ChatRole } from '../../types/atlas.js';
@@ -195,7 +196,7 @@ async function runEvolutionJob(job: EvolutionJobPayload): Promise<void> {
 
     const driftSignals = analyzeDrift(driftCtx);
     for (const signal of driftSignals) {
-      if (signal.severity === 'high') {
+      if (signal.severity === 'high' || signal.severity === 'medium') {
         appendAutonomyLog({
           userId,
           kind: 'drift-detection',
@@ -203,6 +204,25 @@ async function runEvolutionJob(job: EvolutionJobPayload): Promise<void> {
           decisionJson: JSON.stringify(signal),
           status: 'warning',
         });
+      }
+      // Persist all drift signals to drift_events table for UI consumption
+      try {
+        const db = getDb();
+        const id = `drift-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        db.prepare(
+          `INSERT INTO drift_events (id, user_id, subject_type, subject_id, magnitude, narrative, detected_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`
+        ).run(
+          id,
+          userId,
+          signal.type,
+          signal.type,
+          signal.severity === 'high' ? 0.9 : signal.severity === 'medium' ? 0.6 : 0.3,
+          JSON.stringify({ description: signal.description, evidence: signal.evidence, severity: signal.severity }),
+          signal.detectedAt,
+        );
+      } catch {
+        // Non-fatal — table may not exist on fresh installs
       }
     }
   } catch (err) {

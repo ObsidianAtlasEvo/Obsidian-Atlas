@@ -52,6 +52,7 @@ export function Mirrorforge({ state, setState }: MirrorforgeProps) {
         input,
         activeMode.label,
         state.userModel,
+        atlasTraceUserId(state),
       );
       setMirrorLog((prev) => [...prev, { role: 'atlas', text: atlasResponse || '(empty response)' }]);
     } catch (e) {

@@ -9,6 +9,7 @@ export async function applyStructuralRepair(payload: {
   title: string;
   description: string;
   classTier: number;
+  userId?: string;
 }): Promise<string> {
   const prompt = `You are the Obsidian Atlas Source-Code Architect. You are receiving a Class ${payload.classTier} Structural Repair authorization.
 Your task is to output the corrected TypeScript/React code blocks required to eliminate the specified architectural gap.
@@ -21,7 +22,7 @@ Before returning the code, perform an Internal Integrity Check: verify that the 
 Return ONLY the code changes required to actually solve the issue described.`;
 
   try {
-    return await backendComplete(prompt);
+    return await backendComplete(prompt, { userId: payload.userId });
   } catch (error) {
     console.error('Error applying structural repair:', error);
     throw error;

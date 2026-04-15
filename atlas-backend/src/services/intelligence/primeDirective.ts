@@ -1,6 +1,11 @@
 import { getPolicyProfile, getActiveFeatureFlags } from '../evolution/policyStore.js';
 import { listRecentMemories } from '../memory/memoryStore.js';
 import { getDb } from '../../db/sqlite.js';
+import {
+  buildTruthLedgerBlock,
+  buildAtlasConstitutionBlock,
+  buildDecisionLedgerSnippetBlock,
+} from './constitutionalContext.js';
 
 export const PRIME_DIRECTIVE_VERSION = '2026-04-05.iron-clad-v1';
 
@@ -15,6 +20,45 @@ Anti-sycophancy imperative: When the user is factually incorrect, say so directl
 PRIME_DIRECTIVE_VERSION: ${PRIME_DIRECTIVE_VERSION}`;
 
 const MEMORY_VAULT_LIMIT = 16;
+
+/** Clip a block to a character budget so cloud-path prompts stay within token limits. */
+function clipBlock(s: string, maxChars: number): string {
+  if (s.length <= maxChars) return s;
+  return `${s.slice(0, maxChars)}\n…(truncated for token budget)`;
+}
+
+/**
+ * Sovereignty-lite blocks: truth ledger, constitution/doctrine, and decisions.
+ * These are the highest-impact governance substrates for cloud-path users.
+ * Budget: ~6k chars total — adds ~1.5k tokens to the cloud prompt.
+ */
+function formatSovereigntyLiteBlocks(userId: string): string {
+  try {
+    const parts: string[] = [];
+
+    const truthBlock = buildTruthLedgerBlock(userId, 10);
+    if (truthBlock && !truthBlock.includes('(no ') && !truthBlock.includes('unavailable')) {
+      parts.push('TRUTH_AND_EVIDENCE_LEDGER (do not contradict verified entries without naming the conflict):');
+      parts.push(clipBlock(truthBlock, 2000));
+    }
+
+    const constitutionBlock = buildAtlasConstitutionBlock(userId, 8);
+    if (constitutionBlock && !constitutionBlock.includes('(no ') && !constitutionBlock.includes('unavailable')) {
+      parts.push('CONSTITUTION_AND_DOCTRINE (governing principles):');
+      parts.push(clipBlock(constitutionBlock, 2500));
+    }
+
+    const decisionBlock = buildDecisionLedgerSnippetBlock(userId);
+    if (decisionBlock && !decisionBlock.includes('(no ') && !decisionBlock.includes('unavailable')) {
+      parts.push('RECENT_DECISIONS:');
+      parts.push(clipBlock(decisionBlock, 1500));
+    }
+
+    return parts.length > 0 ? parts.join('\n\n') : '';
+  } catch {
+    return '';
+  }
+}
 
 function formatPolicyBlock(userId: string): string {
   const p = getPolicyProfile(userId);
@@ -129,12 +173,16 @@ function formatMemoryVault(userId: string): string {
 export function buildPrimeDirective(userId: string): string {
   const featureBlock = formatFeatureFlagsBlock(userId);
   const governanceBlock = formatGovernanceBriefing(userId);
+  const sovereigntyLite = formatSovereigntyLiteBlocks(userId);
   const parts = [
     ATLAS_PERSONA_BLOCK,
     '',
     '---',
     formatPolicyBlock(userId),
   ];
+  if (sovereigntyLite) {
+    parts.push('', '---', sovereigntyLite);
+  }
   if (featureBlock) {
     parts.push('', '---', featureBlock);
   }
