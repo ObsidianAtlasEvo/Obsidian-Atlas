@@ -27,8 +27,9 @@ import { AppState, ChrysalisModel } from '../types';
 import { cn } from '../lib/utils';
 import { EvolutionView } from './EvolutionView';
 
-import { db, logAudit } from '../services/firebase';
-import { collection, addDoc, Timestamp } from 'firebase/firestore';
+import { logAudit } from '../services/firebase';
+import { atlasApiUrl, atlasHttpEnabled } from '../lib/atlasApi';
+import { ATLAS_TRACE_CHANNEL, atlasTraceUserId } from '../lib/atlasTraceContext';
 
 interface ChrysalisProps {
   state: AppState;
@@ -52,16 +53,36 @@ export function Chrysalis({ state, setState }: ChrysalisProps) {
     setMutationInput('');
 
     try {
-      const { processMutationRequest } = await import('../services/ollamaService');
-      const result = await processMutationRequest(input);
-      
-      setMutationLog(prev => [...prev, { 
-        role: 'atlas', 
+      if (!atlasHttpEnabled()) {
+        throw new Error('Backend not available');
+      }
+      const res = await fetch(atlasApiUrl('/v1/governance/ai-command'), {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          command: input,
+          userId: atlasTraceUserId(state),
+          userEmail: state.currentUser?.email,
+          channel: ATLAS_TRACE_CHANNEL.consoleGovernance,
+        }),
+      });
+      if (!res.ok) throw new Error(`Backend returned ${res.status}`);
+      const result = await res.json() as {
+        response: string;
+        proposalTitle: string;
+        proposalDescription: string;
+        proposalClass: 0 | 1 | 2 | 3 | 4;
+        isImmediateUpgrade: boolean;
+        upgradeImpact: string;
+      };
+
+      setMutationLog(prev => [...prev, {
+        role: 'atlas',
         text: result.response
       }]);
-      
+
       if (result.isImmediateUpgrade) {
-        // Apply immediate upgrade to state
         setState(prev => ({
           ...prev,
           chrysalis: {
@@ -78,41 +99,46 @@ export function Chrysalis({ state, setState }: ChrysalisProps) {
             ]
           }
         }));
-        
-        // Also log it to change control as deployed
-        const newProposal = {
-          title: result.proposalTitle,
-          description: result.proposalDescription,
-          class: result.proposalClass,
-          status: 'deployed',
-          proposedBy: state.currentUser?.uid || 'system',
-          approvedBy: state.currentUser?.uid || 'system',
-          createdAt: Timestamp.now(),
-          rollbackSafe: true
-        };
-        await addDoc(collection(db, 'change_control'), newProposal);
+
+        // Best-effort: log to backend change control (skip on failure)
+        fetch(atlasApiUrl('/v1/governance/changes'), {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            title: result.proposalTitle,
+            description: result.proposalDescription,
+            class: result.proposalClass,
+            status: 'deployed',
+            proposedBy: state.currentUser?.uid || 'system',
+            approvedBy: state.currentUser?.uid || 'system',
+            rollbackSafe: true,
+          }),
+        }).catch(() => { /* non-fatal */ });
         logAudit('Mutation Implemented', 'critical', { mutation: input, proposalTitle: result.proposalTitle });
       } else {
-        // Add the proposal to Firestore
-        const newProposal = {
-          title: result.proposalTitle,
-          description: result.proposalDescription,
-          class: result.proposalClass,
-          status: 'proposed',
-          proposedBy: state.currentUser?.uid || 'system',
-          createdAt: Timestamp.now(),
-          rollbackSafe: true
-        };
-        
-        await addDoc(collection(db, 'change_control'), newProposal);
+        // Best-effort: log to backend change control (skip on failure)
+        fetch(atlasApiUrl('/v1/governance/changes'), {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            title: result.proposalTitle,
+            description: result.proposalDescription,
+            class: result.proposalClass,
+            status: 'proposed',
+            proposedBy: state.currentUser?.uid || 'system',
+            rollbackSafe: true,
+          }),
+        }).catch(() => { /* non-fatal */ });
         logAudit('Mutation Proposed', 'high', { mutation: input, proposalTitle: result.proposalTitle });
       }
-      
+
     } catch (error) {
       console.error("Error processing mutation:", error);
-      setMutationLog(prev => [...prev, { 
-        role: 'atlas', 
-        text: "An error occurred while analyzing the mutation. Please try again."
+      setMutationLog(prev => [...prev, {
+        role: 'atlas',
+        text: "Chrysalis requires the Atlas backend. Ensure you are signed in and the backend is reachable."
       }]);
     } finally {
       setIsProcessingMutation(false);
@@ -153,22 +179,32 @@ export function Chrysalis({ state, setState }: ChrysalisProps) {
     setIsAddingExperiment(false);
 
     try {
-      const { simulateExperiment } = await import('../services/ollamaService');
-      const result = await simulateExperiment(title, target);
-      
+      if (!atlasHttpEnabled()) throw new Error('Backend not available');
+      const res = await fetch(atlasApiUrl('/v1/governance/ai-command'), {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          command: `Simulate experiment: ${title}. Target: ${target}. Return JSON: { impact: string, privacyScore: number, safetyScore: number }`,
+          userId: atlasTraceUserId(state),
+          userEmail: state.currentUser?.email,
+          channel: ATLAS_TRACE_CHANNEL.consoleGovernance,
+        }),
+      });
+      if (!res.ok) throw new Error(`Backend returned ${res.status}`);
+      const data = await res.json() as { response?: string; impact?: string; privacyScore?: number; safetyScore?: number };
+      // Try to parse structured fields; fall back to response text as impact
+      const impact = data.impact ?? data.response ?? 'Simulation complete.';
+      const privacyScore = typeof data.privacyScore === 'number' ? data.privacyScore : 100;
+      const safetyScore = typeof data.safetyScore === 'number' ? data.safetyScore : 100;
+
       setState(prev => ({
         ...prev,
         chrysalis: {
           ...prev.chrysalis,
-          experiments: prev.chrysalis.experiments.map(exp => 
-            exp.id === expId 
-              ? { 
-                  ...exp, 
-                  status: 'passed', 
-                  impact: result.impact, 
-                  privacyScore: result.privacyScore, 
-                  safetyScore: result.safetyScore 
-                } 
+          experiments: prev.chrysalis.experiments.map(exp =>
+            exp.id === expId
+              ? { ...exp, status: 'passed', impact, privacyScore, safetyScore }
               : exp
           )
         }
@@ -179,9 +215,9 @@ export function Chrysalis({ state, setState }: ChrysalisProps) {
         ...prev,
         chrysalis: {
           ...prev.chrysalis,
-          experiments: prev.chrysalis.experiments.map(exp => 
-            exp.id === expId 
-              ? { ...exp, status: 'failed', impact: 'Simulation failed.' } 
+          experiments: prev.chrysalis.experiments.map(exp =>
+            exp.id === expId
+              ? { ...exp, status: 'failed', impact: 'Simulation unavailable — backend required.' }
               : exp
           )
         }

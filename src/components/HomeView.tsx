@@ -1041,7 +1041,11 @@ export function HomeView({ state, setState, onInteraction }: HomeViewProps) {
                       <span className="text-[8px] text-gold-500 uppercase tracking-widest animate-pulse ml-auto">Scanning...</span>
                     )}
                   </div>
-                  <p className="text-[10px] text-stone-400 leading-relaxed group-hover:text-stone-300 transition-colors">Systemic coherence has shifted by 12%. Calibration ritual suggested.</p>
+                  <p className="text-[10px] text-stone-400 leading-relaxed group-hover:text-stone-300 transition-colors">
+                    {state.driftDetection?.alerts && state.driftDetection.alerts.length > 0
+                      ? state.driftDetection.alerts[0].description ?? 'Drift pattern detected. Review recommended.'
+                      : 'Drift monitoring active. No quantified alert data yet.'}
+                  </p>
                 </motion.div>
                 <motion.div 
                   whileHover={{ scale: 0.98 }}

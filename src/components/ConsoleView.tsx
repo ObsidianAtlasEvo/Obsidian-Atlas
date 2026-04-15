@@ -179,22 +179,12 @@ export function ConsoleView({ state, setState }: CreatorConsoleProps) {
         throw new Error('No backend available');
       }
     } catch {
-      // Graceful fallback: try ollamaService, then surface a clear error
-      try {
-        const { processGovernanceCommand } = await import('../services/ollamaService');
-        const result = await processGovernanceCommand(
-          `[CONTEXT: system_console] ${input}`,
-          state.currentUser?.email || undefined,
-          { userId: atlasTraceUserId(state), channel: ATLAS_TRACE_CHANNEL.consoleTerminal }
-        );
-        setConsoleHistory(prev => [...prev, { type: 'output', text: result.response, timestamp }]);
-      } catch {
-        setConsoleHistory(prev => [...prev, {
-          type: 'error',
-          text: 'COMMUNICATION ERROR: Backend unreachable. Ensure VITE_ATLAS_API_URL is set and the server is running.',
-          timestamp
-        }]);
-      }
+      // Backend unreachable — show honest error, no Ollama fallback (Ollama removed in PR #50)
+      setConsoleHistory(prev => [...prev, {
+        type: 'error',
+        text: 'BACKEND UNREACHABLE: Cannot process terminal command. Ensure the Atlas backend is running.',
+        timestamp
+      }]);
     }
   };
 
@@ -241,14 +231,10 @@ export function ConsoleView({ state, setState }: CreatorConsoleProps) {
             upgradeImpact: string;
           }>;
         }
-        // Non-2xx: fall through to local service
+        // Non-2xx: fall through to error
       }
-      // Fallback: local Ollama (dev only)
-      const { processGovernanceCommand } = await import('../services/ollamaService');
-      return processGovernanceCommand(aiCommand, state.currentUser?.email || undefined, {
-        userId: atlasTraceUserId(state),
-        channel: ATLAS_TRACE_CHANNEL.consoleGovernance,
-      });
+      // Backend unavailable — no Ollama fallback (Ollama removed in PR #50)
+      throw new Error('Backend unavailable — Atlas backend must be running to process AI commands.');
     };
 
     try {
