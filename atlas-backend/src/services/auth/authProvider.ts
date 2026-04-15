@@ -13,6 +13,7 @@ import { SignJWT, jwtVerify } from 'jose';
 import { env } from '../../config/env.js';
 import { getDb } from '../../db/sqlite.js';
 import { normalizeEmail } from '../intelligence/router.js';
+import { getSubscriptionStatus } from '../billing/stripeService.js';
 
 export const ATLAS_SESSION_COOKIE = 'atlas_session';
 export const ATLAS_OAUTH_STATE_COOKIE = 'atlas_google_oauth_state';
@@ -175,6 +176,14 @@ export async function attachAtlasSession(request: FastifyRequest): Promise<void>
   const u = await getAuthenticatedUser(request);
   if (u) {
     request.atlasVerifiedEmail = normalizeEmail(u.email);
+
+    // Attach subscription tier for downstream quota/model-access checks
+    try {
+      const sub = await getSubscriptionStatus(u.databaseUserId, getDb(), u.email);
+      request.subscriptionTier = sub?.tier ?? 'free';
+    } catch {
+      request.subscriptionTier = 'free';
+    }
   }
 }
 

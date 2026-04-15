@@ -8,7 +8,7 @@ import Fastify, { type FastifyReply, type FastifyRequest } from 'fastify';
 import { env } from './config/env.js';
 import { startChronosScheduler } from './services/autonomy/chronos.js';
 import { initSemanticVectorIndex } from './db/vectorStore.js';
-import { initSqlite } from './db/sqlite.js';
+import { initSqlite, getDb } from './db/sqlite.js';
 import registerHealthRoutes from './routes/health.js'
 import { registerRateLimit } from './plugins/rateLimit.js';
 import { registerOllamaCompatRoutes } from './routes/ollamaCompat.js';
@@ -37,6 +37,7 @@ import embeddingsRoutes from './routes/embeddings.js';
 import modelRoutes from './routes/models.js';
 import { registerGapLedgerRoutes } from './routes/gapLedgerRoutes.js';
 import { registerChangeControlRoutes } from './routes/changeControlRoutes.js';
+import { registerBillingRoutes } from './routes/billingRoutes.js';
 import { loadPersistedJobs } from './services/inference/queueManager.js';
 
 // ---------------------------------------------------------------------------
@@ -106,6 +107,26 @@ app.setErrorHandler((err, request, reply) => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// Raw body support for Stripe webhook signature verification.
+// The webhook route needs the original Buffer; all other routes get parsed JSON.
+// ---------------------------------------------------------------------------
+app.addContentTypeParser(
+  'application/json',
+  { parseAs: 'buffer' },
+  (req, body, done) => {
+    if (req.url === '/api/webhooks/stripe') {
+      done(null, body); // keep as raw Buffer for Stripe signature verification
+    } else {
+      try {
+        done(null, JSON.parse((body as Buffer).toString()));
+      } catch (e) {
+        done(e as Error);
+      }
+    }
+  }
+);
+
 await app.register(cookie);
 
 await app.register(cors, {
@@ -154,6 +175,24 @@ await app.register(async (protected_app) => {
   registerJournalRoutes(protected_app);
   registerDoctrineRoutes(protected_app);
 });
+// ── Billing routes — session-based billing + Stripe webhook (raw body) ──────
+// Billing routes expect request.atlasSession (userId + email). Bridge from
+// the existing OAuth auth (atlasAuthUser) via a preHandler hook.
+// The webhook route (/api/webhooks/stripe) handles its own auth via Stripe
+// signatures and does not call requireSession(), so the hook is harmless there.
+await app.register(async (billingScope) => {
+  billingScope.addHook('preHandler', async (request: FastifyRequest) => {
+    await attachAtlasSession(request);
+    if (request.atlasAuthUser) {
+      request.atlasSession = {
+        userId: request.atlasAuthUser.databaseUserId,
+        email: request.atlasAuthUser.email,
+      };
+    }
+  });
+  await registerBillingRoutes(billingScope, getDb());
+});
+
 registerDegradedModeRoutes(app);
 registerExplanationRoutes(app);
 await app.register(orchestrateRoutes);

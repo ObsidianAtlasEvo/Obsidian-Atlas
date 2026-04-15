@@ -69,9 +69,12 @@ function getStripeClient(): Stripe {
   });
 }
 
+const PRICE_CORE = process.env.STRIPE_PRICE_CORE ?? 'price_1TMYvgE2v1cq9ggpNChrvIBm';
+const PRICE_SOVEREIGN = process.env.STRIPE_PRICE_SOVEREIGN ?? 'price_1TMYvgE2v1cq9ggpmdzIYD4m';
+
 function getPriceId(tier: 'core' | 'sovereign'): string {
-  if (tier === 'core') return requireEnv('STRIPE_PRICE_CORE');
-  if (tier === 'sovereign') return requireEnv('STRIPE_PRICE_SOVEREIGN');
+  if (tier === 'core') return PRICE_CORE;
+  if (tier === 'sovereign') return PRICE_SOVEREIGN;
   // TypeScript exhaustiveness guard
   const _exhaustive: never = tier;
   throw new Error(`Unknown tier: ${_exhaustive as string}`);
@@ -82,10 +85,8 @@ function getPriceId(tier: 'core' | 'sovereign'): string {
  * Returns 'free' if the price ID is not recognized.
  */
 function tierFromPriceId(priceId: string): SubscriptionTier {
-  const corePrice = process.env['STRIPE_PRICE_CORE'];
-  const sovereignPrice = process.env['STRIPE_PRICE_SOVEREIGN'];
-  if (corePrice && priceId === corePrice) return 'core';
-  if (sovereignPrice && priceId === sovereignPrice) return 'sovereign';
+  if (priceId === PRICE_CORE) return 'core';
+  if (priceId === PRICE_SOVEREIGN) return 'sovereign';
   return 'free';
 }
 
