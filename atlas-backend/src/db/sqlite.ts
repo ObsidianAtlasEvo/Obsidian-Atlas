@@ -877,6 +877,23 @@ CREATE TABLE IF NOT EXISTS atlas_deletion_runs (
 );
 `;
 
+/** Substrate Unification: journal entries (user-authored cognitive artifacts). */
+const SUBSTRATE_UNIFICATION = `
+CREATE TABLE IF NOT EXISTS journal_entries (
+  id TEXT PRIMARY KEY NOT NULL,
+  user_id TEXT NOT NULL,
+  title TEXT NOT NULL DEFAULT '',
+  content TEXT NOT NULL DEFAULT '',
+  mood TEXT,
+  tags TEXT NOT NULL DEFAULT '[]',
+  assistance_mode TEXT,
+  analysis TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_journal_entries_user_id ON journal_entries(user_id, created_at DESC);
+`;
+
 let _db: Database.Database | null = null;
 
 /**
@@ -900,6 +917,7 @@ export function initSqlite(): Database.Database {
   database.exec(RETENTION_TABLES);
   database.exec(GAP_LEDGER_TABLES);
   database.exec(CHANGE_CONTROL_TABLE);
+  database.exec(SUBSTRATE_UNIFICATION);
   migratePolicyProfileColumns(database);
   migrateSectionVIIIContinuity(database);
   migrateArchivedAtIndexes(database);

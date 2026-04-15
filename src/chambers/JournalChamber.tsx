@@ -3,6 +3,8 @@ import { useAtlasStore } from '../store/useAtlasStore';
 import { backendComplete } from '../lib/backendInference';
 import { buildAnalysisPrompt } from '../lib/atlasPrompt';
 import { nowISO } from '../lib/persistence';
+import { SyncStatusIndicator } from '../components/SyncStatusIndicator';
+import type { SyncStatus } from '../lib/sovereignSync';
 import type { JournalEntry, JournalAssistanceMode } from '@/types';
 
 // ── Assistance mode labels ─────────────────────────────────────────────────
@@ -177,6 +179,7 @@ export default function JournalChamber() {
   const [editTitle, setEditTitle] = useState('');
   const [assistMode, setAssistMode] = useState<JournalAssistanceMode>('reflective-mirror');
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [syncStatus] = useState<SyncStatus>('idle');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const selected = journal.find((e) => e.id === selectedId) ?? null;
@@ -316,6 +319,7 @@ Return ONLY valid JSON. No commentary.`);
             <div style={{ fontSize: '0.75rem', fontWeight: 500, color: 'rgba(226,232,240,0.8)', letterSpacing: '-0.01em' }}>Journal</div>
             <div style={{ fontSize: '0.62rem', color: 'rgba(226,232,240,0.25)', marginTop: 1 }}>
               {journal.length} {journal.length === 1 ? 'entry' : 'entries'}
+              <SyncStatusIndicator status={syncStatus} />
             </div>
           </div>
           <button
