@@ -1,3 +1,22 @@
+/**
+ * ⚠️  LEGACY ENTRY POINT — NOT USED IN PRODUCTION
+ *
+ * Production entry: src/index.ts  (compiled → dist/index.js)
+ * Production start: `node dist/index.js` or PM2 process atlas-backend
+ *
+ * This file was the original Fastify orchestrator demo. It registers only a
+ * subset of routes and reads from config.ts (which uses different env var
+ * names — OLLAMA_URL, CHAT_MODEL — rather than the canonical env.ts schema).
+ *
+ * It does NOT register: billing, auth, rate-limiting, omniStream, sovereignty,
+ * cognitive governance, journal, doctrine, or any route required for Atlas to
+ * function in production.
+ *
+ * To run the full server locally:
+ *   tsx watch src/index.ts
+ *
+ * Do NOT add new routes here. This file is retained for reference only.
+ */
 import Fastify, { type FastifyError } from 'fastify';
 import cors from '@fastify/cors';
 import cookie from '@fastify/cookie';
@@ -85,3 +104,4 @@ bootstrap().catch((err: unknown) => {
   console.error('Failed to start Atlas Backend:', err);
   process.exit(1);
 });
+
