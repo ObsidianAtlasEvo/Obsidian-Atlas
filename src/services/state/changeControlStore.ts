@@ -42,7 +42,8 @@ export const useChangeControlStore = create<ChangeControlState>((set, get) => ({
         id: proposal.id,
         title: proposal.title,
         description: proposal.description,
-        classTier: proposal.class
+        classTier: proposal.class,
+        userId: userEmail,
       });
       
       set(state => ({ mutationLogs: [...state.mutationLogs, '[VERIFYING INTEGRITY...]'] }));

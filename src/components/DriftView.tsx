@@ -1,9 +1,11 @@
 // Atlas-Audit: [EXEC-MODE] Verified — Calibration / ritual handoff to Home uses coerceActiveMode('today-in-atlas', prev.activeMode) with activeChamberState.
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { AppState, DriftAlert, CalibrationRitual } from '../types';
 import { motion } from 'motion/react';
-import { Activity, AlertTriangle, CheckCircle2, Clock, RefreshCw, Shield, Zap, ArrowRight, Info } from 'lucide-react';
+import { Activity, AlertTriangle, CheckCircle2, Clock, RefreshCw, Shield, Zap, ArrowRight, Info, Loader2 } from 'lucide-react';
 import { coerceActiveMode } from '../lib/atlasWayfinding';
+import { atlasApiUrl, atlasHttpEnabled } from '../lib/atlasApi';
+import { atlasTraceUserId } from '../lib/atlasTraceContext';
 import { cn } from '../lib/utils';
 
 interface DriftViewProps {
@@ -13,6 +15,45 @@ interface DriftViewProps {
 
 export function DriftView({ state, setState }: DriftViewProps) {
   const { driftDetection } = state;
+  const [isLoading, setIsLoading] = useState(false);
+  const [fetchError, setFetchError] = useState<string | null>(null);
+
+  // Fetch drift events from backend on mount
+  useEffect(() => {
+    if (!atlasHttpEnabled()) return;
+    const userId = atlasTraceUserId(state);
+    if (userId === 'anonymous') return;
+
+    let cancelled = false;
+    setIsLoading(true);
+    setFetchError(null);
+
+    fetch(atlasApiUrl(`/v1/governance/drift-events?userId=${encodeURIComponent(userId)}&limit=50`))
+      .then(async (res) => {
+        if (!res.ok) throw new Error(`Server error ${res.status}`);
+        return res.json() as Promise<{ alerts: DriftAlert[]; overallAlignment: number }>;
+      })
+      .then((data) => {
+        if (cancelled) return;
+        setState((prev) => ({
+          ...prev,
+          driftDetection: {
+            ...prev.driftDetection,
+            alerts: data.alerts,
+            overallAlignment: data.overallAlignment,
+          },
+        }));
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setFetchError(err instanceof Error ? err.message : 'Failed to load drift events');
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoading(false);
+      });
+
+    return () => { cancelled = true; };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleInitiateCalibration = (alertId: string, type: string) => {
     const cmd = `/calibrate --alert-id=${alertId} --type=${type}`;
@@ -176,10 +217,28 @@ export function DriftView({ state, setState }: DriftViewProps) {
             <Info size={16} />
             <h3 className="text-[10px] uppercase tracking-widest font-bold">Systemic Observations</h3>
           </div>
-          <p className="text-sm text-stone-400 leading-relaxed italic font-serif">
-            "The user's recent focus on rapid feature expansion (Session 14-16) is creating a minor tension with the 'Truth & Precision' standard. 
-            While velocity is high, the evidence density in the Truth Ledger has dropped by 8%. Recommend a 'Truth Audit' ritual to restore epistemic balance."
-          </p>
+          {isLoading ? (
+            <div className="flex items-center gap-2 text-stone-500">
+              <Loader2 size={14} className="animate-spin" />
+              <span className="text-xs">Loading drift analysis...</span>
+            </div>
+          ) : fetchError ? (
+            <p className="text-sm text-stone-500 italic font-serif">
+              Unable to load drift analysis: {fetchError}
+            </p>
+          ) : driftDetection.alerts.length === 0 ? (
+            <p className="text-sm text-stone-400 leading-relaxed italic font-serif">
+              No drift signals detected. System behavior is aligned with stated values and goals.
+            </p>
+          ) : (
+            <p className="text-sm text-stone-400 leading-relaxed italic font-serif">
+              {driftDetection.alerts.length} drift signal{driftDetection.alerts.length !== 1 ? 's' : ''} detected.
+              {driftDetection.alerts.filter(a => a.severity === 'high').length > 0 &&
+                ` ${driftDetection.alerts.filter(a => a.severity === 'high').length} high-severity alert${driftDetection.alerts.filter(a => a.severity === 'high').length !== 1 ? 's' : ''} require attention.`
+              }
+              {' '}Overall alignment: {(driftDetection.overallAlignment * 100).toFixed(1)}%.
+            </p>
+          )}
         </section>
       </main>
     </div>

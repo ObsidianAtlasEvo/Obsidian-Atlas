@@ -8,6 +8,7 @@
 
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
+import { getDb } from '../db/sqlite.js';
 
 const consoleCommandSchema = z.object({
   command: z.string().min(1).max(4000),
@@ -169,6 +170,65 @@ export function registerGovernanceConsoleRoutes(app: FastifyInstance): void {
         isImmediateUpgrade: false,
         upgradeImpact: '',
       });
+    }
+  });
+
+  // Drift events — returns recent drift signals for the frontend DriftView
+  app.get('/v1/governance/drift-events', async (request, reply) => {
+    const { userId, limit } = request.query as { userId?: string; limit?: string };
+    if (!userId) {
+      return reply.status(400).send({ error: 'userId query parameter required' });
+    }
+
+    try {
+      const db = getDb();
+      const maxRows = Math.min(Number(limit) || 50, 100);
+      const rows = db
+        .prepare(
+          `SELECT id, subject_type, magnitude, narrative, detected_at, resolved_at
+           FROM drift_events
+           WHERE user_id = ?
+           ORDER BY detected_at DESC
+           LIMIT ?`
+        )
+        .all(userId, maxRows) as Array<{
+          id: string;
+          subject_type: string;
+          magnitude: number;
+          narrative: string;
+          detected_at: string;
+          resolved_at: string | null;
+        }>;
+
+      // Transform to frontend DriftAlert shape
+      const alerts = rows.map((row) => {
+        let parsed: { description?: string; evidence?: string[]; severity?: string } = {};
+        try { parsed = JSON.parse(row.narrative); } catch { /* use defaults */ }
+        return {
+          id: row.id,
+          timestamp: row.detected_at,
+          type: row.subject_type as 'value-drift' | 'goal-drift' | 'behavioral-drift',
+          description: parsed.description ?? row.narrative,
+          severity: (parsed.severity ?? (row.magnitude >= 0.7 ? 'high' : row.magnitude >= 0.4 ? 'medium' : 'low')) as 'low' | 'medium' | 'high',
+          evidence: parsed.evidence ?? [],
+          resolved: row.resolved_at !== null,
+        };
+      });
+
+      // Compute overall alignment: 1.0 minus average magnitude of unresolved events (last 20)
+      const unresolvedMagnitudes = rows
+        .filter((r) => r.resolved_at === null)
+        .slice(0, 20)
+        .map((r) => r.magnitude);
+      const avgMag = unresolvedMagnitudes.length > 0
+        ? unresolvedMagnitudes.reduce((a, b) => a + b, 0) / unresolvedMagnitudes.length
+        : 0;
+      const overallAlignment = Math.max(0, Math.min(1, 1 - avgMag * 0.5));
+
+      return reply.send({ alerts, overallAlignment });
+    } catch (err) {
+      request.log.error(err, 'governance/drift-events failed');
+      return reply.send({ alerts: [], overallAlignment: 0.8 });
     }
   });
 }

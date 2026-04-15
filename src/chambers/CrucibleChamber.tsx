@@ -1305,6 +1305,9 @@ function ActiveSession() {
     const history = buildConversationHistory();
     history.push({ role: 'user', content: text });
 
+    const currentUser = useAtlasStore.getState().currentUser;
+    const userId = currentUser?.uid ?? currentUser?.email ?? 'anonymous';
+
     abortRef.current = streamBackendChat(
       history,
       {
@@ -1358,6 +1361,7 @@ function ActiveSession() {
           );
         },
       },
+      { userId },
     );
   }, [inputValue, isStreaming, buildConversationHistory, intensityConf.temp, inferCategory, addCrucibleExchange]);
 

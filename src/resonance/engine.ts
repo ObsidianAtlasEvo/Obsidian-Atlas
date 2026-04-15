@@ -30,7 +30,8 @@ export class ResonanceEngine {
       profiles: ResonanceProfile[];
       threads: ResonanceThread[];
       graph: ResonanceGraph;
-    }
+    },
+    userId?: string,
   ): Promise<{
     observation: ResonanceObservation | null;
     updatedProfiles: ResonanceProfile[];
@@ -38,7 +39,7 @@ export class ResonanceEngine {
     updatedGraph: ResonanceGraph;
   }> {
     // 1. Detect: Extract signals
-    const rawObservation = await extractResonanceSignals(messageId, content);
+    const rawObservation = await extractResonanceSignals(messageId, content, undefined, userId);
     
     // 2. Validate: Apply safeguards
     const observation = validateObservation(rawObservation);
