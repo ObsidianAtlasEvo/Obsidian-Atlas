@@ -7,7 +7,9 @@
  */
 
 import type { FastifyInstance } from 'fastify';
+import type Database from 'better-sqlite3';
 import { z } from 'zod';
+import { randomUUID } from 'node:crypto';
 import { getDb } from '../db/sqlite.js';
 import { SOVEREIGN_CREATOR_EMAIL } from '../config/sovereignCreator.js';
 
@@ -58,6 +60,8 @@ isImmediateUpgrade: true only if command explicitly requests an immediate implem
 }
 
 export function registerGovernanceConsoleRoutes(app: FastifyInstance): void {
+  const db = getDb();
+
   // Terminal console command
   app.post('/v1/governance/console-command', async (request, reply) => {
     const parsed = consoleCommandSchema.safeParse(request.body);
@@ -174,6 +178,177 @@ export function registerGovernanceConsoleRoutes(app: FastifyInstance): void {
     }
   });
 
+  // ── Audit entries table + writeAuditEntry helper (#31) ───────────────────
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS audit_entries (
+      id          TEXT PRIMARY KEY,
+      user_id     TEXT NOT NULL,
+      action      TEXT NOT NULL,
+      actor_uid   TEXT NOT NULL,
+      actor_email TEXT,
+      severity    TEXT NOT NULL DEFAULT 'low',
+      metadata    TEXT,
+      created_at  INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_audit_entries_user ON audit_entries(user_id, created_at DESC);
+  `);
+
+  // ── Emergency state table (#32) ─────────────────────────────────────────
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS emergency_state (
+      id           INTEGER PRIMARY KEY CHECK (id = 1),
+      active       INTEGER NOT NULL DEFAULT 0,
+      activated_at TEXT,
+      activated_by TEXT,
+      reason       TEXT,
+      level        INTEGER NOT NULL DEFAULT 4,
+      lifted_at    TEXT,
+      lifted_by    TEXT,
+      updated_at   INTEGER NOT NULL
+    );
+  `);
+
+  // GET /v1/governance/audit-logs — list audit entries (#31)
+  app.get('/v1/governance/audit-logs', async (request, reply) => {
+    const { userId, limit: limitParam, severity, since } = request.query as {
+      userId?: string;
+      limit?: string;
+      severity?: string;
+      since?: string;
+    };
+    if (!userId) {
+      return reply.status(400).send({ error: 'userId query parameter required' });
+    }
+
+    const maxRows = Math.min(Number(limitParam) || 100, 500);
+    let sql = `SELECT id, user_id, action, actor_uid, actor_email, severity, metadata, created_at
+               FROM audit_entries WHERE user_id = ?`;
+    const params: unknown[] = [userId];
+
+    if (severity && ['critical', 'high', 'medium', 'low'].includes(severity)) {
+      sql += ` AND severity = ?`;
+      params.push(severity);
+    }
+    if (since) {
+      const sinceMs = new Date(since).getTime();
+      if (!isNaN(sinceMs)) {
+        sql += ` AND created_at >= ?`;
+        params.push(sinceMs);
+      }
+    }
+    sql += ` ORDER BY created_at DESC LIMIT ?`;
+    params.push(maxRows);
+
+    const rows = db.prepare(sql).all(...params) as Array<{
+      id: string;
+      user_id: string;
+      action: string;
+      actor_uid: string;
+      actor_email: string | null;
+      severity: string;
+      metadata: string | null;
+      created_at: number;
+    }>;
+
+    const logs = rows.map((r) => ({
+      id: r.id,
+      action: r.action,
+      actorUid: r.actor_uid,
+      severity: r.severity,
+      timestamp: new Date(r.created_at).toISOString(),
+      metadata: r.metadata ? JSON.parse(r.metadata) : {},
+    }));
+
+    const totalRow = db.prepare(
+      `SELECT COUNT(1) as c FROM audit_entries WHERE user_id = ?`,
+    ).get(userId) as { c: number };
+
+    return reply.send({ logs, total: totalRow.c });
+  });
+
+  // POST /v1/governance/emergency — activate/deactivate emergency (#32)
+  const emergencySchema = z.object({
+    action: z.enum(['activate', 'deactivate']),
+    reason: z.string().optional(),
+    userEmail: z.string().email().optional(),
+    userId: z.string().optional(),
+  });
+
+  app.post('/v1/governance/emergency', async (request, reply) => {
+    const parsed = emergencySchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.status(400).send({ error: 'validation_error', details: parsed.error.flatten() });
+    }
+
+    const { action, reason, userEmail, userId } = parsed.data;
+    if (!isCreator(userEmail)) {
+      return reply.status(403).send({ error: 'Forbidden: Sovereign Creator access required' });
+    }
+
+    if (action === 'activate' && !reason) {
+      return reply.status(400).send({ error: 'Reason is required for activation' });
+    }
+
+    const now = Date.now();
+    const nowIso = new Date(now).toISOString();
+
+    if (action === 'activate') {
+      db.prepare(
+        `INSERT OR REPLACE INTO emergency_state (id, active, activated_at, activated_by, reason, level, lifted_at, lifted_by, updated_at)
+         VALUES (1, 1, ?, ?, ?, 4, NULL, NULL, ?)`,
+      ).run(nowIso, userEmail ?? null, reason ?? null, now);
+    } else {
+      db.prepare(
+        `INSERT OR REPLACE INTO emergency_state (id, active, activated_at, activated_by, reason, level, lifted_at, lifted_by, updated_at)
+         VALUES (1, 0,
+           (SELECT activated_at FROM emergency_state WHERE id = 1),
+           (SELECT activated_by FROM emergency_state WHERE id = 1),
+           (SELECT reason FROM emergency_state WHERE id = 1),
+           4, ?, ?, ?)`,
+      ).run(nowIso, userEmail ?? null, now);
+    }
+
+    // Write audit entry
+    writeAuditEntry(db, {
+      userId: userId ?? 'system',
+      action: action === 'activate' ? 'emergency.activate' : 'emergency.deactivate',
+      actorUid: userId ?? 'system',
+      actorEmail: userEmail,
+      severity: 'critical',
+      metadata: { reason, timestamp: nowIso },
+    });
+
+    return reply.send({ ok: true, active: action === 'activate', timestamp: nowIso });
+  });
+
+  // GET /v1/governance/emergency — current emergency state (#32)
+  app.get('/v1/governance/emergency', async (_request, reply) => {
+    const row = db.prepare(`SELECT * FROM emergency_state WHERE id = 1`).get() as {
+      active: number;
+      activated_at: string | null;
+      activated_by: string | null;
+      reason: string | null;
+      level: number;
+      lifted_at: string | null;
+      lifted_by: string | null;
+      updated_at: number;
+    } | undefined;
+
+    if (!row) {
+      return reply.send({ active: false, activatedAt: null, reason: null, level: 4 });
+    }
+
+    return reply.send({
+      active: row.active === 1,
+      activatedAt: row.activated_at,
+      activatedBy: row.activated_by,
+      reason: row.reason,
+      level: row.level,
+      liftedAt: row.lifted_at,
+      liftedBy: row.lifted_by,
+    });
+  });
+
   // Drift events — returns recent drift signals for the frontend DriftView
   app.get('/v1/governance/drift-events', async (request, reply) => {
     const { userId, limit } = request.query as { userId?: string; limit?: string };
@@ -182,7 +357,6 @@ export function registerGovernanceConsoleRoutes(app: FastifyInstance): void {
     }
 
     try {
-      const db = getDb();
       const maxRows = Math.min(Number(limit) || 50, 100);
       const rows = db
         .prepare(
@@ -232,4 +406,32 @@ export function registerGovernanceConsoleRoutes(app: FastifyInstance): void {
       return reply.send({ alerts: [], overallAlignment: 0.8 });
     }
   });
+}
+
+/** Inserts an audit entry into audit_entries — exported for use by other routes (#31). */
+export function writeAuditEntry(
+  db: Database.Database,
+  entry: {
+    userId: string;
+    action: string;
+    actorUid: string;
+    actorEmail?: string;
+    severity: 'low' | 'medium' | 'high' | 'critical';
+    metadata?: Record<string, unknown>;
+  },
+): void {
+  const id = randomUUID();
+  db.prepare(
+    `INSERT INTO audit_entries (id, user_id, action, actor_uid, actor_email, severity, metadata, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    id,
+    entry.userId,
+    entry.action,
+    entry.actorUid,
+    entry.actorEmail ?? null,
+    entry.severity,
+    entry.metadata ? JSON.stringify(entry.metadata) : null,
+    Date.now(),
+  );
 }

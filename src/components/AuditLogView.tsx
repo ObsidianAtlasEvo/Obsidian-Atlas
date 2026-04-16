@@ -1,17 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { AppState, AuditLog } from '../types';
-import { db, handleFirestoreError, OperationType } from '../services/firebase';
-import {
-  collection,
-  query,
-  orderBy,
-  onSnapshot,
-  limit,
-  Timestamp,
-  type QuerySnapshot,
-} from 'firebase/firestore';
 import { motion, AnimatePresence } from 'motion/react';
-import { History, ShieldCheck, AlertTriangle, Clock, Search, Filter, ChevronRight, User } from 'lucide-react';
+import { History, ShieldCheck, AlertTriangle, Clock, Search, Filter, ChevronRight, User, RefreshCw } from 'lucide-react';
+import { atlasApiUrl } from '../lib/atlasApi';
 import { cn } from '../lib/utils';
 
 interface AuditLogViewProps {
@@ -22,28 +13,36 @@ interface AuditLogViewProps {
 export function AuditLogView({ state, setState }: AuditLogViewProps) {
   const [logs, setLogs] = useState<AuditLog[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
   const [filter, setFilter] = useState<'all' | 'critical' | 'high' | 'medium' | 'low'>('all');
 
-  useEffect(() => {
-    const q = query(collection(db, 'audit_logs'), orderBy('timestamp', 'desc'), limit(100));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const s = snapshot as QuerySnapshot;
-      const logData = s.docs.map((doc) => {
-        const data = doc.data();
-        return { 
-          id: doc.id, 
-          ...data, 
-          timestamp: data.timestamp instanceof Timestamp ? data.timestamp.toDate().toISOString() : data.timestamp 
-        } as AuditLog;
-      });
-      setLogs(logData);
+  const fetchLogs = useCallback(async () => {
+    const userId = state.currentUser?.uid;
+    if (!userId) {
       setLoading(false);
-    }, (error) => {
-      handleFirestoreError(error, OperationType.LIST, 'audit_logs');
-    });
+      setError(true);
+      return;
+    }
+    setLoading(true);
+    setError(false);
+    try {
+      const res = await fetch(atlasApiUrl(`/v1/governance/audit-logs?userId=${encodeURIComponent(userId)}&limit=100`), {
+        credentials: 'include',
+      });
+      if (!res.ok) throw new Error(`Backend returned ${res.status}`);
+      const data = await res.json() as { logs: AuditLog[]; total: number };
+      setLogs(data.logs);
+    } catch {
+      setError(true);
+      setLogs([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [state.currentUser?.uid]);
 
-    return () => unsubscribe();
-  }, []);
+  useEffect(() => {
+    fetchLogs();
+  }, [fetchLogs]);
 
   const filteredLogs = filter === 'all' ? logs : logs.filter(l => l.severity === filter);
 
@@ -63,19 +62,29 @@ export function AuditLogView({ state, setState }: AuditLogViewProps) {
           <h2 className="text-xl font-serif text-ivory tracking-tight">Immutable Audit Logs</h2>
           <p className="text-[10px] font-mono uppercase tracking-widest text-stone">Governance & Security Event History</p>
         </div>
-        <div className="flex bg-titanium/5 border border-titanium/10 p-1 rounded-sm">
-          {['all', 'critical', 'high', 'medium', 'low'].map(f => (
-            <button
-              key={f}
-              onClick={() => setFilter(f as any)}
-              className={cn(
-                "px-3 py-1.5 text-[8px] uppercase tracking-widest transition-all",
-                filter === f ? "bg-gold/10 text-gold" : "text-stone hover:text-ivory"
-              )}
-            >
-              {f}
-            </button>
-          ))}
+        <div className="flex items-center gap-4">
+          <button
+            onClick={fetchLogs}
+            disabled={loading}
+            className="flex items-center gap-2 px-3 py-1.5 text-[8px] uppercase tracking-widest border border-titanium/10 text-stone hover:text-ivory transition-all"
+          >
+            <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
+            Refresh
+          </button>
+          <div className="flex bg-titanium/5 border border-titanium/10 p-1 rounded-sm">
+            {['all', 'critical', 'high', 'medium', 'low'].map(f => (
+              <button
+                key={f}
+                onClick={() => setFilter(f as any)}
+                className={cn(
+                  "px-3 py-1.5 text-[8px] uppercase tracking-widest transition-all",
+                  filter === f ? "bg-gold/10 text-gold" : "text-stone hover:text-ivory"
+                )}
+              >
+                {f}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
@@ -93,6 +102,8 @@ export function AuditLogView({ state, setState }: AuditLogViewProps) {
           <tbody>
             {loading ? (
               <tr><td colSpan={5} className="p-20 text-center text-stone uppercase tracking-widest animate-pulse">Retrieving Audit Trail...</td></tr>
+            ) : error ? (
+              <tr><td colSpan={5} className="p-20 text-center text-stone uppercase tracking-widest opacity-30">Backend required for audit logs</td></tr>
             ) : filteredLogs.length === 0 ? (
               <tr><td colSpan={5} className="p-20 text-center text-stone uppercase tracking-widest opacity-30">No Logs Recorded</td></tr>
             ) : (

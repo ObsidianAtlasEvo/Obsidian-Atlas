@@ -29,6 +29,7 @@ import {
 import { get, set } from 'idb-keyval';
 import { AppState, BugEntry, BugSeverity, BugStatus, BugCategory } from '../types';
 import { coerceActiveMode } from '../lib/atlasWayfinding';
+import { atlasApiUrl, atlasHttpEnabled } from '../lib/atlasApi';
 import { cn } from '../lib/utils';
 
 interface BugHunterProps {
@@ -49,6 +50,19 @@ export const BugHunter: React.FC<BugHunterProps> = ({ state, setState, embedded 
   const [selectedBugId, setSelectedBugId] = useState<string | null>(null);
   const [view, setView] = useState<'ledger' | 'stress' | 'personas'>('ledger');
   const [scanResults, setScanResults] = useState<Omit<BugEntry, 'id' | 'timestamp'>[]>([]);
+
+  // Fire-and-forget helper: persist diagnostic report to backend (#28)
+  const postDiagnosticReport = useCallback((type: 'scan' | 'error' | 'stress' | 'persona', payload: object) => {
+    if (!atlasHttpEnabled()) return;
+    const sessionId = state.currentUser?.uid ?? 'anonymous';
+    const userEmail = state.currentUser?.email ?? undefined;
+    fetch(atlasApiUrl('/v1/diagnostics/report'), {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId, type, payload, userEmail }),
+    }).catch(() => {});
+  }, [state.currentUser?.uid, state.currentUser?.email]);
 
   // Auto-activate monitoring when the panel opens or is embedded
   useEffect(() => {
@@ -129,11 +143,11 @@ export const BugHunter: React.FC<BugHunterProps> = ({ state, setState, embedded 
     if (!state.bugHunter.isActive) return;
 
     const handleError = (event: ErrorEvent) => {
-      addBug({
+      const entry = {
         name: `Runtime Error: ${event.message}`,
-        category: 'logic',
-        severity: 'high',
-        status: 'discovered',
+        category: 'logic' as const,
+        severity: 'high' as const,
+        status: 'discovered' as const,
         reproducibility: 'Unknown',
         affectedSurface: event.filename || 'Unknown',
         likelyCause: 'Unhandled exception',
@@ -141,15 +155,17 @@ export const BugHunter: React.FC<BugHunterProps> = ({ state, setState, embedded 
         functionalImpact: 'Severe',
         regressionRisk: true,
         recommendedFix: `Check stack trace at line ${event.lineno}:${event.colno}`
-      });
+      };
+      addBug(entry);
+      postDiagnosticReport('error', entry);
     };
 
     const handleUnhandledRejection = (event: PromiseRejectionEvent) => {
-      addBug({
+      const entry = {
         name: `Unhandled Promise Rejection: ${event.reason?.message || event.reason || 'Unknown'}`,
-        category: 'logic',
-        severity: 'high',
-        status: 'discovered',
+        category: 'logic' as const,
+        severity: 'high' as const,
+        status: 'discovered' as const,
         reproducibility: 'Unknown',
         affectedSurface: 'Async Operations',
         likelyCause: 'Missing catch block or failed network request',
@@ -157,7 +173,9 @@ export const BugHunter: React.FC<BugHunterProps> = ({ state, setState, embedded 
         functionalImpact: 'Severe',
         regressionRisk: true,
         recommendedFix: 'Add proper error handling to async functions'
-      });
+      };
+      addBug(entry);
+      postDiagnosticReport('error', entry);
     };
 
     window.addEventListener('error', handleError);
@@ -167,7 +185,7 @@ export const BugHunter: React.FC<BugHunterProps> = ({ state, setState, embedded 
       window.removeEventListener('error', handleError);
       window.removeEventListener('unhandledrejection', handleUnhandledRejection);
     };
-  }, [state.bugHunter.isActive, addBug]);
+  }, [state.bugHunter.isActive, addBug, postDiagnosticReport]);
 
   useEffect(() => {
     if (embedded || !state.bugHunter.isPanelOpen) return;
@@ -459,6 +477,11 @@ export const BugHunter: React.FC<BugHunterProps> = ({ state, setState, embedded 
           lastScanTimestamp: new Date().toISOString()
         }
       }));
+
+      // Fire-and-forget: persist scan results to backend (#28)
+      for (const finding of findings) {
+        postDiagnosticReport('scan', finding);
+      }
     }, 1500);
   };
 
@@ -481,6 +504,8 @@ export const BugHunter: React.FC<BugHunterProps> = ({ state, setState, embedded 
           activeStressTests: prev.bugHunter.activeStressTests.filter(t => t !== type)
         }
       }));
+      // Fire-and-forget: persist stress test summary to backend (#28)
+      postDiagnosticReport('stress', { type, errorsFound, timestamp: new Date().toISOString() });
       if (errorsFound > 0) {
         addBug({
           name: `Stress Test Failure: ${type} (${errorsFound} errors)`,
@@ -594,6 +619,15 @@ export const BugHunter: React.FC<BugHunterProps> = ({ state, setState, embedded 
         ledger: []
       }
     }));
+    // Fire-and-forget: DELETE session reports from backend (#28)
+    if (atlasHttpEnabled()) {
+      const sessionId = state.currentUser?.uid ?? 'anonymous';
+      const userEmail = state.currentUser?.email ?? '';
+      fetch(atlasApiUrl(`/v1/diagnostics/reports?sessionId=${encodeURIComponent(sessionId)}&userEmail=${encodeURIComponent(userEmail)}`), {
+        method: 'DELETE',
+        credentials: 'include',
+      }).catch(() => {});
+    }
   };
 
   const getSeverityColor = (severity: BugSeverity) => {
@@ -795,7 +829,7 @@ export const BugHunter: React.FC<BugHunterProps> = ({ state, setState, embedded 
                               >
                                 Draft Fix <Terminal size={12} />
                               </button>
-                              <button 
+                              <button
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   setState(prev => ({
@@ -805,6 +839,15 @@ export const BugHunter: React.FC<BugHunterProps> = ({ state, setState, embedded 
                                       ledger: prev.bugHunter.ledger.map(b => b.id === bug.id ? { ...b, status: 'fixed' } : b)
                                     }
                                   }));
+                                  // Fire-and-forget: PATCH mark-fixed to backend (#28)
+                                  if (atlasHttpEnabled()) {
+                                    fetch(atlasApiUrl(`/v1/diagnostics/report/${encodeURIComponent(bug.id)}`), {
+                                      method: 'PATCH',
+                                      credentials: 'include',
+                                      headers: { 'Content-Type': 'application/json' },
+                                      body: JSON.stringify({ status: 'fixed', userEmail: state.currentUser?.email }),
+                                    }).catch(() => {});
+                                  }
                                 }}
                                 className="text-[10px] text-gold-500/60 hover:text-gold-500 uppercase tracking-widest flex items-center gap-2 font-bold transition-colors"
                               >
