@@ -49,23 +49,16 @@ async function getPreferredModel(userId: string): Promise<string | null> {
 }
 
 async function upsertPreferredModel(userId: string, model: string | null): Promise<boolean> {
-  // Try PATCH first (update existing row)
-  const patch = await supabaseRest(
-    'PATCH',
-    `atlas_evolution_profiles?user_id=eq.${encodeURIComponent(userId)}`,
-    { preferred_model: model },
-  );
-
-  if (patch.ok) return true;
-
-  // If no row matched, POST a new one (upsert via Prefer: resolution=merge-duplicates)
-  const post = await supabaseRest(
+  // Supabase UPSERT: POST with Prefer: resolution=merge-duplicates
+  // Creates the row if user_id doesn't exist, updates preferred_model if it does.
+  const result = await supabaseRest(
     'POST',
     'atlas_evolution_profiles',
     { user_id: userId, preferred_model: model },
+    { Prefer: 'resolution=merge-duplicates,return=representation' },
   );
 
-  return post.ok;
+  return result.ok;
 }
 
 // ---------------------------------------------------------------------------

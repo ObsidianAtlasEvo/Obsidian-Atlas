@@ -240,8 +240,11 @@ export function registerOmniStreamRoutes(app: FastifyInstance): void {
     }
 
     // Resolve user's preferred model (non-blocking — falls back to auto on failure)
+    // Use session userId (Google sub from JWT) — authoritative, matches what
+    // userPreferencesRoutes.ts writes.  Fall back to body userId if no session.
+    const preferenceUserId = request.atlasSession?.userId ?? userId;
     const preferredModel = stripeTier
-      ? await resolvePreferredModel(userId, stripeTier).catch(() => null)
+      ? await resolvePreferredModel(preferenceUserId, stripeTier).catch(() => null)
       : null;
 
     reply.hijack();
