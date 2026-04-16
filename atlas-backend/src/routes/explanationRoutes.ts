@@ -88,7 +88,7 @@ async function tryGroqSummary(entries: NLEntry[]): Promise<string | null> {
         Authorization: `Bearer ${groqKey}`,
       },
       body: JSON.stringify({
-        model: 'llama-3.1-8b-instant',
+        model: 'llama-3.3-70b-versatile',
         messages: [{ role: 'user', content: prompt }],
         max_tokens: 512,
         temperature: 0.3,

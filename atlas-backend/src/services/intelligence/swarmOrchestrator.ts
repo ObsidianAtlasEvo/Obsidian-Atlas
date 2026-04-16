@@ -282,7 +282,7 @@ function getOverseerConfig(): { base: string; apiKey: string; model: string } | 
     env.cloudOpenAiBaseUrl?.trim() ||
     'https://api.groq.com/openai/v1'
   ).replace(/\/$/, '');
-  const model = env.groqRouterModel?.trim() || env.cloudChatModel?.trim() || 'llama-3.1-8b-instant';
+  const model = env.groqRouterModel?.trim() || env.cloudChatModel?.trim() || 'llama-3.3-70b-versatile';
   return { base, apiKey: groqKey, model };
 }
 

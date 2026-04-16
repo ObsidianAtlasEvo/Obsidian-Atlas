@@ -33,7 +33,7 @@ function resolveGroqExecution(): { base: string; apiKey: string; model: string }
   const model =
     env.groqDelegateModel?.trim() ||
     env.cloudChatModel?.trim() ||
-    'llama-3.1-8b-instant';
+    'llama-3.3-70b-versatile';
   return { base, apiKey, model };
 }
 

@@ -226,7 +226,7 @@ export async function evolveGoalMemory(
     try {
       const { completeGroqChat } = await import('../intelligence/universalAdapter.js');
       const { env } = await import('../../config/env.js');
-      const model = env.groqDelegateModel?.trim() || 'llama-3.1-8b-instant';
+      const model = env.groqDelegateModel?.trim() || 'llama-3.3-70b-versatile';
       const systemPrompt = [
         'Extract a structured goal signal from the user message.',
         'Return ONLY a JSON object with keys: explicit_goal, implicit_goal, emotional_driver, time_horizon, confidence (0-1).',
