@@ -93,6 +93,14 @@ export const LLM_REGISTRY: readonly LlmRegistryEntry[] = [
     backend: 'ollama',
     apiModel: 'local',
   },
+  {
+    id: 'gemini-3.1-flash-lite-preview',
+    specialty: 'Free-tier Overseer (primary). PUBLIC PREVIEW — fallback: gpt-5.4-nano',
+    context: '1M',
+    tier: 'free',
+    backend: 'gemini_sdk',
+    apiModel: 'gemini-3.1-flash-lite-preview',
+  },
 
   // ── GPT-5.4 family ──────────────────────────────────────────────────
   {
@@ -256,6 +264,7 @@ const MODEL_REGISTRY_TO_SWARM: Record<string, RegistryModelId | null> = {
   'groq/llama-3.1-70b-versatile': 'groq-llama3-70b',
   'groq/mixtral-8x7b-32768':  'groq-llama3-70b',
   'groq/gemma2-9b-it':         'groq-llama3-70b',
+  'google/gemini-3.1-flash-lite-preview': 'gemini-3.1-flash-lite-preview',
   // omnirouter = "let Atlas decide" — no swarm model override
   'omnirouter':                 null,
   // GPT-5.4 family

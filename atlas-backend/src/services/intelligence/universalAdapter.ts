@@ -1,4 +1,4 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { GoogleGenAI } from '@google/genai';
 import { env } from '../../config/env.js';
 import type { LlmRegistryEntry } from './llmRegistry.js';
 
@@ -264,8 +264,7 @@ async function streamGeminiChatRaw(params: {
   signal?: AbortSignal;
   timeoutMs?: number;
 }): Promise<{ fullText: string; model: string }> {
-  const key = env.geminiApiKey?.trim();
-  if (!key) throw new Error('GEMINI_API_KEY not configured');
+  const client = getGeminiGenAiClient();
 
   const first = params.messages[0];
   const system =
@@ -274,7 +273,6 @@ async function streamGeminiChatRaw(params: {
       : params.messages.filter((m) => m.role === 'system').map((m) => m.content).join('\n\n');
   const rest = params.messages.filter((m) => m.role !== 'system');
 
-  const ai = new GoogleGenerativeAI(key);
   const contents = rest.map((m) => ({
     role: m.role === 'assistant' ? ('model' as const) : ('user' as const),
     parts: [{ text: m.content }],
@@ -285,16 +283,16 @@ async function streamGeminiChatRaw(params: {
   let full = '';
 
   try {
-    const stream = await ai.getGenerativeModel({ model: params.model?.trim() || env.geminiModel?.trim() || 'gemini-2.0-flash' }).generateContentStream({
+    const stream = await client.models.generateContentStream({
+      model: params.model?.trim() || env.geminiModel?.trim() || 'gemini-2.0-flash',
       contents,
-      systemInstruction: system || undefined,
-      generationConfig: {
-
+      config: {
+        systemInstruction: system || undefined,
         temperature: params.temperature ?? 0.35,
       },
     });
 
-    for await (const chunk of stream.stream) {
+    for await (const chunk of stream) {
       const piece = typeof chunk.text === 'string' ? chunk.text : '';
       if (piece) {
         full += piece;
@@ -661,8 +659,7 @@ async function completeGeminiChatRaw(params: {
   signal?: AbortSignal;
   timeoutMs?: number;
 }): Promise<{ text: string; model: string }> {
-  const key = env.geminiApiKey?.trim();
-  if (!key) throw new Error('GEMINI_API_KEY not configured');
+  const client = getGeminiGenAiClient();
 
   const first = params.messages[0];
   const system =
@@ -671,7 +668,6 @@ async function completeGeminiChatRaw(params: {
       : params.messages.filter((m) => m.role === 'system').map((m) => m.content).join('\n\n');
   const rest = params.messages.filter((m) => m.role !== 'system');
 
-  const ai = new GoogleGenerativeAI(key);
   const contents = rest.map((m) => ({
     role: m.role === 'assistant' ? ('model' as const) : ('user' as const),
     parts: [{ text: m.content }],
@@ -680,15 +676,15 @@ async function completeGeminiChatRaw(params: {
   const controller = new AbortController();
   const t = params.timeoutMs ? setTimeout(() => controller.abort(), params.timeoutMs) : undefined;
   try {
-    const response = await ai.getGenerativeModel({ model: params.model?.trim() || env.geminiModel?.trim() || 'gemini-2.0-flash' }).generateContent({
+    const response = await client.models.generateContent({
+      model: params.model?.trim() || env.geminiModel?.trim() || 'gemini-2.0-flash',
       contents,
-      systemInstruction: system || undefined,
-      generationConfig: {
-
+      config: {
+        systemInstruction: system || undefined,
         temperature: params.temperature ?? 0.25,
       },
     });
-    const text = response.response.text() ?? '';
+    const text = typeof response.text === 'string' ? response.text : '';
     return { text: text.trim(), model: params.model };
   } finally {
     if (t) clearTimeout(t);
@@ -814,6 +810,117 @@ export async function streamGroqChat(params: {
   });
 }
 
+// ---------------------------------------------------------------------------
+// Gemini shared client (@google/genai SDK — used by both worker and overseer
+// paths; the legacy @google/generative-ai SDK is no longer used here)
+// ---------------------------------------------------------------------------
+
+/** Lazy singleton — allocated on the first Gemini call (worker or overseer). */
+let _geminiGenAiClient: InstanceType<typeof GoogleGenAI> | null = null;
+function getGeminiGenAiClient(): InstanceType<typeof GoogleGenAI> {
+  if (!_geminiGenAiClient) {
+    const key = env.geminiApiKey?.trim();
+    if (!key) throw new Error('GEMINI_API_KEY not configured');
+    _geminiGenAiClient = new GoogleGenAI({ apiKey: key });
+  }
+  return _geminiGenAiClient;
+}
+
+/** Convert @google/genai async-iterable stream to a web ReadableStream<Uint8Array>. */
+function geminiStreamToReadableStream(
+  geminiStream: AsyncIterable<{ text?: string }>,
+): ReadableStream<Uint8Array> {
+  const encoder = new TextEncoder();
+  return new ReadableStream({
+    async start(controller) {
+      try {
+        for await (const chunk of geminiStream) {
+          if (chunk.text) {
+            controller.enqueue(encoder.encode(chunk.text));
+          }
+        }
+        controller.close();
+      } catch (err) {
+        controller.error(err);
+      }
+    },
+  });
+}
+
+/**
+ * Stream the Gemini Free-tier Overseer (primary path).
+ * Uses the new @google/genai SDK with `generateContentStream`.
+ */
+export async function streamGeminiOverseerFree(params: {
+  systemPrompt: string;
+  userContent: string;
+  temperature?: number;
+  onDelta: StreamDeltaHandler;
+  timeoutMs?: number;
+}): Promise<{ fullText: string; model: string }> {
+  const client = getGeminiGenAiClient();
+  const model = env.geminiOverseerModelFree;
+
+  const controller = new AbortController();
+  const t = params.timeoutMs ? setTimeout(() => controller.abort(), params.timeoutMs) : undefined;
+  let full = '';
+
+  try {
+    const stream = await client.models.generateContentStream({
+      model,
+      contents: params.userContent,
+      config: {
+        systemInstruction: params.systemPrompt,
+        temperature: params.temperature ?? 0.08,
+      },
+    });
+
+    for await (const chunk of stream) {
+      const piece = typeof chunk.text === 'string' ? chunk.text : '';
+      if (piece) {
+        full += piece;
+        params.onDelta(piece);
+      }
+    }
+    return { fullText: full.trim(), model };
+  } finally {
+    if (t) clearTimeout(t);
+  }
+}
+
+/**
+ * Non-streaming Gemini Free-tier Overseer completion (for routing JSON).
+ */
+export async function completeGeminiOverseerFree(params: {
+  systemPrompt: string;
+  userContent: string;
+  temperature?: number;
+  timeoutMs?: number;
+}): Promise<{ text: string; model: string }> {
+  const client = getGeminiGenAiClient();
+  const model = env.geminiOverseerModelFree;
+
+  const controller = new AbortController();
+  const t = params.timeoutMs ? setTimeout(() => controller.abort(), params.timeoutMs) : undefined;
+
+  try {
+    const response = await client.models.generateContent({
+      model,
+      contents: params.userContent,
+      config: {
+        systemInstruction: params.systemPrompt,
+        temperature: params.temperature ?? 0.08,
+        responseMimeType: 'application/json',
+      },
+    });
+
+    const text = typeof response.text === 'string' ? response.text : '';
+    return { text: text.trim(), model };
+  } finally {
+    if (t) clearTimeout(t);
+  }
+}
+
 // ─── GPT-5.4 Responses API path ────────────────────────────────────────────
 
 /**
@@ -888,11 +995,11 @@ export async function invokeOpenAIResponses(
 // ─── Overseer model resolution ──────────────────────────────────────────────
 
 /**
- * Resolve the Overseer model based on user tier (Option 2: tier-gated).
- * Free tier uses gpt-5.4-nano; Core + Sovereign use gpt-5.4.
+ * Resolve the Overseer model based on user tier.
+ * Free tier uses gemini-3.1-flash-lite-preview (fallback: gpt-5.4-nano); Core + Sovereign use gpt-5.4.
  */
 export function resolveOverseerModel(tier: 'free' | 'core' | 'sovereign'): string {
-  if (tier === 'free') return 'gpt-5.4-nano';
+  if (tier === 'free') return env.geminiOverseerModelFree;
   return 'gpt-5.4';
 }
 
@@ -964,8 +1071,8 @@ export function buildOverseerInput(params: {
 /**
  * Invoke the Overseer using the collect-then-stream pattern.
  *
- * All worker outputs are collected BEFORE this call. The Overseer synthesizes
- * them into a single Atlas-identity response and streams it back.
+ * Free tier: routes to Gemini gemini-3.1-flash-lite-preview via streamGeminiOverseerFree,
+ * with gpt-5.4-nano as fallback. Core/Sovereign: routes to gpt-5.4 via OpenAI Responses API.
  *
  * Returns the raw Response (SSE stream) — caller reads from response.body.
  */
@@ -981,6 +1088,39 @@ export async function invokeOverseer(params: {
   const overseerModel = resolveOverseerModel(params.userTier);
   const overseerInput = buildOverseerInput(params);
 
+  // Free tier: try Gemini overseer first, fall back to gpt-5.4-nano
+  if (params.userTier === 'free') {
+    try {
+      let fullText = '';
+      const streamResult = await streamGeminiOverseerFree({
+        systemPrompt: overseerInput.systemPrompt ?? OVERSEER_SYSTEM_PROMPT,
+        userContent: overseerInput.messages.map((m) => m.content).join('\n\n'),
+        onDelta: () => {},
+        timeoutMs: 30_000,
+      });
+      fullText = streamResult.fullText;
+      // Wrap the completed text in a synthetic Response for consistent return type
+      const encoder = new TextEncoder();
+      const body = new ReadableStream({
+        start(controller) {
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'response.output_text.delta', delta: fullText })}\n\n`));
+          controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+          controller.close();
+        },
+      });
+      return new Response(body, { headers: { 'Content-Type': 'text/event-stream' } });
+    } catch {
+      // Gemini overseer failed — fall back to gpt-5.4-nano via OpenAI Responses API
+      const fallbackResult = await invokeOpenAIResponses(overseerInput, {
+        model: env.geminiOverseerFallback,
+        stream: true,
+        store: false,
+      });
+      return fallbackResult as Response;
+    }
+  }
+
+  // Core/Sovereign: use OpenAI Responses API with gpt-5.4
   const result = await invokeOpenAIResponses(overseerInput, {
     model: overseerModel,
     stream: true,

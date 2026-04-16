@@ -24,8 +24,10 @@ import {
   userTelemetryFromPolicyProfile,
 } from './telemetryTranslator.js';
 import { isLocalOllamaReachable } from './router.js';
+import type { SubscriptionTier } from './groundwork/v4/subscriptionSchema.js';
 import {
   completeGeminiChat,
+  completeGeminiOverseerFree,
   completeGroqChat,
   streamGeminiChat,
   streamGroqChat,
@@ -296,10 +298,66 @@ export interface PlanSwarmExecutionInput {
    *  Overseer is instructed to route to this model for direct/delegate strategies
    *  unless technically inappropriate. */
   preferredModel?: string;
+  /** Subscription tier — when 'free', the Overseer routes through Gemini
+   *  (gemini-3.1-flash-lite-preview) with gpt-5.4-nano as degraded fallback. */
+  userTier?: SubscriptionTier;
+}
+
+/** Apply feature-flag and coherence overrides after initial plan guarding. */
+async function applyPostGuards(input: PlanSwarmExecutionInput, guarded: ExecutionPlan): Promise<ExecutionPlan> {
+  let plan = guarded;
+
+  // Feature flag override: if advanced_reasoning_mode is active, bias toward swarm.
+  if (input.userId && plan.strategy === 'direct') {
+    const flags = getActiveFeatureFlags(input.userId);
+    const armFlag = flags.find((f) => f.feature === 'advanced_reasoning_mode');
+    if (armFlag && armFlag.confidence >= 0.7) {
+      plan = {
+        strategy: 'swarm',
+        steps: [
+          { step: 1, model: plan.model, task: 'Primary synthesis' },
+          { step: 2, model: DEFAULT_SWARM_MODEL_ID, task: 'Critical review and gap analysis' },
+        ],
+        reason: `feature_flag:advanced_reasoning_mode(confidence=${armFlag.confidence.toFixed(2)})`,
+      };
+      plan = enforcePlanRegistryAndCredentials(plan);
+    }
+  }
+
+  // mind_coherence override: if resonance confidence is critically low, force multi-agent review.
+  if (input.userId && plan.strategy !== 'swarm') {
+    try {
+      const { getDb } = await import('../../db/sqlite.js');
+      const db = getDb();
+      const coherenceRow = db
+        .prepare(`SELECT confidence FROM resonance_state WHERE user_id = ?`)
+        .get(input.userId) as { confidence: number } | undefined;
+      const coherence = coherenceRow?.confidence ?? 1.0;
+      if (coherence < 0.4) {
+        const baseModel = plan.strategy === 'direct' ? plan.model : DEFAULT_SWARM_MODEL_ID;
+        plan = {
+          strategy: 'swarm',
+          steps: [
+            { step: 1, model: baseModel, task: 'Primary synthesis' },
+            { step: 2, model: DEFAULT_SWARM_MODEL_ID, task: 'Coherence stabilization — cross-check and reconcile' },
+          ],
+          reason: `mind_coherence_low(${coherence.toFixed(3)})`,
+        };
+        plan = enforcePlanRegistryAndCredentials(plan);
+      }
+    } catch {
+      // resonance_state table may not exist yet — safe to skip
+    }
+  }
+
+  return plan;
 }
 
 /**
- * Ask Overseer (OpenAI/Groq) for a validated {@link ExecutionPlan}.
+ * Ask Overseer for a validated {@link ExecutionPlan}.
+ *
+ * Free-tier: Gemini (gemini-3.1-flash-lite-preview) primary → gpt-5.4-nano fallback.
+ * Core/Sovereign: OpenAI (gpt-5.4-nano or configured model) / Groq.
  */
 export async function planSwarmExecution(input: PlanSwarmExecutionInput): Promise<ExecutionPlan> {
   const cfg = getOverseerConfig();
@@ -312,7 +370,7 @@ export async function planSwarmExecution(input: PlanSwarmExecutionInput): Promis
     userTelemetryOverride: userTelemetryFromPolicyProfile(input.policyProfile),
   });
 
-  if (!cfg) {
+  if (!cfg && input.userTier !== 'free') {
     return { strategy: 'direct', model: DEFAULT_SWARM_MODEL_ID, reason: 'overseer_unconfigured' };
   }
 
@@ -336,6 +394,48 @@ export async function planSwarmExecution(input: PlanSwarmExecutionInput): Promis
     ? `\n\nUSER_PREFERRED_MODEL: "${input.preferredModel}" — route to this model for direct/delegate strategies unless technically inappropriate for the task.`
     : '';
   const userContent = `ROUTING_PAYLOAD_JSON:\n${JSON.stringify(payload)}${preferredHint}\n\nReturn ExecutionPlan JSON only.`;
+
+  /** Parse an ExecutionPlan from raw LLM text (strips fences, validates). */
+  const tryParse = (raw: string): ExecutionPlan | null => parseExecutionPlan(raw);
+
+  // ── Free-tier path: Gemini primary → gpt-5.4-nano fallback ───────────────
+  if (input.userTier === 'free' && env.geminiApiKey?.trim()) {
+    let content: string | null = null;
+    try {
+      console.warn('[overseer] Free-tier routing via gemini-3.1-flash-lite-preview (PUBLIC PREVIEW)');
+      const geminiResult = await completeGeminiOverseerFree({
+        systemPrompt: CHIEF_OF_STAFF_SYSTEM,
+        userContent,
+        temperature: 0.08,
+        timeoutMs: env.omniRouterTimeoutMs,
+      });
+      content = geminiResult.text;
+    } catch (geminiErr) {
+      console.warn('[overseer] gemini-3.1-flash-lite-preview unavailable, falling back to gpt-5.4-nano:', geminiErr);
+    }
+
+    // If Gemini failed or returned unparseable output, fall back to nano via OpenAI
+    const parsed = content ? tryParse(content) : null;
+    if (!parsed) {
+      if (cfg) {
+        // Fall through to standard OpenAI path below
+        console.warn('[overseer] Gemini parse failure — degrading to gpt-5.4-nano');
+      } else {
+        return { strategy: 'direct', model: DEFAULT_SWARM_MODEL_ID, reason: 'gemini_overseer_failed_no_fallback' };
+      }
+    } else {
+      // Gemini succeeded — apply guards and return
+      let guarded = await enforceSovereignLocalGpu(parsed, input.sovereignEligible, input.signal);
+      guarded = stripLocalForPublic(guarded);
+      guarded = enforcePlanRegistryAndCredentials(guarded);
+      return applyPostGuards(input, guarded);
+    }
+  }
+
+  // ── Core/Sovereign path (or free-tier Gemini fallback): OpenAI/Groq ──────
+  if (!cfg) {
+    return { strategy: 'direct', model: DEFAULT_SWARM_MODEL_ID, reason: 'overseer_unconfigured' };
+  }
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), env.omniRouterTimeoutMs);
@@ -387,50 +487,7 @@ export async function planSwarmExecution(input: PlanSwarmExecutionInput): Promis
     guarded = stripLocalForPublic(guarded);
     guarded = enforcePlanRegistryAndCredentials(guarded);
 
-    // Feature flag override: if advanced_reasoning_mode is active, bias toward swarm.
-    if (input.userId && guarded.strategy === 'direct') {
-      const flags = getActiveFeatureFlags(input.userId);
-      const armFlag = flags.find((f) => f.feature === 'advanced_reasoning_mode');
-      if (armFlag && armFlag.confidence >= 0.7) {
-        guarded = {
-          strategy: 'swarm',
-          steps: [
-            { step: 1, model: guarded.model, task: 'Primary synthesis' },
-            { step: 2, model: DEFAULT_SWARM_MODEL_ID, task: 'Critical review and gap analysis' },
-          ],
-          reason: `feature_flag:advanced_reasoning_mode(confidence=${armFlag.confidence.toFixed(2)})`,
-        };
-        guarded = enforcePlanRegistryAndCredentials(guarded);
-      }
-    }
-
-    // mind_coherence override: if resonance confidence is critically low, force multi-agent review.
-    if (input.userId && guarded.strategy !== 'swarm') {
-      try {
-        const { getDb } = await import('../../db/sqlite.js');
-        const db = getDb();
-        const coherenceRow = db
-          .prepare(`SELECT confidence FROM resonance_state WHERE user_id = ?`)
-          .get(input.userId) as { confidence: number } | undefined;
-        const coherence = coherenceRow?.confidence ?? 1.0;
-        if (coherence < 0.4) {
-          const baseModel = guarded.strategy === 'direct' ? guarded.model : DEFAULT_SWARM_MODEL_ID;
-          guarded = {
-            strategy: 'swarm',
-            steps: [
-              { step: 1, model: baseModel, task: 'Primary synthesis' },
-              { step: 2, model: DEFAULT_SWARM_MODEL_ID, task: 'Coherence stabilization — cross-check and reconcile' },
-            ],
-            reason: `mind_coherence_low(${coherence.toFixed(3)})`,
-          };
-          guarded = enforcePlanRegistryAndCredentials(guarded);
-        }
-      } catch {
-        // resonance_state table may not exist yet — safe to skip
-      }
-    }
-
-    return guarded;
+    return applyPostGuards(input, guarded);
   } catch {
     return { strategy: 'direct', model: DEFAULT_SWARM_MODEL_ID, reason: 'chief_exception' };
   } finally {

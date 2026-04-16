@@ -114,7 +114,7 @@ export interface TierModelAccess {
  *
  * GPT-5.4 bare IDs (no `openai/` prefix) — the router resolves provider at runtime.
  *
- * Free:      gpt-5.4-nano, Groq Llama 3.3 70B, Gemini 2.5 Flash. Overseer: gpt-5.4-nano (rate-limited).
+ * Free:      gpt-5.4-nano, Groq Llama 3.3 70B, Gemini 2.5 Flash. Overseer: gemini-3.1-flash-lite-preview (fallback: gpt-5.4-nano).
  * Core:      Free models + gpt-5.4-mini, gpt-5.4 (Overseer standard).
  * Sovereign: Core models + gpt-5.4 (worker), gpt-5.4-pro, Claude 3.7 Sonnet.
  */
@@ -124,8 +124,9 @@ export const TIER_MODEL_ACCESS: Record<SubscriptionTier, TierModelAccess> = {
       'gpt-5.4-nano',
       'groq/llama-3.3-70b-versatile',
       'gemini-2.5-flash',
+      'gemini-3.1-flash-lite-preview',
     ],
-    description: 'GPT-5.4 Nano, Groq Llama 3.3 70B, Gemini 2.5 Flash. Overseer: gpt-5.4-nano (rate-limited).',
+    description: 'GPT-5.4 Nano, Groq Llama 3.3 70B, Gemini 2.5 Flash. Overseer: gemini-3.1-flash-lite-preview (fallback: gpt-5.4-nano).',
   },
   core: {
     modelIds: [
