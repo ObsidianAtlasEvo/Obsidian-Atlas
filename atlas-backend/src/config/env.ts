@@ -205,6 +205,21 @@ const raw = envSchema.parse({
   CORS_ORIGINS: process.env.CORS_ORIGINS,
 });
 
+// ── GPT-5.4 family model ID constants ──────────────────────────────────────
+export const OPENAI_MODEL_NANO        = 'gpt-5.4-nano' as const;
+export const OPENAI_MODEL_MINI        = 'gpt-5.4-mini' as const;
+export const OPENAI_MODEL_FULL        = 'gpt-5.4' as const;
+export const OPENAI_MODEL_PRO         = 'gpt-5.4-pro' as const;
+
+// Role aliases
+export const OPENAI_MODEL_OVERSEER    = OPENAI_MODEL_FULL;   // Core + Sovereign Overseer
+export const OPENAI_MODEL_ARBITRATION = OPENAI_MODEL_PRO;    // hard arbitration only — no structured outputs
+
+// Legacy — do not use in new paths
+export const OPENAI_MODEL_GPT4O       = 'gpt-4o' as const;       // DEPRECATED
+export const OPENAI_MODEL_GPT4O_MINI  = 'gpt-4o-mini' as const;  // DEPRECATED
+// gpt-3.5-turbo: REMOVED — do not add a constant
+
 const sqlitePath = path.resolve(process.cwd(), raw.SQLITE_PATH);
 const dataDir = path.dirname(sqlitePath);
 
@@ -295,10 +310,15 @@ export const env = {
   openaiWorkerModel:             raw.OPENAI_WORKER_MODEL?.trim() || undefined,
   openaiRouterModel:             raw.OPENAI_ROUTER_MODEL?.trim() || undefined,
   openaiAuditModel:              raw.OPENAI_AUDIT_MODEL?.trim() || undefined,
-  openaiDefaultBudgetMode:       (raw.OPENAI_DEFAULT_BUDGET_MODE as 'fast' | 'balanced' | 'max-depth') ?? 'fast',
-  openaiNanoRoutingEnabled:      raw.OPENAI_NANO_ROUTING_ENABLED ?? false,
+  openaiDefaultBudgetMode:       (process.env['OPENAI_DEFAULT_BUDGET_MODE']   ?? 'fast') as 'fast' | 'balanced' | 'max-depth',
+  openaiNanoRoutingEnabled:      process.env['OPENAI_NANO_ROUTING_ENABLED']   !== 'false',
   openaiProAuditStakeThreshold:  raw.OPENAI_PRO_AUDIT_STAKE_THRESHOLD ?? 70,
   openaiProAuditConflictThreshold: raw.OPENAI_PRO_AUDIT_CONFLICT_THRESHOLD ?? 60,
+  // ── GPT-5.4 model routing (Phase 4) ────────────────────────────────────────
+  openaiOverseerModel:       process.env['OPENAI_OVERSEER_MODEL']        ?? OPENAI_MODEL_OVERSEER,
+  openaiNanoModel:           process.env['OPENAI_NANO_MODEL']             ?? OPENAI_MODEL_NANO,
+  openaiMiniModel:           process.env['OPENAI_MINI_MODEL']             ?? OPENAI_MODEL_MINI,
+  openaiProModel:            process.env['OPENAI_PRO_MODEL']              ?? OPENAI_MODEL_PRO,
   // ── Stripe billing (Phase 3) ──────────────────────────────────────────────
   stripeSecretKey:       raw.STRIPE_SECRET_KEY?.trim() || undefined,
   stripeWebhookSecret:   raw.STRIPE_WEBHOOK_SECRET?.trim() || undefined,
