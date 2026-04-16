@@ -297,7 +297,7 @@ export async function runChronosHeartbeat(
       messages: [{ role: 'user', content: userMsg }],
       systemPrompt: CHRONOS_SYSTEM_PROMPT,
       jsonMode: true,
-      modelOverride: env.ollamaEvolutionModel,
+      modelOverride: env.disableLocalOllama ? undefined : env.ollamaEvolutionModel,
       temperature: 0.2,
       timeoutMs: env.evolutionLlmTimeoutMs,
     });

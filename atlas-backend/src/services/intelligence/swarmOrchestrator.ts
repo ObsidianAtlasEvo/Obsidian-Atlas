@@ -120,6 +120,7 @@ function canRunRegistryEntry(entry: LlmRegistryEntry): boolean {
   if (entry.backend === 'gemini_sdk' && !env.geminiApiKey?.trim()) return false;
   if (entry.backend === 'groq' && !(env.groqApiKey?.trim() || env.cloudOpenAiApiKey?.trim())) return false;
   if (entry.backend === 'openrouter' && !premiumModelAvailable()) return false;
+  if (entry.backend === 'ollama' && env.disableLocalOllama) return false;
   return true;
 }
 

@@ -3,6 +3,8 @@
  * `apiModel` is the string passed to the provider; `backend` selects transport in {@link universalAdapter}.
  */
 
+import { env } from '../../config/env.js';
+
 export type LlmCostTier = 'free' | 'premium';
 
 export type LlmInferenceBackend =
@@ -100,6 +102,7 @@ export const LLM_REGISTRY: readonly LlmRegistryEntry[] = [
     tier: 'free',
     backend: 'ollama',
     apiModel: 'local',
+    status: (env.disableLocalOllama ? 'BLOCKED' : 'active') as LlmModelStatus,
   },
   {
     id: 'gemini-3.1-flash-lite-preview',
