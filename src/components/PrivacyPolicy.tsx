@@ -1,4 +1,5 @@
 import React from 'react';
+import { SOVEREIGN_CREATOR_EMAIL } from '../config/sovereignCreator';
 
 export function PrivacyPolicy() {
   return (
@@ -101,7 +102,7 @@ export function PrivacyPolicy() {
             <li>Opt out of certain communications</li>
             <li>Limit certain permissions or device settings</li>
           </ul>
-          <p>Requests may be submitted to: crowleyrc62@gmail.com</p>
+          <p>Requests may be submitted to: {SOVEREIGN_CREATOR_EMAIL}</p>
 
           <h2 className="text-xl font-serif text-ivory pt-4">9. Children’s Privacy</h2>
           <p>Obsidian Atlas is not intended for children under the age of 13, and we do not knowingly collect personal information from children under 13. If we become aware that we have collected such information, we may delete it.</p>
@@ -121,7 +122,7 @@ export function PrivacyPolicy() {
             <p>Obsidian Atlas</p>
             <p>Ryan Crowley</p>
             <p>5809 Parkside Crossing, Dublin OH 43016</p>
-            <p>crowleyrc62@gmail.com</p>
+            <p>{SOVEREIGN_CREATOR_EMAIL}</p>
           </div>
         </div>
       </div>

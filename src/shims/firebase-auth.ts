@@ -3,6 +3,7 @@
  */
 
 import { idbAuthGet, idbAuthPut, type AuthUserRecord } from './atlasIndexedDb';
+import { SOVEREIGN_CREATOR_EMAIL } from '../config/sovereignCreator';
 
 const SESSION_KEY = 'atlas-local-session-v1';
 
@@ -145,7 +146,7 @@ export async function signInWithEmailAndPassword(
     rec = {
       email: trimmed,
       password,
-      emailVerified: trimmed !== 'crowleyrc62@gmail.com',
+      emailVerified: trimmed !== SOVEREIGN_CREATOR_EMAIL,
     };
     await idbAuthPut(uid, rec);
   } else if (rec.password !== password) {
@@ -171,7 +172,7 @@ export async function createUserWithEmailAndPassword(
   const rec: AuthUserRecord = {
     email: trimmed,
     password,
-    emailVerified: trimmed !== 'crowleyrc62@gmail.com',
+    emailVerified: trimmed !== SOVEREIGN_CREATOR_EMAIL,
   };
   await idbAuthPut(uid, rec);
   const user = new User(uid, rec.email, rec.emailVerified);

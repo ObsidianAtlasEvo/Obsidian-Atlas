@@ -9,6 +9,8 @@
  * isSovereignOwnerEmail (live repo signature) so no call site needs to change at merge time.
  */
 
+import { SOVEREIGN_CREATOR_EMAIL as CANONICAL_EMAIL } from '../../config/sovereignCreator.js';
+
 // ---------------------------------------------------------------------------
 // Sovereign identity constants
 // ---------------------------------------------------------------------------
@@ -18,7 +20,7 @@
  * Importable so legalHoldRegistry.ts and layerLockGuard.ts can stop hardcoding it.
  */
 export const SOVEREIGN_CREATOR_EMAIL =
-  process.env['SOVEREIGN_CREATOR_EMAIL'] ?? 'crowleyrc62@gmail.com';
+  process.env['SOVEREIGN_CREATOR_EMAIL'] ?? CANONICAL_EMAIL;
 
 // ---------------------------------------------------------------------------
 // Sovereign identity check

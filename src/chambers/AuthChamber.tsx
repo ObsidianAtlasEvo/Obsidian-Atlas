@@ -9,6 +9,7 @@ import { useAtlasStore } from '../store/useAtlasStore';
 import { saveUserProfile } from '../lib/persistence';
 import { nowISO } from '../lib/persistence';
 import type { UserProfile } from '@/types';
+import { SOVEREIGN_CREATOR_EMAIL } from '../config/sovereignCreator';
 
 type AuthMode = 'sign-in' | 'register';
 
@@ -51,7 +52,7 @@ export default function AuthChamber() {
   const setActiveMode = useAtlasStore((s) => s.setActiveMode);
   const hydrateUserData = useAtlasStore((s) => s.hydrateUserData);
 
-  const isCreatorEmail = email.trim().toLowerCase() === 'crowleyrc62@gmail.com';
+  const isCreatorEmail = email.trim().toLowerCase() === SOVEREIGN_CREATOR_EMAIL;
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();

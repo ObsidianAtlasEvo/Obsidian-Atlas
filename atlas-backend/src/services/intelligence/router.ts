@@ -1,10 +1,11 @@
 import { env } from '../../config/env.js';
+import { SOVEREIGN_CREATOR_EMAIL } from '../../config/sovereignCreator.js';
 import type { GenerateInput, GenerateOutput, ModelProvider } from '../model/modelProvider.js';
 import { createOllamaModelProvider } from '../model/ollamaClient.js';
 import type { IntelligenceSurface, RoutedGenerateInput, StreamChunk } from './types.js';
 
 /** Server-only sovereign operator identity; normalized before compare. */
-export const SOVEREIGN_OWNER_EMAIL_RAW = 'crowleyrc62@gmail.com';
+export const SOVEREIGN_OWNER_EMAIL_RAW = SOVEREIGN_CREATOR_EMAIL;
 
 const SOVEREIGN_OWNER_EMAIL_NORMALIZED = normalizeEmail(SOVEREIGN_OWNER_EMAIL_RAW);
 

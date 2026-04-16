@@ -3,6 +3,7 @@ import { AppState, EmergencyContainment } from '../types';
 import { auth, setEmergencyState, logAudit } from '../services/firebase';
 import { ShieldAlert, ShieldCheck, Lock, Key, Smartphone, AlertTriangle, CheckCircle2, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { SOVEREIGN_CREATOR_EMAIL } from '../config/sovereignCreator';
 
 interface EmergencyActivationFlowProps {
   state: AppState;
@@ -19,7 +20,7 @@ export const EmergencyActivationFlow: React.FC<EmergencyActivationFlowProps> = (
   const [reason, setReason] = useState('');
   const [isVerifying, setIsVerifying] = useState(false);
 
-  const creatorEmail = "crowleyrc62@gmail.com";
+  const creatorEmail = SOVEREIGN_CREATOR_EMAIL;
   const phone1 = "614-735-9118";
   const phone2 = "614-897-8008";
 

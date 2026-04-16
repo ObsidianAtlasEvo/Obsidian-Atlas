@@ -24,6 +24,7 @@
  */
 
 import type { Database } from 'better-sqlite3';
+import { SOVEREIGN_CREATOR_EMAIL } from '../../../../config/sovereignCreator.js';
 
 // ---------------------------------------------------------------------------
 // Migration SQL
@@ -206,7 +207,7 @@ export const TIER_CHAT_LIMIT: Record<SubscriptionTier, number | null> = {
 export function isSovereignOwner(userId?: string, email?: string): boolean {
   const sovereignId = process.env['SOVEREIGN_CREATOR_USER_ID'] ?? '';
   const sovereignEmail =
-    process.env['SOVEREIGN_CREATOR_EMAIL'] ?? 'crowleyrc62@gmail.com';
+    process.env['SOVEREIGN_CREATOR_EMAIL'] ?? SOVEREIGN_CREATOR_EMAIL;
 
   const idMatch = Boolean(userId) && Boolean(sovereignId) && userId === sovereignId;
   const emailMatch = Boolean(email) &&

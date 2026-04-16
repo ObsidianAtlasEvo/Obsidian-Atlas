@@ -20,6 +20,7 @@ import { loadUserProfile, saveUserProfile, loadJournal, saveJournalEntry,
          saveDirective, deleteDirective, upsertUserProfile, generateId, nowISO } from '../lib/persistence';
 import { auth, onAuthStateChanged } from 'firebase/auth';
 import { syncToBackend, hydrateFromBackend, migrateLocalToBackend } from '../lib/sovereignSync';
+import { SOVEREIGN_CREATOR_EMAIL } from '../config/sovereignCreator';
 
 import type {
   AppState,
@@ -242,7 +243,7 @@ export const useAtlasStore = create<AtlasStore>()(
         uid: firebaseUser.uid,
         email: firebaseUser.email ?? '',
         emailVerified: firebaseUser.emailVerified,
-        role: firebaseUser.email === 'crowleyrc62@gmail.com' ? 'sovereign_creator' : 'registered_user',
+        role: firebaseUser.email === SOVEREIGN_CREATOR_EMAIL ? 'sovereign_creator' : 'registered_user',
         createdAt: nowISO(),
         securitySettings: { mfaEnabled: false, passkeyEnabled: false },
         privacySettings: { dataMinimization: true, memorySovereignty: true },

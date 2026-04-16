@@ -7,6 +7,8 @@
  * for the Sovereign Creator Console.
  */
 
+import { SOVEREIGN_CREATOR_EMAIL } from '../../src/config/sovereignCreator';
+
 export type SovereignRole = 'creator' | 'observer' | 'none';
 
 export type SovereignPermission =
@@ -43,7 +45,7 @@ const ROLE_PERMISSIONS: Record<SovereignRole, SovereignPermission[]> = {
 };
 
 // Creator email — single source of truth for sovereign access
-const CREATOR_EMAIL = 'crowleyrc62@gmail.com';
+const CREATOR_EMAIL = SOVEREIGN_CREATOR_EMAIL;
 
 // Rate limit config per permission group
 const RATE_LIMITS: Record<string, { maxRequests: number; windowMs: number }> = {
