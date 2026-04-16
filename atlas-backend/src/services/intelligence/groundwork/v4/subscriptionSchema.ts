@@ -24,7 +24,6 @@
  */
 
 import type { Database } from 'better-sqlite3';
-import { SOVEREIGN_CREATOR_EMAIL } from '../../../../config/sovereignCreator.js';
 
 // ---------------------------------------------------------------------------
 // Migration SQL
@@ -113,48 +112,42 @@ export interface TierModelAccess {
 /**
  * Model registry IDs accessible per tier.
  *
- * IDs MUST match the canonical `id` field in modelRegistry.ts (namespaced form:
- * 'provider/model'). The frontend model selector and resolvePreferredModel both
- * validate against these IDs.
+ * GPT-5.4 bare IDs (no `openai/` prefix) — the router resolves provider at runtime.
  *
- * Free:     Groq Llama 3.1 70B, Gemini 2.5 Flash, OmniRouter. No OpenAI.
- * Core:     Free models + GPT-3.5 Turbo, GPT-4o Mini, Gemini 2.5 Flash.
- * Sovereign: Full access — all models including GPT-4o, o1 Preview, Claude Opus/Sonnet.
+ * Free:      gpt-5.4-nano, Groq Llama 3.3 70B, Gemini 2.5 Flash. Overseer: gpt-5.4-nano (rate-limited).
+ * Core:      Free models + gpt-5.4-mini, gpt-5.4 (Overseer standard).
+ * Sovereign: Core models + gpt-5.4 (worker), gpt-5.4-pro, Claude 3.7 Sonnet.
  */
 export const TIER_MODEL_ACCESS: Record<SubscriptionTier, TierModelAccess> = {
   free: {
     modelIds: [
-      'groq/llama-3.1-70b-versatile',
-      'google/gemini-2.5-flash',
-      'omnirouter',
+      'gpt-5.4-nano',
+      'groq/llama-3.3-70b-versatile',
+      'gemini-2.5-flash',
     ],
-    description: 'Groq Llama 3.1 70B, Gemini 2.5 Flash, OmniRouter. No OpenAI access.',
+    description: 'GPT-5.4 Nano, Groq Llama 3.3 70B, Gemini 2.5 Flash. Overseer: gpt-5.4-nano (rate-limited).',
   },
   core: {
     modelIds: [
-      'groq/llama-3.1-70b-versatile',
-      'google/gemini-2.5-flash',
-      'omnirouter',
-      'openai/gpt-3.5-turbo',
-      'openai/gpt-4o-mini',
-      'google/gemini-2.0-flash',
+      'gpt-5.4-nano',
+      'groq/llama-3.3-70b-versatile',
+      'gemini-2.5-flash',
+      'gpt-5.4-mini',
+      'gpt-5.4',
     ],
-    description: 'Free models + GPT-3.5 Turbo, GPT-4o Mini, and Gemini 2.0 Flash.',
+    description: 'Free models + GPT-5.4 Mini, GPT-5.4 (Overseer standard).',
   },
   sovereign: {
     modelIds: [
-      'groq/llama-3.1-70b-versatile',
-      'google/gemini-2.5-flash',
-      'omnirouter',
-      'openai/gpt-3.5-turbo',
-      'openai/gpt-4o-mini',
-      'google/gemini-2.0-flash',
-      'openai/gpt-4o',
-      'openai/o1-preview',
-      'anthropic/claude-3-opus',
-      'anthropic/claude-3.5-sonnet',
+      'gpt-5.4-nano',
+      'groq/llama-3.3-70b-versatile',
+      'gemini-2.5-flash',
+      'gpt-5.4-mini',
+      'gpt-5.4',
+      'gpt-5.4-pro',
+      'claude-3-7-sonnet-latest',
     ],
-    description: 'Full model access including GPT-4o, o1 Preview, Claude Opus, and Claude 3.5 Sonnet.',
+    description: 'Full model access including GPT-5.4 (worker), GPT-5.4 Pro, and Claude 3.7 Sonnet.',
   },
 };
 
@@ -194,34 +187,16 @@ export const TIER_CHAT_LIMIT: Record<SubscriptionTier, number | null> = {
 /**
  * Returns true if the given userId or email matches the Sovereign Creator.
  *
- * [REPAIR 3] Unified detection by both userId AND email:
- *   - Reads SOVEREIGN_CREATOR_USER_ID env var for ID-based matching.
- *   - Reads SOVEREIGN_CREATOR_EMAIL env var (fallback: 'crowleyrc62@gmail.com')
- *     for email-based matching.
- *   - Either match is sufficient (idMatch || emailMatch).
- *   - Warns at most once if neither env var is set.
+ * Checks BOTH userId AND email — either match is sufficient.
  *
  * @param userId  Atlas internal user ID (optional)
  * @param email   User email address (optional)
  */
 export function isSovereignOwner(userId?: string, email?: string): boolean {
-  const sovereignId = process.env['SOVEREIGN_CREATOR_USER_ID'] ?? '';
-  const sovereignEmail =
-    process.env['SOVEREIGN_CREATOR_EMAIL'] ?? SOVEREIGN_CREATOR_EMAIL;
-
-  const idMatch = Boolean(userId) && Boolean(sovereignId) && userId === sovereignId;
-  const emailMatch = Boolean(email) &&
-    email!.toLowerCase() === sovereignEmail.toLowerCase();
-
-  if (!sovereignId && !process.env['SOVEREIGN_CREATOR_EMAIL']) {
-    if (!(globalThis as Record<string, unknown>)['_sovereignWarnLogged']) {
-      console.warn(
-        '[Atlas/Billing] Neither SOVEREIGN_CREATOR_USER_ID nor SOVEREIGN_CREATOR_EMAIL is set. Sovereign bypass is inactive.'
-      );
-      (globalThis as Record<string, unknown>)['_sovereignWarnLogged'] = true;
-    }
-  }
-
+  const sovereignId    = process.env['SOVEREIGN_CREATOR_USER_ID'] ?? '';
+  const sovereignEmail = process.env['SOVEREIGN_CREATOR_EMAIL'] ?? 'crowleyrc62@gmail.com';
+  const idMatch    = Boolean(userId)  && Boolean(sovereignId)    && userId === sovereignId;
+  const emailMatch = Boolean(email)   && email!.toLowerCase() === sovereignEmail.toLowerCase();
   return idMatch || emailMatch;
 }
 
