@@ -9,6 +9,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { getDb } from '../db/sqlite.js';
+import { SOVEREIGN_CREATOR_EMAIL } from '../config/sovereignCreator.js';
 
 const consoleCommandSchema = z.object({
   command: z.string().min(1).max(4000),
@@ -24,7 +25,7 @@ const aiCommandSchema = z.object({
   channel: z.string().optional(),
 });
 
-const CREATOR_EMAIL = 'crowleyrc62@gmail.com';
+const CREATOR_EMAIL = SOVEREIGN_CREATOR_EMAIL;
 
 function isCreator(email?: string): boolean {
   return email?.trim().toLowerCase() === CREATOR_EMAIL;

@@ -21,8 +21,9 @@ import {
   getErasureStatus,
 } from '../services/governance/retention/erasureExecutor.js';
 import { queryRetentionEvents } from '../services/governance/retention/retentionAuditTrail.js';
+import { SOVEREIGN_CREATOR_EMAIL } from '../config/sovereignCreator.js';
 
-const CREATOR_EMAIL = 'crowleyrc62@gmail.com';
+const CREATOR_EMAIL = SOVEREIGN_CREATOR_EMAIL;
 
 const erasureBody = z.object({
   userId: z.string().min(1),

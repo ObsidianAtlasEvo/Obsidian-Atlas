@@ -12,6 +12,7 @@
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
+import { SOVEREIGN_CREATOR_EMAIL } from '../../src/config/sovereignCreator';
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -167,7 +168,7 @@ const styles = {
   }),
 } as const;
 
-const SOVEREIGN_CREATOR = 'crowleyrc62@gmail.com';
+const SOVEREIGN_CREATOR = SOVEREIGN_CREATOR_EMAIL;
 
 /* ------------------------------------------------------------------ */
 /*  Component                                                          */

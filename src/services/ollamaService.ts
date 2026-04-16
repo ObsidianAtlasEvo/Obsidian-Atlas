@@ -22,11 +22,12 @@ import {
   EffectiveResponseProfile
 } from "../resonance/types";
 import { PersonalEvolutionEngine } from "./evolution/personalEvolutionEngine";
+import { SOVEREIGN_CREATOR_EMAIL } from "../config/sovereignCreator";
 
 import { useSettingsStore } from "./state/settingsStore";
 
 // Global Evolution Engine Instance
-export const globalEvolutionEngine = new PersonalEvolutionEngine('crowleyrc62@gmail.com');
+export const globalEvolutionEngine = new PersonalEvolutionEngine(SOVEREIGN_CREATOR_EMAIL);
 
 // Intelligent Caching System
 interface CacheEntry<T> {
@@ -612,7 +613,7 @@ export async function processGovernanceCommand(
   userEmail?: string,
   trace?: { userId: string; channel: string }
 ): Promise<{ response: string; proposalTitle: string; proposalDescription: string; proposalClass: 0 | 1 | 2 | 3 | 4; isImmediateUpgrade: boolean; upgradeImpact: string }> {
-  const isAdmin = userEmail === 'crowleyrc62@gmail.com';
+  const isAdmin = userEmail === SOVEREIGN_CREATOR_EMAIL;
   
   const securityConstraint = !isAdmin ? `
     SECURITY ALERT: The current user (${userEmail || 'Anonymous'}) is NOT the Sovereign Creator.
@@ -620,7 +621,7 @@ export async function processGovernanceCommand(
     - You must provide a polite but firm refusal if the user attempts to access restricted administrative functions.
     - Redirect the user to standard operational queries.
   ` : `
-    ADMINISTRATIVE ACCESS GRANTED: User is the Sovereign Creator (crowleyrc62@gmail.com).
+    ADMINISTRATIVE ACCESS GRANTED: User is the Sovereign Creator (${SOVEREIGN_CREATOR_EMAIL}).
     - Full access to Gaps, Console Commands, and Systemic Architecture is permitted.
   `;
 
@@ -678,7 +679,7 @@ export async function processMutationRequest(
   mutation: string,
   userEmail?: string
 ): Promise<{ response: string; proposalTitle: string; proposalDescription: string; proposalClass: 0 | 1 | 2 | 3 | 4; isImmediateUpgrade: boolean; upgradeImpact: string }> {
-  const isAdmin = userEmail === 'crowleyrc62@gmail.com';
+  const isAdmin = userEmail === SOVEREIGN_CREATOR_EMAIL;
 
   const securityConstraint = !isAdmin ? `
     SECURITY ALERT: The current user (${userEmail || 'Anonymous'}) is NOT the Sovereign Creator.
@@ -686,7 +687,7 @@ export async function processMutationRequest(
     - You must provide a polite but firm refusal if the user attempts to access restricted administrative functions.
     - Redirect the user to standard operational queries.
   ` : `
-    ADMINISTRATIVE ACCESS GRANTED: User is the Sovereign Creator (crowleyrc62@gmail.com).
+    ADMINISTRATIVE ACCESS GRANTED: User is the Sovereign Creator (${SOVEREIGN_CREATOR_EMAIL}).
     - Full access to Gaps, Console Commands, and Systemic Architecture is permitted.
   `;
 

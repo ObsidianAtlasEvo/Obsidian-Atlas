@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { applyStructuralRepair } from '../../lib/atlasRepair';
 import { atlasApiUrl } from '../../lib/atlasApi';
 import { ChangeProposal } from '../../types';
+import { SOVEREIGN_CREATOR_EMAIL } from '../../config/sovereignCreator';
 
 interface ChangeControlState {
   isMutating: boolean;
@@ -31,8 +32,8 @@ export const useChangeControlStore = create<ChangeControlState>((set, get) => ({
       return;
     }
 
-    if (userEmail !== 'crowleyrc62@gmail.com') {
-      console.error('Unauthorized: Only crowleyrc62@gmail.com can trigger repairs.');
+    if (userEmail !== SOVEREIGN_CREATOR_EMAIL) {
+      console.error(`Unauthorized: Only ${SOVEREIGN_CREATOR_EMAIL} can trigger repairs.`);
       return;
     }
 

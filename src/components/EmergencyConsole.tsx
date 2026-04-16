@@ -13,6 +13,7 @@ import {
 import { ShieldAlert, ShieldCheck, Activity, History, Lock, Unlock, AlertTriangle, FileText, Terminal, Zap, RefreshCw, Eye, EyeOff } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { EmergencyActivationFlow } from './EmergencyActivationFlow';
+import { SOVEREIGN_CREATOR_EMAIL } from '../config/sovereignCreator';
 
 interface EmergencyConsoleProps {
   state: AppState;
@@ -228,7 +229,7 @@ export const EmergencyConsole: React.FC<EmergencyConsoleProps> = ({ state, setSt
         <div className="pt-12 border-t border-gold/10 flex items-center justify-between text-[8px] text-stone uppercase tracking-widest">
           <span>Atlas Sovereign Governance Layer</span>
           <span>Incident Response Protocol v4.0</span>
-          <span>Creator: crowleyrc62@gmail.com</span>
+          <span>Creator: {SOVEREIGN_CREATOR_EMAIL}</span>
         </div>
       </div>
 

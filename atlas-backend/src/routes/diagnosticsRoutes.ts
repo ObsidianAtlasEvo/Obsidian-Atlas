@@ -9,8 +9,9 @@ import { z } from 'zod';
 import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { SOVEREIGN_CREATOR_EMAIL } from '../config/sovereignCreator.js';
 
-const CREATOR_EMAIL = 'crowleyrc62@gmail.com';
+const CREATOR_EMAIL = SOVEREIGN_CREATOR_EMAIL;
 
 function isCreator(email?: string): boolean {
   return email?.trim().toLowerCase() === CREATOR_EMAIL;
