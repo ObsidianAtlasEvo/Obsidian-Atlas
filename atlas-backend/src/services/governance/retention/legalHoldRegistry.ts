@@ -3,7 +3,7 @@
  *
  * Manages legal holds that prevent data from being deleted during
  * retention sweeps or erasure requests. Only the Sovereign Creator
- * (crowleyrc62@gmail.com) can release holds. Holds older than 90 days
+ * (Sovereign Creator — see SOVEREIGN_CREATOR_EMAIL) can release holds. Holds older than 90 days
  * without re-confirmation are flagged.
  */
 
