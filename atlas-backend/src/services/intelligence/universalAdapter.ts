@@ -36,6 +36,24 @@ function openAiStyleMessages(msgs: UniversalMessage[]): { role: string; content:
   return msgs.map((m) => ({ role: m.role, content: m.content }));
 }
 
+/**
+ * Truncate messages to fit within Groq's ~12k TPM limit.
+ * Keeps system message + most recent messages up to ~8k tokens (32k chars).
+ */
+function truncateForGroq(messages: UniversalMessage[]): UniversalMessage[] {
+  const MAX_CHARS = 32_000;
+  const system = messages[0]?.role === 'system' ? [messages[0]] : [];
+  const rest = messages[0]?.role === 'system' ? messages.slice(1) : [...messages];
+  let total = system.reduce((s, m) => s + m.content.length, 0);
+  const kept: UniversalMessage[] = [];
+  for (let i = rest.length - 1; i >= 0; i--) {
+    if (total + rest[i]!.content.length > MAX_CHARS && kept.length > 0) break;
+    kept.unshift(rest[i]!);
+    total += rest[i]!.content.length;
+  }
+  return [...system, ...kept];
+}
+
 let cachedOllamaTagsAt = 0;
 let cachedOllamaTags: string[] = [];
 
@@ -281,12 +299,13 @@ export async function streamGeminiChat(params: {
   // Attempt 4: fall back to Groq (cap tokens to avoid Groq free-tier TPM limit)
   const groqAuth = resolveGroqAuth();
   if (groqAuth) {
+    const groqMessages = truncateForGroq(params.messages);
     try {
       return await streamOpenAiCompatibleChat({
         baseUrl: groqAuth.base,
         apiKey: groqAuth.apiKey,
         model: 'llama-3.3-70b-versatile',
-        messages: params.messages,
+        messages: groqMessages,
         onDelta: params.onDelta,
         temperature: params.temperature,
         maxTokens: 2048,
@@ -294,16 +313,16 @@ export async function streamGeminiChat(params: {
         timeoutMs: params.timeoutMs,
       });
     } catch (groqErr) {
-      // Groq 429 (rate limit): wait and retry once before giving up
+      // Groq 429 (rate limit) or 413 (payload too large): wait and retry once before giving up
       const groqMsg = groqErr instanceof Error ? groqErr.message : String(groqErr);
-      if (groqMsg.includes('429') || groqMsg.includes('Rate limit') || groqMsg.includes('Too Many Requests')) {
+      if (groqMsg.includes('429') || groqMsg.includes('Rate limit') || groqMsg.includes('Too Many Requests') || groqMsg.includes('413') || groqMsg.includes('Request too large')) {
         await delay(3000);
         try {
           return await streamOpenAiCompatibleChat({
             baseUrl: groqAuth.base,
             apiKey: groqAuth.apiKey,
             model: 'llama-3.3-70b-versatile',
-            messages: params.messages,
+            messages: groqMessages,
             onDelta: params.onDelta,
             temperature: params.temperature,
             maxTokens: 2048,
