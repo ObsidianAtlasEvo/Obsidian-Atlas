@@ -1,8 +1,8 @@
 /**
  * userPreferencesRoutes.ts — User preferences API (model selection, etc.)
  *
- * GET  /api/user/preferences  → { preferredModel, availableModels, tier }
- * PATCH /api/user/preferences → body: { preferredModel } → 200 or 400/403
+ * GET  /user/preferences  → { preferredModel, availableModels, tier }
+ * PATCH /user/preferences → body: { preferredModel } → 200 or 400/403
  *
  * Auth: requires attachAtlasSession (same pattern as billingRoutes).
  * Supabase: reads/writes `preferred_model` on `atlas_evolution_profiles`.
@@ -76,8 +76,8 @@ export async function registerUserPreferencesRoutes(
   fastify: FastifyInstance,
   db: Database,
 ): Promise<void> {
-  // GET /api/user/preferences
-  fastify.get('/api/user/preferences', async (request: FastifyRequest, reply: FastifyReply) => {
+  // GET /user/preferences
+  fastify.get('/user/preferences', async (request: FastifyRequest, reply: FastifyReply) => {
     const session = requireSession(request, reply);
     if (!session) return;
 
@@ -94,8 +94,8 @@ export async function registerUserPreferencesRoutes(
     });
   });
 
-  // PATCH /api/user/preferences
-  fastify.patch('/api/user/preferences', async (request: FastifyRequest, reply: FastifyReply) => {
+  // PATCH /user/preferences
+  fastify.patch('/user/preferences', async (request: FastifyRequest, reply: FastifyReply) => {
     const session = requireSession(request, reply);
     if (!session) return;
 

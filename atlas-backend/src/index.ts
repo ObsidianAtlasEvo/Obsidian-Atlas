@@ -116,7 +116,7 @@ app.addContentTypeParser(
   'application/json',
   { parseAs: 'buffer' },
   (req, body, done) => {
-    if (req.url === '/api/webhooks/stripe') {
+    if (req.url === '/webhooks/stripe') {
       done(null, body); // keep as raw Buffer for Stripe signature verification
     } else {
       try {
@@ -179,7 +179,7 @@ await app.register(async (protected_app) => {
 // ── Billing routes — session-based billing + Stripe webhook (raw body) ──────
 // Billing routes expect request.atlasSession (userId + email). Bridge from
 // the existing OAuth auth (atlasAuthUser) via a preHandler hook.
-// The webhook route (/api/webhooks/stripe) handles its own auth via Stripe
+// The webhook route (/webhooks/stripe) handles its own auth via Stripe
 // signatures and does not call requireSession(), so the hook is harmless there.
 // ── Billing routes — session-based billing + Stripe webhook (raw body) ──────
 await app.register(async (billingScope) => {
@@ -189,7 +189,7 @@ await app.register(async (billingScope) => {
   await billingScope.register((await import('@fastify/rate-limit')).default, {
     max: 30,
     timeWindow: '1 minute',
-    allowList: (req: FastifyRequest) => req.url === '/api/webhooks/stripe',
+    allowList: (req: FastifyRequest) => req.url === '/webhooks/stripe',
     keyGenerator: (req: FastifyRequest) => {
       const forwarded = req.headers['x-forwarded-for'];
       const ip = Array.isArray(forwarded) ? forwarded[0]
@@ -219,7 +219,7 @@ await app.register(async (billingScope) => {
     request: FastifyRequest,
     reply: FastifyReply,
   ): Promise<boolean> => {
-    if (request.url === '/api/webhooks/stripe') return true; // Stripe-controlled
+    if (request.url === '/webhooks/stripe') return true; // Stripe-controlled
 
     const forwarded = request.headers['x-forwarded-for'];
     const ip = Array.isArray(forwarded)

@@ -7,7 +7,7 @@
  * SUPERSEDES: v3 (groundwork/v3/)
  *
  * CHANGES FROM v3 (adversarial validation pass — 2026-04-15):
- *   - Patch 3: GET /api/billing/status route overhauled:
+ *   - Patch 3: GET /billing/status route overhauled:
  *     · Calls getSubscriptionStatus(session.userId, db, session.email) — email-aware.
  *     · chatLimit uses direct index access (NOT ??) to preserve null for sovereign.
  *       The v3 bug: `TIER_CHAT_LIMIT[record.tier] ?? TIER_CHAT_LIMIT['free']` collapsed
@@ -19,10 +19,10 @@
  * All v3 fixes (Repairs 1–11) are preserved verbatim.
  *
  * Routes:
- *   POST /api/billing/create-checkout-session  — Creates Stripe Checkout session
- *   POST /api/billing/cancel                   — Cancels active subscription
- *   GET  /api/billing/status                   — Returns current tier + usage
- *   POST /api/webhooks/stripe                  — Stripe webhook receiver (raw body)
+ *   POST /billing/create-checkout-session  — Creates Stripe Checkout session
+ *   POST /billing/cancel                   — Cancels active subscription
+ *   GET  /billing/status                   — Returns current tier + usage
+ *   POST /webhooks/stripe                  — Stripe webhook receiver (raw body)
  *
  * Auth:
  *   - Billing routes require attachAtlasSession middleware (same pattern as protected_app routes)
@@ -35,7 +35,7 @@
  *     'application/json',
  *     { parseAs: 'buffer', bodyLimit: 1048576 },
  *     (req, body, done) => {
- *       if (req.routerPath === '/api/webhooks/stripe') {
+ *       if (req.routerPath === '/webhooks/stripe') {
  *         done(null, body); // pass raw Buffer
  *       } else {
  *         done(null, JSON.parse(body.toString('utf8')));
@@ -176,13 +176,13 @@ export async function registerBillingRoutes(
 ): Promise<void> {
 
   // -----------------------------------------------------------------------
-  // POST /api/billing/create-checkout-session
+  // POST /billing/create-checkout-session
   // -----------------------------------------------------------------------
   fastify.post<{
     Body: CreateCheckoutSessionBody;
     Reply: CreateCheckoutSessionReply | { error: string };
   }>(
-    '/api/billing/create-checkout-session',
+    '/billing/create-checkout-session',
     {
       config: { rateLimit: RATE_LIMITS.writeUser },
       schema: {
@@ -234,12 +234,12 @@ export async function registerBillingRoutes(
   );
 
   // -----------------------------------------------------------------------
-  // POST /api/billing/cancel
+  // POST /billing/cancel
   // -----------------------------------------------------------------------
   fastify.post<{
     Reply: CancelSubscriptionReply | { error: string };
   }>(
-    '/api/billing/cancel',
+    '/billing/cancel',
     {
       config: { rateLimit: RATE_LIMITS.writeUser },
       schema: {
@@ -286,7 +286,7 @@ export async function registerBillingRoutes(
   );
 
   // -----------------------------------------------------------------------
-  // GET /api/billing/status
+  // GET /billing/status
   //
   // [v4 PATCH 3] Key fixes:
   //   1. Calls getSubscriptionStatus(session.userId, db, session.email) — email-aware.
@@ -299,7 +299,7 @@ export async function registerBillingRoutes(
   fastify.get<{
     Reply: BillingStatusReply | { error: string };
   }>(
-    '/api/billing/status',
+    '/billing/status',
     {
       config: { rateLimit: RATE_LIMITS.readUser },
       schema: {
@@ -373,7 +373,7 @@ export async function registerBillingRoutes(
   );
 
   // -----------------------------------------------------------------------
-  // POST /api/webhooks/stripe
+  // POST /webhooks/stripe
   //
   // CRITICAL: This route requires the raw request body as a Buffer.
   // Register this route before the global JSON body parser, OR add a
@@ -382,7 +382,7 @@ export async function registerBillingRoutes(
   // Fastify raw body setup:
   //   fastify.addContentTypeParser('application/json', { parseAs: 'buffer' },
   //     (req, body, done) => {
-  //       if (req.url === '/api/webhooks/stripe') done(null, body);
+  //       if (req.url === '/webhooks/stripe') done(null, body);
   //       else done(null, JSON.parse(body.toString('utf8')));
   //     }
   //   );
@@ -390,7 +390,7 @@ export async function registerBillingRoutes(
   fastify.post<{
     Reply: WebhookReply | { error: string };
   }>(
-    '/api/webhooks/stripe',
+    '/webhooks/stripe',
     {
       // No rate limiting — Stripe controls delivery rate.
       // No attachAtlasSession — signature verification is the auth mechanism.
@@ -409,7 +409,7 @@ export async function registerBillingRoutes(
       if (!Buffer.isBuffer(rawBody)) {
         fastify.log.error(
           '[Atlas/Billing] Webhook body is not a Buffer. ' +
-          'Ensure raw body parsing is configured for /api/webhooks/stripe. ' +
+          'Ensure raw body parsing is configured for /webhooks/stripe. ' +
           `Received type: ${typeof rawBody}`
         );
         return reply.code(500).send({ error: 'Server misconfiguration: raw body not available.' });
