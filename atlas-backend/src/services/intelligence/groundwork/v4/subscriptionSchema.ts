@@ -112,9 +112,9 @@ export interface TierModelAccess {
 /**
  * Model registry IDs accessible per tier.
  *
- * Free:     GPT-5.4 nano (Overseer routing), Groq Llama 3.3 70B, Gemini 2.5 Flash, OmniRouter.
- * Core:     Free models + GPT-5.4 mini, Groq 8B instant, Gemini 2.5 Pro.
- * Sovereign: Full access — GPT-5.4 suite, Claude Opus/Sonnet, all Groq + Gemini.
+ * Free:     Groq Llama 3.3 70B, Gemini 2.5 Flash, OmniRouter. No OpenAI.
+ * Core:     Free models + gpt-5.4-nano + gpt-5.4-mini. No gpt-5.4 or gpt-5.4-pro.
+ * Sovereign: Full access — all models including gpt-5.4 and gpt-5.4-pro.
  *
  * [REPAIR 1] Registry IDs must match exactly what openaiRegistry.ts uses.
  * Bare IDs (gpt-5.4-nano, etc.) — NOT namespaced (openai:gpt-5.4-nano).
@@ -122,53 +122,33 @@ export interface TierModelAccess {
 export const TIER_MODEL_ACCESS: Record<SubscriptionTier, TierModelAccess> = {
   free: {
     modelIds: [
-      // OpenAI via Overseer (nano handles routing + synthesis at free tier)
-      'gpt-5.4-nano',
-      // Groq (fast, free-tier eligible)
       'groq:llama-3.3-70b-versatile',
-      // Google (free-tier eligible)
       'gemini:gemini-2.5-flash',
-      // Internal routing
       'omnirouter',
     ],
-    description: 'GPT-5.4 nano (Overseer), Groq Llama 3.3 70B, Gemini 2.5 Flash. Core Atlas functionality.',
+    description: 'Groq Llama 3.3 70B, Gemini 2.5 Flash, OmniRouter. No OpenAI access.',
   },
   core: {
     modelIds: [
-      // OpenAI
+      'groq:llama-3.3-70b-versatile',
+      'gemini:gemini-2.5-flash',
+      'omnirouter',
       'gpt-5.4-nano',
       'gpt-5.4-mini',
-      // Groq
-      'groq:llama-3.3-70b-versatile',
-      'groq:llama-3.3-8b-instant',
-      // Google
-      'gemini:gemini-2.5-flash',
-      'gemini:gemini-2.5-pro',
-      // Internal
-      'omnirouter',
     ],
-    description: 'Free models + GPT-5.4 mini, Gemini 2.5 Pro. 500 chats/day.',
+    description: 'Free models + GPT-5.4 nano and mini. No GPT-5.4 or GPT-5.4-pro.',
   },
   sovereign: {
     modelIds: [
-      // OpenAI — full suite
+      'groq:llama-3.3-70b-versatile',
+      'gemini:gemini-2.5-flash',
+      'omnirouter',
       'gpt-5.4-nano',
       'gpt-5.4-mini',
       'gpt-5.4',
       'gpt-5.4-pro',
-      // Anthropic
-      'claude:claude-opus-4-6',
-      'claude:claude-sonnet-4-6',
-      // Groq
-      'groq:llama-3.3-70b-versatile',
-      'groq:llama-3.3-8b-instant',
-      // Google
-      'gemini:gemini-2.5-flash',
-      'gemini:gemini-2.5-pro',
-      // Internal
-      'omnirouter',
     ],
-    description: 'Full model access: GPT-5.4 suite, Claude Opus/Sonnet, Gemini Pro, Groq. Unlimited chats.',
+    description: 'Full model access including GPT-5.4 and GPT-5.4-pro (subject to pro-gate thresholds).',
   },
 };
 
@@ -181,9 +161,9 @@ export const TIER_MODEL_ACCESS: Record<SubscriptionTier, TierModelAccess> = {
  * Overrides the global `budgetMode` env var on a per-user basis.
  */
 export const TIER_BUDGET_MODE: Record<SubscriptionTier, 'fast' | 'balanced' | 'max-depth'> = {
-  free: 'fast',        // nano-only routing
-  core: 'balanced',    // mini workers + gpt-5.4 synthesis
-  sovereign: 'max-depth', // full escalation
+  free: 'fast',
+  core: 'balanced',
+  sovereign: 'max-depth',
 };
 
 // ---------------------------------------------------------------------------
