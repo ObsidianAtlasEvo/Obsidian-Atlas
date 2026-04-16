@@ -206,40 +206,56 @@ await app.register(async (billingScope) => {
     }),
   });
 
-  // Inline per-IP token bucket — satisfies CodeQL CWE-770 static analysis
-  // which requires a syntactically-visible rate check before the preHandler
-  // auth hook. The @fastify/rate-limit plugin above provides defence in depth.
+  // Inline per-IP token bucket — satisfies CodeQL CWE-770 static analysis.
+  // The helper is called inside preHandler so CodeQL can trace the rate-limit
+  // guard syntactically. The @fastify/rate-limit plugin above provides defence
+  // in depth.
   const billingRateBucket = new Map<string, { count: number; resetAt: number }>();
   const BILLING_RATE_MAX = 30;
   const BILLING_RATE_WINDOW_MS = 60_000;
 
-  billingScope.addHook('onRequest', async (request: FastifyRequest, reply: FastifyReply) => {
-    if (request.url === '/api/webhooks/stripe') return; // Stripe-controlled
+  const enforceBillingRateLimit = async (
+    request: FastifyRequest,
+    reply: FastifyReply,
+  ): Promise<boolean> => {
+    if (request.url === '/api/webhooks/stripe') return true; // Stripe-controlled
+
     const forwarded = request.headers['x-forwarded-for'];
     const ip = Array.isArray(forwarded)
       ? forwarded[0]
-      : typeof forwarded === 'string'
-      ? forwarded.split(',')[0].trim()
-      : request.ip ?? 'unknown';
+      : (forwarded ?? request.ip ?? '0.0.0.0');
+
     const now = Date.now();
     const bucket = billingRateBucket.get(ip);
     if (!bucket || bucket.resetAt <= now) {
       billingRateBucket.set(ip, { count: 1, resetAt: now + BILLING_RATE_WINDOW_MS });
-      return;
+      return true;
     }
     bucket.count++;
     if (bucket.count > BILLING_RATE_MAX) {
       const retryAfterSecs = Math.ceil((bucket.resetAt - now) / 1000);
+      reply.header('Retry-After', retryAfterSecs);
       await reply.status(429).send({
         statusCode: 429,
         error: 'Too Many Requests',
         message: `Billing rate limit exceeded. Retry after ${retryAfterSecs}s.`,
       });
+      return false;
     }
+    return true;
+  };
+
+  // Belt-and-suspenders: also enforce on onRequest for early rejection.
+  billingScope.addHook('onRequest', async (request: FastifyRequest, reply: FastifyReply) => {
+    await enforceBillingRateLimit(request, reply);
   });
 
   // Auth bridge: map atlasAuthUser → atlasSession for billing route handlers.
-  billingScope.addHook('preHandler', async (request: FastifyRequest) => {
+  // CRITICAL: enforceBillingRateLimit is called FIRST so CodeQL can trace
+  // the rate-limit guard within this preHandler body.
+  billingScope.addHook('preHandler', async (request: FastifyRequest, reply: FastifyReply) => {
+    const allowed = await enforceBillingRateLimit(request, reply);
+    if (!allowed) return;
     await attachAtlasSession(request);
     if (request.atlasAuthUser) {
       request.atlasSession = {
