@@ -117,7 +117,7 @@ app.addContentTypeParser(
   'application/json',
   { parseAs: 'buffer' },
   (req, body, done) => {
-    if (req.url === '/webhooks/stripe') {
+    if (req.url === '/webhooks/stripe' || req.url === '/api/v1/webhooks/stripe') {
       done(null, body); // keep as raw Buffer for Stripe signature verification
     } else {
       try {
@@ -191,7 +191,7 @@ await app.register(async (billingScope) => {
   await billingScope.register((await import('@fastify/rate-limit')).default, {
     max: 30,
     timeWindow: '1 minute',
-    allowList: (req: FastifyRequest) => req.url === '/webhooks/stripe',
+    allowList: (req: FastifyRequest) => req.url.endsWith('/webhooks/stripe'),
     keyGenerator: (req: FastifyRequest) => {
       const forwarded = req.headers['x-forwarded-for'];
       const ip = Array.isArray(forwarded) ? forwarded[0]
@@ -221,7 +221,7 @@ await app.register(async (billingScope) => {
     request: FastifyRequest,
     reply: FastifyReply,
   ): Promise<boolean> => {
-    if (request.url === '/webhooks/stripe') return true; // Stripe-controlled
+    if (request.url.endsWith('/webhooks/stripe')) return true; // Stripe-controlled
 
     const forwarded = request.headers['x-forwarded-for'];
     const ip = Array.isArray(forwarded)
@@ -269,7 +269,7 @@ await app.register(async (billingScope) => {
   });
 
   await registerBillingRoutes(billingScope, getDb());
-});
+}, { prefix: '/api/v1' });
 
 // ── User preferences routes — model selection, etc. ──────────────────────
 await app.register(async (userScope) => {
@@ -284,7 +284,7 @@ await app.register(async (userScope) => {
     };
   });
   await registerUserPreferencesRoutes(userScope, getDb());
-});
+}, { prefix: '/api/v1' });
 
 registerDegradedModeRoutes(app);
 registerExplanationRoutes(app);

@@ -51,6 +51,7 @@ import type { Database } from 'better-sqlite3';
 import {
   createCheckoutSession,
   cancelSubscription,
+  createBillingPortalSession,
   getSubscriptionStatus,
   handleWebhookEvent,
   WebhookSignatureError,
@@ -280,6 +281,47 @@ export async function registerBillingRoutes(
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Failed to cancel subscription.';
         fastify.log.error({ err, userId: session.userId }, '[Atlas/Billing] cancel error');
+        return reply.code(500).send({ error: message });
+      }
+    }
+  );
+
+  // -----------------------------------------------------------------------
+  // POST /billing/portal — Stripe Customer Portal redirect
+  // -----------------------------------------------------------------------
+  fastify.post<{
+    Reply: { url: string } | { error: string };
+  }>(
+    '/billing/portal',
+    {
+      config: { rateLimit: RATE_LIMITS.writeUser },
+      schema: {
+        response: {
+          200: {
+            type: 'object',
+            properties: { url: { type: 'string' } },
+          },
+        },
+      },
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const session = requireSession(request, reply);
+      if (!session) return;
+
+      if (isSovereignOwner(session.userId, session.email)) {
+        return reply.code(403).send({
+          error: 'Sovereign Creator access is managed outside billing.'
+        });
+      }
+
+      const returnUrl = process.env['FRONTEND_URL'] || 'https://obsidianatlastech.com';
+
+      try {
+        const url = await createBillingPortalSession(session.userId, session.email, db, returnUrl);
+        return reply.code(200).send({ url });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Failed to create billing portal session.';
+        fastify.log.error({ err, userId: session.userId }, '[Atlas/Billing] portal session error');
         return reply.code(500).send({ error: message });
       }
     }
