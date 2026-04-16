@@ -135,8 +135,9 @@ export const TIER_MODEL_ACCESS: Record<SubscriptionTier, TierModelAccess> = {
       'omnirouter',
       'gpt-5.4-nano',
       'gpt-5.4-mini',
+      'gemini-pro',
     ],
-    description: 'Free models + GPT-5.4 nano and mini. No GPT-5.4 or GPT-5.4-pro.',
+    description: 'Free models + GPT-5.4 nano, GPT-5.4 mini, and Gemini Pro.',
   },
   sovereign: {
     modelIds: [
@@ -145,10 +146,13 @@ export const TIER_MODEL_ACCESS: Record<SubscriptionTier, TierModelAccess> = {
       'omnirouter',
       'gpt-5.4-nano',
       'gpt-5.4-mini',
+      'gemini-pro',
       'gpt-5.4',
       'gpt-5.4-pro',
+      'claude-opus',
+      'claude-sonnet',
     ],
-    description: 'Full model access including GPT-5.4 and GPT-5.4-pro (subject to pro-gate thresholds).',
+    description: 'Full model access including GPT-5.4, GPT-5.4-pro, Claude Opus, and Claude Sonnet.',
   },
 };
 
