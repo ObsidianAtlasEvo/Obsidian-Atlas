@@ -180,6 +180,7 @@ await app.register(async (protected_app) => {
 // the existing OAuth auth (atlasAuthUser) via a preHandler hook.
 // The webhook route (/api/webhooks/stripe) handles its own auth via Stripe
 // signatures and does not call requireSession(), so the hook is harmless there.
+// ── Billing routes — session-based billing + Stripe webhook (raw body) ──────
 await app.register(async (billingScope) => {
   // Scoped rate limit for billing routes (CodeQL CWE-770).
   // The Stripe webhook is excluded via allowList — Stripe controls delivery
@@ -201,9 +202,43 @@ await app.register(async (billingScope) => {
     ) => ({
       statusCode: 429,
       error: 'Too Many Requests',
-      message: `Rate limit exceeded. Retry after ${context.after}.`,
+      message: `Billing rate limit exceeded. Retry after ${context.after}.`,
     }),
   });
+
+  // Inline per-IP token bucket — satisfies CodeQL CWE-770 static analysis
+  // which requires a syntactically-visible rate check before the preHandler
+  // auth hook. The @fastify/rate-limit plugin above provides defence in depth.
+  const billingRateBucket = new Map<string, { count: number; resetAt: number }>();
+  const BILLING_RATE_MAX = 30;
+  const BILLING_RATE_WINDOW_MS = 60_000;
+
+  billingScope.addHook('onRequest', async (request: FastifyRequest, reply: FastifyReply) => {
+    if (request.url === '/api/webhooks/stripe') return; // Stripe-controlled
+    const forwarded = request.headers['x-forwarded-for'];
+    const ip = Array.isArray(forwarded)
+      ? forwarded[0]
+      : typeof forwarded === 'string'
+      ? forwarded.split(',')[0].trim()
+      : request.ip ?? 'unknown';
+    const now = Date.now();
+    const bucket = billingRateBucket.get(ip);
+    if (!bucket || bucket.resetAt <= now) {
+      billingRateBucket.set(ip, { count: 1, resetAt: now + BILLING_RATE_WINDOW_MS });
+      return;
+    }
+    bucket.count++;
+    if (bucket.count > BILLING_RATE_MAX) {
+      const retryAfterSecs = Math.ceil((bucket.resetAt - now) / 1000);
+      await reply.status(429).send({
+        statusCode: 429,
+        error: 'Too Many Requests',
+        message: `Billing rate limit exceeded. Retry after ${retryAfterSecs}s.`,
+      });
+    }
+  });
+
+  // Auth bridge: map atlasAuthUser → atlasSession for billing route handlers.
   billingScope.addHook('preHandler', async (request: FastifyRequest) => {
     await attachAtlasSession(request);
     if (request.atlasAuthUser) {
@@ -213,6 +248,7 @@ await app.register(async (billingScope) => {
       };
     }
   });
+
   await registerBillingRoutes(billingScope, getDb());
 });
 
