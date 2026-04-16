@@ -121,3 +121,29 @@ export function getLlmRegistryJsonForPrompt(): string {
   );
 }
 
+/**
+ * Maps a modelRegistry.ts canonical ID (e.g. 'openai/gpt-4o') to the
+ * corresponding swarm llmRegistry ID (e.g. 'gpt-4o').
+ * Returns undefined if no swarm-level entry exists for the given model.
+ */
+const MODEL_REGISTRY_TO_SWARM: Record<string, RegistryModelId> = {
+  'openai/gpt-4o':             'gpt-4o',
+  'openai/gpt-4o-mini':        'gpt-4o',
+  'openai/gpt-4-turbo':        'gpt-4o',
+  'openai/gpt-3.5-turbo':      'groq-llama3-70b',
+  'openai/o1-preview':         'gpt-4o',
+  'openai/o1-mini':            'gpt-4o',
+  'anthropic/claude-3.5-sonnet': 'claude-3-5-sonnet',
+  'anthropic/claude-3-opus':   'claude-3-5-sonnet',
+  'anthropic/claude-3-haiku':  'claude-3-5-sonnet',
+  'google/gemini-2.5-flash':   'gemini-2.5-flash',
+  'google/gemini-2.0-flash':   'gemini-2.5-flash',
+  'groq/llama-3.1-70b-versatile': 'groq-llama3-70b',
+  'groq/mixtral-8x7b-32768':  'groq-llama3-70b',
+  'groq/gemma2-9b-it':         'groq-llama3-70b',
+};
+
+export function mapModelRegistryIdToSwarm(modelRegistryId: string): RegistryModelId | undefined {
+  return MODEL_REGISTRY_TO_SWARM[modelRegistryId];
+}
+

@@ -105,44 +105,44 @@ export async function patchUserPreferences(
 
 /** Map from model registry ID to human-readable display name. */
 export const MODEL_DISPLAY_NAMES: Record<string, string> = {
-  'gpt-5.4-nano':               'GPT-5.4 Nano',
-  'groq:llama-3.3-70b-versatile': 'Llama 3 (Groq)',
-  'gemini:gemini-2.5-flash':    'Gemini Flash',
-  'omnirouter':                  'OmniRouter',
-  'gpt-5.4-mini':               'GPT-5.4 Mini',
-  'gemini-pro':                  'Gemini Pro',
-  'gpt-5.4':                    'GPT-5.4',
-  'gpt-5.4-pro':                'GPT-5.4 Pro',
-  'claude-opus':                 'Claude Opus',
-  'claude-sonnet':               'Claude Sonnet',
+  'openai/gpt-3.5-turbo':          'GPT-3.5 Turbo',
+  'groq/llama-3.1-70b-versatile':  'Llama 3.1 70B (Groq)',
+  'google/gemini-2.5-flash':       'Gemini 2.5 Flash',
+  'omnirouter':                     'OmniRouter',
+  'openai/gpt-4o-mini':            'GPT-4o Mini',
+  'google/gemini-2.0-flash':       'Gemini 2.0 Flash',
+  'openai/gpt-4o':                 'GPT-4o',
+  'openai/o1-preview':             'o1 Preview',
+  'anthropic/claude-3-opus':       'Claude 3 Opus',
+  'anthropic/claude-3.5-sonnet':   'Claude 3.5 Sonnet',
 };
 
 /** Which tier first unlocks each model (for lock icon display). */
 export const MODEL_MIN_TIER: Record<string, string> = {
-  'groq:llama-3.3-70b-versatile': 'free',
-  'gemini:gemini-2.5-flash':      'free',
-  'omnirouter':                    'free',
-  'gpt-5.4-nano':                 'free',
-  'gpt-5.4-mini':                 'core',
-  'gemini-pro':                    'core',
-  'gpt-5.4':                      'sovereign',
-  'gpt-5.4-pro':                  'sovereign',
-  'claude-opus':                   'sovereign',
-  'claude-sonnet':                 'sovereign',
+  'groq/llama-3.1-70b-versatile':  'free',
+  'google/gemini-2.5-flash':       'free',
+  'omnirouter':                     'free',
+  'openai/gpt-3.5-turbo':          'core',
+  'openai/gpt-4o-mini':            'core',
+  'google/gemini-2.0-flash':       'core',
+  'openai/gpt-4o':                 'sovereign',
+  'openai/o1-preview':             'sovereign',
+  'anthropic/claude-3-opus':       'sovereign',
+  'anthropic/claude-3.5-sonnet':   'sovereign',
 };
 
 /** All known models in display order. */
 export const ALL_MODELS_ORDERED: string[] = [
-  'gpt-5.4-nano',
-  'groq:llama-3.3-70b-versatile',
-  'gemini:gemini-2.5-flash',
+  'openai/gpt-3.5-turbo',
+  'groq/llama-3.1-70b-versatile',
+  'google/gemini-2.5-flash',
   'omnirouter',
-  'gpt-5.4-mini',
-  'gemini-pro',
-  'gpt-5.4',
-  'gpt-5.4-pro',
-  'claude-opus',
-  'claude-sonnet',
+  'openai/gpt-4o-mini',
+  'google/gemini-2.0-flash',
+  'openai/gpt-4o',
+  'openai/o1-preview',
+  'anthropic/claude-3-opus',
+  'anthropic/claude-3.5-sonnet',
 ];
 
 const TRANSIENT_USER_MESSAGE = 'Atlas is momentarily overloaded. Please try again in a few seconds.';
