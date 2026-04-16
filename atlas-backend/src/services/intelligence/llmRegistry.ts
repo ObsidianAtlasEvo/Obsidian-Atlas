@@ -67,12 +67,20 @@ export const LLM_REGISTRY: readonly LlmRegistryEntry[] = [
     apiModel: 'gemini-2.5-flash',
   },
   {
-    id: 'claude-3-5-sonnet',
-    specialty: 'Elite coding, nuanced writing, complex logic',
+    id: 'claude-sonnet-4-6',
+    specialty: 'Fast elite coding, nuanced writing, strong reasoning — paid tier',
     context: '200k',
     tier: 'premium',
     backend: 'openrouter',
-    apiModel: 'anthropic/claude-3.5-sonnet',
+    apiModel: 'anthropic/claude-sonnet-4-6',
+  },
+  {
+    id: 'claude-opus-4-6',
+    specialty: 'Frontier reasoning, elite coding, nuanced writing — Sovereign only',
+    context: '200k',
+    tier: 'premium',
+    backend: 'openrouter',
+    apiModel: 'anthropic/claude-opus-4-6',
   },
   {
     id: 'gpt-4o',
@@ -207,8 +215,11 @@ const ALIASES: Record<string, RegistryModelId> = {
   'llama3-70b': 'groq-llama3-70b',
   gemini: 'gemini-2.5-flash',
   'gemini-pro': 'gemini-2.5-flash',
-  claude: 'claude-3-5-sonnet',
-  'claude-3-5-sonnet': 'claude-3-5-sonnet',
+  claude: 'claude-sonnet-4-6',
+  'claude-sonnet-4-6':         'claude-sonnet-4-6',
+  'claude-opus-4-6':           'claude-opus-4-6',
+  'claude-3-5-sonnet':         'claude-sonnet-4-6',       // legacy → current sonnet
+  'claude-3-7-sonnet-latest':  'claude-sonnet-4-6',       // legacy → current sonnet
   'gpt-4o': 'gpt-4o',
   gpt4o: 'gpt-4o',
   local: 'local-ollama',
@@ -256,9 +267,12 @@ const MODEL_REGISTRY_TO_SWARM: Record<string, RegistryModelId | null> = {
   'openai/gpt-3.5-turbo':      'groq-llama3-70b',
   'openai/o1-preview':         'gpt-4o',
   'openai/o1-mini':            'gpt-4o',
-  'anthropic/claude-3.5-sonnet': 'claude-3-5-sonnet',
-  'anthropic/claude-3-opus':   'claude-3-5-sonnet',
-  'anthropic/claude-3-haiku':  'claude-3-5-sonnet',
+  'anthropic/claude-sonnet-4-6':        'claude-sonnet-4-6',
+  'anthropic/claude-opus-4-6':          'claude-opus-4-6',
+  'anthropic/claude-3.5-sonnet':        'claude-sonnet-4-6',       // legacy passthrough
+  'anthropic/claude-3-7-sonnet-latest': 'claude-sonnet-4-6',       // legacy passthrough
+  'anthropic/claude-3-opus':            'claude-opus-4-6',         // legacy passthrough
+  'anthropic/claude-3-haiku':           'claude-sonnet-4-6',       // legacy passthrough
   'google/gemini-2.5-flash':   'gemini-2.5-flash',
   'google/gemini-2.0-flash':   'gemini-2.5-flash',
   'groq/llama-3.1-70b-versatile': 'groq-llama3-70b',

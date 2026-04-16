@@ -116,7 +116,7 @@ export interface TierModelAccess {
  *
  * Free:      gpt-5.4-nano, Groq Llama 3.3 70B, Gemini 2.5 Flash. Overseer: gemini-3.1-flash-lite-preview (fallback: gpt-5.4-nano).
  * Core:      Free models + gpt-5.4-mini, gpt-5.4 (Overseer standard).
- * Sovereign: Core models + gpt-5.4 (worker), gpt-5.4-pro, Claude 3.7 Sonnet.
+ * Sovereign: Core models + gpt-5.4 (worker), gpt-5.4-pro, Claude Sonnet 4.6, Claude Opus 4.6.
  */
 export const TIER_MODEL_ACCESS: Record<SubscriptionTier, TierModelAccess> = {
   free: {
@@ -146,9 +146,10 @@ export const TIER_MODEL_ACCESS: Record<SubscriptionTier, TierModelAccess> = {
       'gpt-5.4-mini',
       'gpt-5.4',
       'gpt-5.4-pro',
-      'claude-3-7-sonnet-latest',
+      'claude-sonnet-4-6',
+      'claude-opus-4-6',
     ],
-    description: 'Full model access including GPT-5.4 (worker), GPT-5.4 Pro, and Claude 3.7 Sonnet.',
+    description: 'Full model access including GPT-5.4 (worker), GPT-5.4 Pro, Claude Sonnet 4.6, and Claude Opus 4.6.',
   },
 };
 

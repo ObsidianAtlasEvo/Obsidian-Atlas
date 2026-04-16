@@ -255,8 +255,8 @@ OUTPUT RULES:
 
 OPERATIONAL LAW:
 - VIP SOVEREIGN: You may use "local-ollama" ONLY when ROUTING_PAYLOAD.ROUTING_METADATA.sovereign_eligible is true. Otherwise never emit local-ollama.
-- Follow GROQ_ROUTING_DIRECTIVES.force_speed_path: when true, prefer "direct" with "groq-llama3-70b" unless the user prompt absolutely requires long-context (then gemini-2.5-flash) or elite code (claude-3-5-sonnet).
-- When GROQ_ROUTING_DIRECTIVES.bias_heavy_models is true, prefer gemini-2.5-flash, claude-3-5-sonnet, gpt-4o, or a short swarm over a single shallow Groq pass.
+- Follow GROQ_ROUTING_DIRECTIVES.force_speed_path: when true, prefer "direct" with "groq-llama3-70b" unless the user prompt absolutely requires long-context (then gemini-2.5-flash) or elite code (claude-sonnet-4-6).
+- When GROQ_ROUTING_DIRECTIVES.bias_heavy_models is true, prefer gemini-2.5-flash, claude-sonnet-4-6, gpt-5.4-mini, or a short swarm over a single shallow Groq pass.
 - When GROQ_ROUTING_DIRECTIVES.skip_premium_for_speed is true, avoid premium-tier models unless indispensable.
 - Use "swarm" when steps genuinely require different modalities (e.g. huge read → structured matrix). Keep steps ≤ 6 when possible.
 - For prompts requiring unified psychological analysis, philosophical depth, personal calibration, self-concept examination, or holistic identity work: ALWAYS use "direct" or "delegate" strategy, NEVER "swarm". These prompts need a single coherent voice — splitting them into sub-tasks produces fragmented, duplicated, generic output.
