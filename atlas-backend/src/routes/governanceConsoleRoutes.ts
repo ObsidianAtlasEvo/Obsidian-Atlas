@@ -209,7 +209,9 @@ export function registerGovernanceConsoleRoutes(app: FastifyInstance): void {
   `);
 
   // GET /v1/governance/audit-logs — list audit entries (#31)
-  app.get('/v1/governance/audit-logs', async (request, reply) => {
+  app.get('/v1/governance/audit-logs', {
+    config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
+  }, async (request, reply) => {
     const { userId, limit: limitParam, severity, since } = request.query as {
       userId?: string;
       limit?: string;
@@ -274,7 +276,9 @@ export function registerGovernanceConsoleRoutes(app: FastifyInstance): void {
     userId: z.string().optional(),
   });
 
-  app.post('/v1/governance/emergency', async (request, reply) => {
+  app.post('/v1/governance/emergency', {
+    config: { rateLimit: { max: 5, timeWindow: '1 minute' } },
+  }, async (request, reply) => {
     const parsed = emergencySchema.safeParse(request.body);
     if (!parsed.success) {
       return reply.status(400).send({ error: 'validation_error', details: parsed.error.flatten() });
@@ -322,7 +326,9 @@ export function registerGovernanceConsoleRoutes(app: FastifyInstance): void {
   });
 
   // GET /v1/governance/emergency — current emergency state (#32)
-  app.get('/v1/governance/emergency', async (_request, reply) => {
+  app.get('/v1/governance/emergency', {
+    config: { rateLimit: { max: 60, timeWindow: '1 minute' } },
+  }, async (_request, reply) => {
     const row = db.prepare(`SELECT * FROM emergency_state WHERE id = 1`).get() as {
       active: number;
       activated_at: string | null;

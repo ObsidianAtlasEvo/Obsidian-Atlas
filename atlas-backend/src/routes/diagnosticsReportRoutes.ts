@@ -47,7 +47,9 @@ export function registerDiagnosticsReportRoutes(app: FastifyInstance): void {
     timestamp: z.string().optional(),
   });
 
-  app.post('/v1/diagnostics/report', async (request, reply) => {
+  app.post('/v1/diagnostics/report', {
+    config: { rateLimit: { max: 20, timeWindow: '1 minute' } },
+  }, async (request, reply) => {
     const parsed = postSchema.safeParse(request.body);
     if (!parsed.success) {
       return reply.status(400).send({ error: 'validation_error', details: parsed.error.flatten() });
@@ -74,7 +76,9 @@ export function registerDiagnosticsReportRoutes(app: FastifyInstance): void {
     userEmail: z.string().email().optional(),
   });
 
-  app.patch('/v1/diagnostics/report/:id', async (request, reply) => {
+  app.patch('/v1/diagnostics/report/:id', {
+    config: { rateLimit: { max: 20, timeWindow: '1 minute' } },
+  }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const parsed = patchSchema.safeParse(request.body);
     if (!parsed.success) {
@@ -99,7 +103,9 @@ export function registerDiagnosticsReportRoutes(app: FastifyInstance): void {
   });
 
   // DELETE /v1/diagnostics/reports — archive/clear session reports
-  app.delete('/v1/diagnostics/reports', async (request, reply) => {
+  app.delete('/v1/diagnostics/reports', {
+    config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
+  }, async (request, reply) => {
     const { sessionId, userEmail } = request.query as { sessionId?: string; userEmail?: string };
     if (!sessionId) {
       return reply.status(400).send({ error: 'sessionId query parameter required' });
@@ -117,7 +123,9 @@ export function registerDiagnosticsReportRoutes(app: FastifyInstance): void {
   });
 
   // GET /v1/diagnostics/reports — list reports for a session
-  app.get('/v1/diagnostics/reports', async (request, reply) => {
+  app.get('/v1/diagnostics/reports', {
+    config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
+  }, async (request, reply) => {
     const { sessionId, userEmail, limit } = request.query as {
       sessionId?: string;
       userEmail?: string;
