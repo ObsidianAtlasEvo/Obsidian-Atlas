@@ -5,13 +5,13 @@ const envSchema = z.object({
   /** Bind address (production: 0.0.0.0 behind reverse proxy). */
   HOST: z.string().min(1).optional(),
   PORT: z.coerce.number().int().positive(),
-  OLLAMA_BASE_URL: z.string().min(1),
-  OLLAMA_CHAT_MODEL: z.string().min(1),
-  OLLAMA_EMBED_MODEL: z.string().min(1),
+  OLLAMA_BASE_URL: z.string().optional().default('http://127.0.0.1:11434'),
+  OLLAMA_CHAT_MODEL: z.string().optional().default('llama3.1:8b'),
+  OLLAMA_EMBED_MODEL: z.string().optional().default('nomic-embed-text'),
   /** Smaller / faster model for background evolution (defaults to chat model). */
-  OLLAMA_EVOLUTION_MODEL: z.string().min(1).optional(),
+  OLLAMA_EVOLUTION_MODEL: z.string().optional().default('disabled'),
   /** Optional comma-separated local model pool (fallback chain). Example: "llama3.1:8b,qwen2.5:7b,mistral:7b". */
-  OLLAMA_MODEL_POOL: z.string().optional(),
+  OLLAMA_MODEL_POOL: z.string().optional().default('[]'),
   /** Force cloud/public routing even for sovereign users (useful when local Ollama is unstable). */
   DISABLE_LOCAL_OLLAMA: z
     .string()
@@ -127,11 +127,11 @@ const envSchema = z.object({
 const raw = envSchema.parse({
   HOST: process.env.HOST,
   PORT: process.env.PORT ?? '3001',
-  // Ollama is optional in cloud/production — default to localhost so schema passes
-  // even when Ollama is not installed. DISABLE_LOCAL_OLLAMA=true routes away from it.
-  OLLAMA_BASE_URL: process.env.OLLAMA_BASE_URL ?? 'http://127.0.0.1:11434',
-  OLLAMA_CHAT_MODEL: process.env.OLLAMA_CHAT_MODEL ?? 'llama3.1:8b',
-  OLLAMA_EMBED_MODEL: process.env.OLLAMA_EMBED_MODEL ?? 'nomic-embed-text',
+  // Ollama is optional in cloud/production — Zod defaults handle missing vars.
+  // DISABLE_LOCAL_OLLAMA=true routes away from Ollama at runtime.
+  OLLAMA_BASE_URL: process.env.OLLAMA_BASE_URL,
+  OLLAMA_CHAT_MODEL: process.env.OLLAMA_CHAT_MODEL,
+  OLLAMA_EMBED_MODEL: process.env.OLLAMA_EMBED_MODEL,
   OLLAMA_EVOLUTION_MODEL: process.env.OLLAMA_EVOLUTION_MODEL,
   OLLAMA_MODEL_POOL: process.env.OLLAMA_MODEL_POOL,
   DISABLE_LOCAL_OLLAMA: process.env.DISABLE_LOCAL_OLLAMA ?? 'true',

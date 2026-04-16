@@ -275,6 +275,37 @@ export async function cancelSubscription(
 }
 
 /**
+ * Creates a Stripe Customer Portal session so the user can manage their
+ * subscription, payment method, and invoices.
+ *
+ * @param userId     Atlas internal user ID
+ * @param email      User's email (for sovereign bypass check)
+ * @param db         better-sqlite3 Database instance
+ * @param returnUrl  URL to redirect the user back to after the portal session
+ * @returns          Portal session URL
+ */
+export async function createBillingPortalSession(
+  userId: string,
+  email: string,
+  db: Database,
+  returnUrl: string,
+): Promise<string> {
+  const stripe = getStripeClient();
+  const record = getTierForUser(userId, db, email);
+
+  if (!record.stripeCustomerId) {
+    throw new Error('[Atlas/Billing] No Stripe customer found for this user.');
+  }
+
+  const session = await stripe.billingPortal.sessions.create({
+    customer: record.stripeCustomerId,
+    return_url: returnUrl,
+  });
+
+  return session.url;
+}
+
+/**
  * Returns the current subscription record for the given userId.
  *
  * [v4 PATCH 2b] Accepts optional email param. Sovereign bypass now checks

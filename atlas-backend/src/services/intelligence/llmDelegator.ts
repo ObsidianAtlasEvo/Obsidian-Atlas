@@ -1,4 +1,4 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { GoogleGenAI } from '@google/genai';
 import { env } from '../../config/env.js';
 import { getPolicyProfile } from '../evolution/policyStore.js';
 import {
@@ -177,18 +177,26 @@ function delayMs(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** Lazy singleton — allocated on the first Gemini call. Mirrors universalAdapter.ts pattern. */
+let _geminiClient: InstanceType<typeof GoogleGenAI> | null = null;
+function getGeminiClient(): InstanceType<typeof GoogleGenAI> {
+  if (!_geminiClient) {
+    const key = env.geminiApiKey?.trim();
+    if (!key) throw new Error('Gemini execution requires GEMINI_API_KEY');
+    _geminiClient = new GoogleGenAI({ apiKey: key });
+  }
+  return _geminiClient;
+}
+
 async function geminiGenerateStreamRaw(
   msgs: DelegatorMessage[],
   onDelta: StreamDeltaHandler,
   options: { signal?: AbortSignal; timeoutMs?: number },
   modelOverride?: string,
 ): Promise<{ fullText: string; model: string }> {
-  const key = env.geminiApiKey?.trim();
-  if (!key) throw new Error('Gemini execution requires GEMINI_API_KEY');
-
+  const client = getGeminiClient();
   const { system, rest } = splitSystemAndRest(msgs);
   const model = modelOverride ?? geminiModelId();
-  const ai = new GoogleGenerativeAI(key);
 
   const contents = rest.map((m) => ({
     role: m.role === 'assistant' ? ('model' as const) : ('user' as const),
@@ -200,16 +208,16 @@ async function geminiGenerateStreamRaw(
   let full = '';
 
   try {
-    const stream = await ai.getGenerativeModel({ model }).generateContentStream({
+    const stream = await client.models.generateContentStream({
+      model,
       contents,
-      systemInstruction: system || undefined,
-      generationConfig: {
-
+      config: {
+        systemInstruction: system || undefined,
         temperature: 0.35,
       },
     });
 
-    for await (const chunk of stream.stream) {
+    for await (const chunk of stream) {
       const piece = typeof chunk.text === 'string' ? chunk.text : '';
       if (piece) {
         full += piece;

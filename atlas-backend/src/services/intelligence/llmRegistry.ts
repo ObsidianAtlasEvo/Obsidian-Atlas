@@ -279,6 +279,7 @@ const MODEL_REGISTRY_TO_SWARM: Record<string, RegistryModelId | null> = {
   'google/gemini-2.5-flash':   'gemini-2.5-flash',
   'google/gemini-2.0-flash':   'gemini-2.5-flash',
   'groq/llama-3.1-70b-versatile': 'groq-llama3-70b',
+  'groq/llama-3.3-70b-versatile': 'groq-llama3-70b',
   'groq/mixtral-8x7b-32768':  'groq-llama3-70b',
   'groq/gemma2-9b-it':         'groq-llama3-70b',
   'google/gemini-3.1-flash-lite-preview': 'gemini-3.1-flash-lite-preview',
@@ -289,6 +290,15 @@ const MODEL_REGISTRY_TO_SWARM: Record<string, RegistryModelId | null> = {
   'openai/gpt-5.4-mini':       'gpt-5.4-mini',
   'openai/gpt-5.4':            'gpt-5.4',
   'openai/gpt-5.4-pro':        null,  // arbitration only, not a swarm strategy
+  // Bare-ID aliases (TIER_MODEL_ACCESS uses these as preferred-model values)
+  'gpt-5.4-nano':              'gpt-5.4-nano',
+  'gpt-5.4-mini':              'gpt-5.4-mini',
+  'gpt-5.4':                   'gpt-5.4',
+  'gpt-5.4-pro':               null,  // arbitration only, not a swarm strategy
+  'gemini-2.5-flash':          'gemini-2.5-flash',
+  'gemini-3.1-flash-lite-preview': 'gemini-3.1-flash-lite-preview',
+  'claude-sonnet-4-6':         'claude-sonnet-4-6',
+  'claude-opus-4-6':           'claude-opus-4-6',
 };
 
 export function mapModelRegistryIdToSwarm(modelRegistryId: string): RegistryModelId | null | undefined {
