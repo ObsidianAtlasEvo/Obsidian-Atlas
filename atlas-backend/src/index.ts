@@ -181,6 +181,29 @@ await app.register(async (protected_app) => {
 // The webhook route (/api/webhooks/stripe) handles its own auth via Stripe
 // signatures and does not call requireSession(), so the hook is harmless there.
 await app.register(async (billingScope) => {
+  // Scoped rate limit for billing routes (CodeQL CWE-770).
+  // The Stripe webhook is excluded via allowList — Stripe controls delivery
+  // rate and blocking retries would cause event loss.
+  await billingScope.register((await import('@fastify/rate-limit')).default, {
+    max: 30,
+    timeWindow: '1 minute',
+    allowList: (req: FastifyRequest) => req.url === '/api/webhooks/stripe',
+    keyGenerator: (req: FastifyRequest) => {
+      const forwarded = req.headers['x-forwarded-for'];
+      const ip = Array.isArray(forwarded) ? forwarded[0]
+        : typeof forwarded === 'string' ? forwarded.split(',')[0].trim()
+        : req.ip;
+      return ip ?? 'unknown';
+    },
+    errorResponseBuilder: (
+      _request: FastifyRequest,
+      context: { after: string },
+    ) => ({
+      statusCode: 429,
+      error: 'Too Many Requests',
+      message: `Rate limit exceeded. Retry after ${context.after}.`,
+    }),
+  });
   billingScope.addHook('preHandler', async (request: FastifyRequest) => {
     await attachAtlasSession(request);
     if (request.atlasAuthUser) {
