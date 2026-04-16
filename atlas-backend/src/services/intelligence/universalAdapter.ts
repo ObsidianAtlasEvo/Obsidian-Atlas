@@ -37,11 +37,21 @@ function openAiStyleMessages(msgs: UniversalMessage[]): { role: string; content:
 }
 
 /**
- * Truncate messages to fit within Groq's ~12k TPM limit.
- * Keeps system message + most recent messages up to ~8k tokens (32k chars).
+ * Truncate messages to fit within Groq's per-request token limit (~12k tokens
+ * on the on_demand tier for llama-3.3-70b-versatile).
+ *
+ * With max_tokens 2048 reserved for completion, we have ~10k input tokens.
+ * Rough estimate: 1 token ≈ 4 chars.
+ *   - Normal mode:     36 000 chars ≈ 9 000 tokens (safe first attempt)
+ *   - Aggressive mode:  20 000 chars ≈ 5 000 tokens (retry after 413)
+ *
+ * Keeps the system message intact and trims from the oldest non-system messages.
  */
-function truncateForGroq(messages: UniversalMessage[]): UniversalMessage[] {
-  const MAX_CHARS = 32_000;
+export function truncateForGroq(
+  messages: UniversalMessage[],
+  aggressive = false,
+): UniversalMessage[] {
+  const MAX_CHARS = aggressive ? 20_000 : 36_000;
   const system = messages[0]?.role === 'system' ? [messages[0]] : [];
   const rest = messages[0]?.role === 'system' ? messages.slice(1) : [...messages];
   let total = system.reduce((s, m) => s + m.content.length, 0);
@@ -296,7 +306,7 @@ export async function streamGeminiChat(params: {
     }
   }
 
-  // Attempt 4: fall back to Groq (cap tokens to avoid Groq free-tier TPM limit)
+  // Attempt 4: fall back to Groq (pre-truncate to stay within 12k token limit)
   const groqAuth = resolveGroqAuth();
   if (groqAuth) {
     const groqMessages = truncateForGroq(params.messages);
@@ -313,9 +323,28 @@ export async function streamGeminiChat(params: {
         timeoutMs: params.timeoutMs,
       });
     } catch (groqErr) {
-      // Groq 429 (rate limit) or 413 (payload too large): wait and retry once before giving up
       const groqMsg = groqErr instanceof Error ? groqErr.message : String(groqErr);
-      if (groqMsg.includes('429') || groqMsg.includes('Rate limit') || groqMsg.includes('Too Many Requests') || groqMsg.includes('413') || groqMsg.includes('Request too large')) {
+      // 413 (payload too large): retry with aggressive truncation
+      if (groqMsg.includes('413') || groqMsg.includes('Request too large')) {
+        const aggressiveMessages = truncateForGroq(params.messages, true);
+        try {
+          return await streamOpenAiCompatibleChat({
+            baseUrl: groqAuth.base,
+            apiKey: groqAuth.apiKey,
+            model: 'llama-3.3-70b-versatile',
+            messages: aggressiveMessages,
+            onDelta: params.onDelta,
+            temperature: params.temperature,
+            maxTokens: 2048,
+            signal: params.signal,
+            timeoutMs: params.timeoutMs,
+          });
+        } catch {
+          // Aggressive truncation also failed — fall through to clean error
+        }
+      }
+      // 429 (rate limit): wait and retry once with same truncated messages
+      if (groqMsg.includes('429') || groqMsg.includes('Rate limit') || groqMsg.includes('Too Many Requests')) {
         await delay(3000);
         try {
           return await streamOpenAiCompatibleChat({
@@ -443,7 +472,7 @@ export async function streamRegistryModel(params: {
         baseUrl: auth.base,
         apiKey: auth.apiKey,
         model,
-        messages,
+        messages: truncateForGroq(messages),
         onDelta,
         maxTokens: 2048,
         signal,
@@ -575,7 +604,7 @@ export async function completeGroqChat(params: {
     baseUrl: auth.base,
     apiKey: auth.apiKey,
     model: params.model,
-    messages: params.messages,
+    messages: truncateForGroq(params.messages),
     temperature: params.temperature,
     signal: params.signal,
     timeoutMs: params.timeoutMs,
@@ -660,23 +689,42 @@ export async function completeGeminiChat(params: {
     }
   }
 
-  // Attempt 4: fall back to Groq (cap tokens to stay within free-tier TPM)
+  // Attempt 4: fall back to Groq (pre-truncate to stay within 12k token limit)
   const groqAuth = resolveGroqAuth();
   if (groqAuth) {
+    const groqMessages = truncateForGroq(params.messages);
     try {
       return await completeOpenAiCompatibleChat({
         baseUrl: groqAuth.base,
         apiKey: groqAuth.apiKey,
         model: 'llama-3.3-70b-versatile',
-        messages: params.messages,
+        messages: groqMessages,
         temperature: params.temperature,
         maxTokens: 2048,
         signal: params.signal,
         timeoutMs: params.timeoutMs,
       });
     } catch (groqErr) {
-      // Groq 429 (rate limit): wait and retry once before giving up
       const groqMsg = groqErr instanceof Error ? groqErr.message : String(groqErr);
+      // 413 (payload too large): retry with aggressive truncation
+      if (groqMsg.includes('413') || groqMsg.includes('Request too large')) {
+        const aggressiveMessages = truncateForGroq(params.messages, true);
+        try {
+          return await completeOpenAiCompatibleChat({
+            baseUrl: groqAuth.base,
+            apiKey: groqAuth.apiKey,
+            model: 'llama-3.3-70b-versatile',
+            messages: aggressiveMessages,
+            temperature: params.temperature,
+            maxTokens: 2048,
+            signal: params.signal,
+            timeoutMs: params.timeoutMs,
+          });
+        } catch {
+          // Aggressive truncation also failed
+        }
+      }
+      // 429 (rate limit): wait and retry once
       if (groqMsg.includes('429') || groqMsg.includes('Rate limit') || groqMsg.includes('Too Many Requests')) {
         await delay(3000);
         try {
@@ -684,7 +732,7 @@ export async function completeGeminiChat(params: {
             baseUrl: groqAuth.base,
             apiKey: groqAuth.apiKey,
             model: 'llama-3.3-70b-versatile',
-            messages: params.messages,
+            messages: groqMessages,
             temperature: params.temperature,
             maxTokens: 2048,
             signal: params.signal,
@@ -715,7 +763,7 @@ export async function streamGroqChat(params: {
     baseUrl: auth.base,
     apiKey: auth.apiKey,
     model: params.model,
-    messages: params.messages,
+    messages: truncateForGroq(params.messages),
     onDelta: params.onDelta,
     temperature: params.temperature,
     maxTokens: 2048,

@@ -5,6 +5,7 @@
  */
 import { env } from '../../config/env.js';
 import type { ModelProvider, GenerateInput, GenerateOutput, EmbeddingInput } from './modelProvider.js';
+import { truncateForGroq } from '../intelligence/universalAdapter.js';
 
 const GROQ_BASE = 'https://api.groq.com/openai/v1';
 const DEFAULT_CHRONOS_MODEL = 'llama-3.1-8b-instant';
@@ -41,7 +42,7 @@ export function createGroqModelProvider(modelId?: string): ModelProvider {
           },
           body: JSON.stringify({
             model: chosenModel,
-            messages: msgs,
+            messages: truncateForGroq(msgs as { role: 'system' | 'user' | 'assistant'; content: string }[]),
             temperature: input.temperature ?? 0.2,
             max_tokens: 2048,
             stream: false,
