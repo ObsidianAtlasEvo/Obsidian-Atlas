@@ -1,4 +1,3 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
 import { GoogleGenAI } from '@google/genai';
 import { env } from '../../config/env.js';
 import type { LlmRegistryEntry } from './llmRegistry.js';
@@ -223,8 +222,7 @@ async function streamGeminiChatRaw(params: {
   signal?: AbortSignal;
   timeoutMs?: number;
 }): Promise<{ fullText: string; model: string }> {
-  const key = env.geminiApiKey?.trim();
-  if (!key) throw new Error('GEMINI_API_KEY not configured');
+  const client = getGeminiGenAiClient();
 
   const first = params.messages[0];
   const system =
@@ -233,7 +231,6 @@ async function streamGeminiChatRaw(params: {
       : params.messages.filter((m) => m.role === 'system').map((m) => m.content).join('\n\n');
   const rest = params.messages.filter((m) => m.role !== 'system');
 
-  const ai = new GoogleGenerativeAI(key);
   const contents = rest.map((m) => ({
     role: m.role === 'assistant' ? ('model' as const) : ('user' as const),
     parts: [{ text: m.content }],
@@ -244,16 +241,16 @@ async function streamGeminiChatRaw(params: {
   let full = '';
 
   try {
-    const stream = await ai.getGenerativeModel({ model: params.model?.trim() || env.geminiModel?.trim() || 'gemini-2.0-flash' }).generateContentStream({
+    const stream = await client.models.generateContentStream({
+      model: params.model?.trim() || env.geminiModel?.trim() || 'gemini-2.0-flash',
       contents,
-      systemInstruction: system || undefined,
-      generationConfig: {
-
+      config: {
+        systemInstruction: system || undefined,
         temperature: params.temperature ?? 0.35,
       },
     });
 
-    for await (const chunk of stream.stream) {
+    for await (const chunk of stream) {
       const piece = typeof chunk.text === 'string' ? chunk.text : '';
       if (piece) {
         full += piece;
@@ -620,8 +617,7 @@ async function completeGeminiChatRaw(params: {
   signal?: AbortSignal;
   timeoutMs?: number;
 }): Promise<{ text: string; model: string }> {
-  const key = env.geminiApiKey?.trim();
-  if (!key) throw new Error('GEMINI_API_KEY not configured');
+  const client = getGeminiGenAiClient();
 
   const first = params.messages[0];
   const system =
@@ -630,7 +626,6 @@ async function completeGeminiChatRaw(params: {
       : params.messages.filter((m) => m.role === 'system').map((m) => m.content).join('\n\n');
   const rest = params.messages.filter((m) => m.role !== 'system');
 
-  const ai = new GoogleGenerativeAI(key);
   const contents = rest.map((m) => ({
     role: m.role === 'assistant' ? ('model' as const) : ('user' as const),
     parts: [{ text: m.content }],
@@ -639,15 +634,15 @@ async function completeGeminiChatRaw(params: {
   const controller = new AbortController();
   const t = params.timeoutMs ? setTimeout(() => controller.abort(), params.timeoutMs) : undefined;
   try {
-    const response = await ai.getGenerativeModel({ model: params.model?.trim() || env.geminiModel?.trim() || 'gemini-2.0-flash' }).generateContent({
+    const response = await client.models.generateContent({
+      model: params.model?.trim() || env.geminiModel?.trim() || 'gemini-2.0-flash',
       contents,
-      systemInstruction: system || undefined,
-      generationConfig: {
-
+      config: {
+        systemInstruction: system || undefined,
         temperature: params.temperature ?? 0.25,
       },
     });
-    const text = response.response.text() ?? '';
+    const text = typeof response.text === 'string' ? response.text : '';
     return { text: text.trim(), model: params.model };
   } finally {
     if (t) clearTimeout(t);
@@ -774,16 +769,16 @@ export async function streamGroqChat(params: {
 }
 
 // ---------------------------------------------------------------------------
-// Gemini Free-tier Overseer (@google/genai SDK — new; replaces legacy
-// @google/generative-ai for the Overseer path only)
+// Gemini shared client (@google/genai SDK — used by both worker and overseer
+// paths; the legacy @google/generative-ai SDK is no longer used here)
 // ---------------------------------------------------------------------------
 
-/** Lazy singleton — only allocated when a free-tier overseer call is made. */
+/** Lazy singleton — allocated on the first Gemini call (worker or overseer). */
 let _geminiGenAiClient: InstanceType<typeof GoogleGenAI> | null = null;
 function getGeminiGenAiClient(): InstanceType<typeof GoogleGenAI> {
   if (!_geminiGenAiClient) {
     const key = env.geminiApiKey?.trim();
-    if (!key) throw new Error('GEMINI_API_KEY not set — cannot use Gemini Free Overseer');
+    if (!key) throw new Error('GEMINI_API_KEY not configured');
     _geminiGenAiClient = new GoogleGenAI({ apiKey: key });
   }
   return _geminiGenAiClient;
