@@ -29,6 +29,7 @@ export async function supabaseRest<T = unknown>(
   method: string,
   path: string,
   body?: unknown,
+  extraHeaders?: Record<string, string>,
 ): Promise<SupabaseRestResult<T>> {
   const cfg = getConfig();
   if (!cfg) return { ok: false };
@@ -46,6 +47,10 @@ export async function supabaseRest<T = unknown>(
       headers['Prefer'] = 'return=representation';
     } else if (method === 'GET') {
       headers['Prefer'] = 'return=representation';
+    }
+
+    if (extraHeaders) {
+      Object.assign(headers, extraHeaders);
     }
 
     const res = await fetch(`${cfg.url}/rest/v1/${path}`, {

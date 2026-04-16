@@ -126,7 +126,7 @@ export function getLlmRegistryJsonForPrompt(): string {
  * corresponding swarm llmRegistry ID (e.g. 'gpt-4o').
  * Returns undefined if no swarm-level entry exists for the given model.
  */
-const MODEL_REGISTRY_TO_SWARM: Record<string, RegistryModelId> = {
+const MODEL_REGISTRY_TO_SWARM: Record<string, RegistryModelId | null> = {
   'openai/gpt-4o':             'gpt-4o',
   'openai/gpt-4o-mini':        'gpt-4o',
   'openai/gpt-4-turbo':        'gpt-4o',
@@ -141,9 +141,12 @@ const MODEL_REGISTRY_TO_SWARM: Record<string, RegistryModelId> = {
   'groq/llama-3.1-70b-versatile': 'groq-llama3-70b',
   'groq/mixtral-8x7b-32768':  'groq-llama3-70b',
   'groq/gemma2-9b-it':         'groq-llama3-70b',
+  // omnirouter = "let Atlas decide" — no swarm model override
+  'omnirouter':                 null,
 };
 
-export function mapModelRegistryIdToSwarm(modelRegistryId: string): RegistryModelId | undefined {
+export function mapModelRegistryIdToSwarm(modelRegistryId: string): RegistryModelId | null | undefined {
+  if (!(modelRegistryId in MODEL_REGISTRY_TO_SWARM)) return undefined;
   return MODEL_REGISTRY_TO_SWARM[modelRegistryId];
 }
 
