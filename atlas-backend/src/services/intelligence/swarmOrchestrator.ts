@@ -250,6 +250,10 @@ export interface PlanSwarmExecutionInput {
   signal?: AbortSignal;
   /** Optional: used to read active feature flags for plan overrides. */
   userId?: string;
+  /** User's preferred swarm-level model ID (from llmRegistry). When set, the
+   *  Overseer is instructed to route to this model for direct/delegate strategies
+   *  unless technically inappropriate. */
+  preferredModel?: string;
 }
 
 /**
@@ -286,7 +290,10 @@ export async function planSwarmExecution(input: PlanSwarmExecutionInput): Promis
     return plan;
   };
 
-  const userContent = `ROUTING_PAYLOAD_JSON:\n${JSON.stringify(payload)}\n\nReturn ExecutionPlan JSON only.`;
+  const preferredHint = input.preferredModel
+    ? `\n\nUSER_PREFERRED_MODEL: "${input.preferredModel}" — route to this model for direct/delegate strategies unless technically inappropriate for the task.`
+    : '';
+  const userContent = `ROUTING_PAYLOAD_JSON:\n${JSON.stringify(payload)}${preferredHint}\n\nReturn ExecutionPlan JSON only.`;
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), env.omniRouterTimeoutMs);
