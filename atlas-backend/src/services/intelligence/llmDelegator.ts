@@ -8,7 +8,7 @@ import {
 } from './omniRouter.js';
 import { messagesWithPrimeDirective, type DelegatorMessage } from './primeDirective.js';
 import { isSovereignOwnerEmail } from './router.js';
-import { isGeminiTransient, TRANSIENT_USER_MESSAGE } from './universalAdapter.js';
+import { isGeminiTransient, TRANSIENT_USER_MESSAGE, truncateForGroq } from './universalAdapter.js';
 import { runMaximumClarityTrack } from './maximumClarityPipeline.js';
 import {
   executeSwarmPipeline,
@@ -46,9 +46,10 @@ async function groqChatNonStream(
   options: { jsonMode?: boolean; temperature?: number; maxTokens?: number; signal?: AbortSignal }
 ): Promise<{ text: string; model: string }> {
   const { base, apiKey, model } = resolveGroqExecution();
+  const truncated = truncateForGroq(msgs);
   const body: Record<string, unknown> = {
     model,
-    messages: openAiStyleMessages(msgs),
+    messages: openAiStyleMessages(truncated),
     temperature: options.temperature ?? 0.2,
     max_tokens: options.maxTokens ?? 2048,
     stream: false,
@@ -89,9 +90,10 @@ async function groqChatStream(
   options: { temperature?: number; signal?: AbortSignal; timeoutMs?: number }
 ): Promise<{ fullText: string; model: string }> {
   const { base, apiKey, model } = resolveGroqExecution();
+  const truncated = truncateForGroq(msgs);
   const body: Record<string, unknown> = {
     model,
-    messages: openAiStyleMessages(msgs),
+    messages: openAiStyleMessages(truncated),
     temperature: options.temperature ?? 0.35,
     max_tokens: 2048,
     stream: true,

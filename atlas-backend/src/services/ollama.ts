@@ -1,5 +1,6 @@
 import { request } from 'undici';
 import { config } from '../config.js';
+import { truncateForGroq } from './intelligence/universalAdapter.js';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -294,7 +295,7 @@ function streamChatGroq(
           },
           body: JSON.stringify({
             model: GROQ_MODEL,
-            messages: messages.map(m => ({ role: m.role, content: m.content })),
+            messages: truncateForGroq(messages).map(m => ({ role: m.role, content: m.content })),
             temperature,
             stream: true,
           }),
