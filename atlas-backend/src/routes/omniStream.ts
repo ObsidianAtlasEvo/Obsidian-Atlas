@@ -40,6 +40,25 @@ import { isSovereignOwnerEmail } from '../services/intelligence/router.js';
 import { TRANSIENT_USER_MESSAGE } from '../services/intelligence/universalAdapter.js';
 import type { ChatRole } from '../types/atlas.js';
 
+// ---------------------------------------------------------------------------
+// Legacy model migration — stored preferences may contain deprecated model IDs
+// ---------------------------------------------------------------------------
+
+const MODEL_MIGRATION_MAP: Record<string, string> = {
+  'gpt-4o':               'gpt-5.4',
+  'gpt-4o-mini':          'gpt-5.4-mini',
+  'openai/gpt-4o':        'gpt-5.4',
+  'openai/gpt-4o-mini':   'gpt-5.4-mini',
+  'gpt-3.5-turbo':        'gpt-5.4-nano',
+  'openai/gpt-3.5-turbo': 'gpt-5.4-nano',
+};
+
+/** Migrate a stored preferred model to its gpt-5.4 family equivalent. */
+function migratePreferredModel(stored: string | null | undefined): string | null {
+  if (!stored) return null;
+  return MODEL_MIGRATION_MAP[stored] ?? stored;
+}
+
 /** Replace raw API error strings (e.g. [GoogleGenerativeAI Error]) with a clean user-facing message. */
 function sanitizeErrorMessage(msg: string): string {
   if (
@@ -153,6 +172,12 @@ async function withHeartbeat<T>(
   }
 }
 
+/** Strip provider prefix from a model ID for bare-ID comparisons (e.g. 'openai/gpt-4o' → 'gpt-4o'). */
+function toBareModelId(id: string): string {
+  const slash = id.indexOf('/');
+  return slash >= 0 ? id.slice(slash + 1) : id;
+}
+
 /** Resolve the user's preferred model from Supabase, validated against their tier. */
 async function resolvePreferredModel(
   userId: string,
@@ -165,12 +190,16 @@ async function resolvePreferredModel(
     );
     if (!result.ok || !result.data || result.data.length === 0) return null;
 
-    const preferred = result.data[0]?.preferred_model;
+    const raw = result.data[0]?.preferred_model;
+    // Apply migration map: legacy IDs (gpt-4o, openai/gpt-4o, etc.) → gpt-5.4 family
+    const preferred = migratePreferredModel(raw);
     if (!preferred) return null;
 
-    // Validate against tier — if user downgraded, silently ignore stale preference
+    // Validate against tier — compare using bare model IDs (no openai/ prefix)
     const allowed = TIER_MODEL_ACCESS[tier]?.modelIds ?? [];
-    if (!allowed.includes(preferred)) return null;
+    const barePreferred = toBareModelId(preferred);
+    const tierMatch = allowed.some((id) => toBareModelId(id) === barePreferred);
+    if (!tierMatch) return null;
 
     return preferred;
   } catch {
@@ -385,6 +414,7 @@ export function registerOmniStreamRoutes(app: FastifyInstance): void {
               onDelta,
               onSwarmTicker: (evt) => sseWrite(raw, 'swarm_ticker', evt),
               timeoutMs: 180_000,
+              userTier: stripeTier,
             }));
           const useGpuQueue = planUsesLocalOllama(plan) && sovereignEligible;
           const pipeResult = useGpuQueue
@@ -442,6 +472,7 @@ export function registerOmniStreamRoutes(app: FastifyInstance): void {
             onDelta,
             onSwarmTicker: (evt) => sseWrite(raw, 'swarm_ticker', evt),
             timeoutMs: 240_000,
+            userTier: stripeTier,
           });
         } else {
           const mainSwarmHint = resolveSwarmModelFromPreferred(preferredModel);
@@ -480,6 +511,7 @@ export function registerOmniStreamRoutes(app: FastifyInstance): void {
               onDelta,
               onSwarmTicker: (evt) => sseWrite(raw, 'swarm_ticker', evt),
               timeoutMs: 180_000,
+              userTier: stripeTier,
             }));
 
           const useGpuQueue = planUsesLocalOllama(plan) && sovereignEligible;
@@ -509,7 +541,11 @@ export function registerOmniStreamRoutes(app: FastifyInstance): void {
         result.surface !== 'god_mode_local' &&
         !result.surface.startsWith('god_mode');
 
-      // Send done immediately with the raw LLM response — user receives it without waiting for Overseer
+      // Overseer ordering: For swarm strategies, the gpt-5.4 Overseer synthesis is
+      // the LAST step inside executeSwarmPipeline (collect-then-stream). For direct/delegate,
+      // no multi-output synthesis is needed — single model streams directly.
+      // The governance Overseer annotation (applyOverseerLens) below is a post-hoc quality
+      // check, not the synthesis layer.
       sseWrite(raw, 'done', {
         traceId,
         requestId,
