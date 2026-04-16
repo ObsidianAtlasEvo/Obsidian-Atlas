@@ -8,7 +8,7 @@ import type { ModelProvider, GenerateInput, GenerateOutput, EmbeddingInput } fro
 import { truncateForGroq } from '../intelligence/universalAdapter.js';
 
 const GROQ_BASE = 'https://api.groq.com/openai/v1';
-const DEFAULT_CHRONOS_MODEL = 'llama-3.1-8b-instant';
+const DEFAULT_CHRONOS_MODEL = 'llama-3.3-70b-versatile';
 
 export function createGroqModelProvider(modelId?: string): ModelProvider {
   const apiKey = env.groqApiKey;
