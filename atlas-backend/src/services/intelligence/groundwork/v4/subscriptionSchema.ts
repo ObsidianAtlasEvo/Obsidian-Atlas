@@ -99,8 +99,8 @@ export interface SubscriptionRecord {
 
 /**
  * Model access descriptor for a given tier.
- * `modelIds` are the registry IDs from openaiRegistry.ts that this tier may use.
- * [REPAIR 1] IDs must match openaiRegistry.ts entries — bare IDs, not namespaced.
+ * `modelIds` use the canonical namespaced IDs from modelRegistry.ts
+ * (e.g. 'openai/gpt-4o', 'groq/llama-3.1-70b-versatile').
  */
 export interface TierModelAccess {
   /** List of model registry IDs accessible at this tier. */
@@ -112,47 +112,48 @@ export interface TierModelAccess {
 /**
  * Model registry IDs accessible per tier.
  *
- * Free:     Groq Llama 3.3 70B, Gemini 2.5 Flash, OmniRouter. No OpenAI.
- * Core:     Free models + gpt-5.4-nano + gpt-5.4-mini. No gpt-5.4 or gpt-5.4-pro.
- * Sovereign: Full access — all models including gpt-5.4 and gpt-5.4-pro.
+ * IDs MUST match the canonical `id` field in modelRegistry.ts (namespaced form:
+ * 'provider/model'). The frontend model selector and resolvePreferredModel both
+ * validate against these IDs.
  *
- * [REPAIR 1] Registry IDs must match exactly what openaiRegistry.ts uses.
- * Bare IDs (gpt-5.4-nano, etc.) — NOT namespaced (openai:gpt-5.4-nano).
+ * Free:     Groq Llama 3.1 70B, Gemini 2.5 Flash, OmniRouter. No OpenAI.
+ * Core:     Free models + GPT-3.5 Turbo, GPT-4o Mini, Gemini 2.5 Flash.
+ * Sovereign: Full access — all models including GPT-4o, o1 Preview, Claude Opus/Sonnet.
  */
 export const TIER_MODEL_ACCESS: Record<SubscriptionTier, TierModelAccess> = {
   free: {
     modelIds: [
-      'groq:llama-3.3-70b-versatile',
-      'gemini:gemini-2.5-flash',
+      'groq/llama-3.1-70b-versatile',
+      'google/gemini-2.5-flash',
       'omnirouter',
     ],
-    description: 'Groq Llama 3.3 70B, Gemini 2.5 Flash, OmniRouter. No OpenAI access.',
+    description: 'Groq Llama 3.1 70B, Gemini 2.5 Flash, OmniRouter. No OpenAI access.',
   },
   core: {
     modelIds: [
-      'groq:llama-3.3-70b-versatile',
-      'gemini:gemini-2.5-flash',
+      'groq/llama-3.1-70b-versatile',
+      'google/gemini-2.5-flash',
       'omnirouter',
-      'gpt-5.4-nano',
-      'gpt-5.4-mini',
-      'gemini-pro',
+      'openai/gpt-3.5-turbo',
+      'openai/gpt-4o-mini',
+      'google/gemini-2.0-flash',
     ],
-    description: 'Free models + GPT-5.4 nano, GPT-5.4 mini, and Gemini Pro.',
+    description: 'Free models + GPT-3.5 Turbo, GPT-4o Mini, and Gemini 2.0 Flash.',
   },
   sovereign: {
     modelIds: [
-      'groq:llama-3.3-70b-versatile',
-      'gemini:gemini-2.5-flash',
+      'groq/llama-3.1-70b-versatile',
+      'google/gemini-2.5-flash',
       'omnirouter',
-      'gpt-5.4-nano',
-      'gpt-5.4-mini',
-      'gemini-pro',
-      'gpt-5.4',
-      'gpt-5.4-pro',
-      'claude-opus',
-      'claude-sonnet',
+      'openai/gpt-3.5-turbo',
+      'openai/gpt-4o-mini',
+      'google/gemini-2.0-flash',
+      'openai/gpt-4o',
+      'openai/o1-preview',
+      'anthropic/claude-3-opus',
+      'anthropic/claude-3.5-sonnet',
     ],
-    description: 'Full model access including GPT-5.4, GPT-5.4-pro, Claude Opus, and Claude Sonnet.',
+    description: 'Full model access including GPT-4o, o1 Preview, Claude Opus, and Claude 3.5 Sonnet.',
   },
 };
 

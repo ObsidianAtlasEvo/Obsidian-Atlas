@@ -30,6 +30,7 @@ import {
   planUsesLocalOllama,
   swarmPlanToGroqRoutingDecision,
 } from '../services/intelligence/swarmOrchestrator.js';
+import { getRegistryEntry, mapModelRegistryIdToSwarm } from '../services/intelligence/llmRegistry.js';
 import {
   QuotaExceededError,
   SystemDeepResearchUnavailableError,
@@ -175,6 +176,19 @@ async function resolvePreferredModel(
   } catch {
     return null; // non-fatal — fall back to auto-selection
   }
+}
+
+/**
+ * Maps a UI-level preferred model (modelRegistry ID like 'openai/gpt-4o')
+ * to a swarm-level llmRegistry ID (like 'gpt-4o'), validated against the
+ * swarm registry. Returns null if no valid mapping exists.
+ */
+function resolveSwarmModelFromPreferred(preferredModel: string | null): string | null {
+  if (!preferredModel) return null;
+  const swarmId = mapModelRegistryIdToSwarm(preferredModel);
+  if (!swarmId) return null;
+  const entry = getRegistryEntry(swarmId);
+  return entry ? swarmId : null;
 }
 
 /**
@@ -337,20 +351,21 @@ export function registerOmniStreamRoutes(app: FastifyInstance): void {
           });
 
           const sovereignEligible = isSovereignOwnerEmail(verifiedEmail);
-          const plan = await planSwarmExecution({
+          const fallbackSwarmHint = resolveSwarmModelFromPreferred(preferredModel);
+          let plan = await planSwarmExecution({
             userPrompt,
             conversationSnippet: snippet,
             sovereignEligible,
             policyProfile,
             mirrorforge,
+            preferredModel: fallbackSwarmHint ?? undefined,
           });
-          // Apply preferred model to fallback plan
+          // Apply preferred model to fallback plan (mapped to swarm registry ID)
           if (
-            preferredModel &&
-            (plan.strategy === 'direct' || plan.strategy === 'delegate') &&
-            'model' in plan
+            fallbackSwarmHint &&
+            (plan.strategy === 'direct' || plan.strategy === 'delegate')
           ) {
-            (plan as { model: string }).model = preferredModel;
+            plan = { ...plan, model: fallbackSwarmHint } as typeof plan;
           }
           const legacy = swarmPlanToGroqRoutingDecision(plan);
           sseWrite(raw, 'route', {
@@ -426,21 +441,23 @@ export function registerOmniStreamRoutes(app: FastifyInstance): void {
             timeoutMs: 240_000,
           });
         } else {
-          const plan = await planSwarmExecution({
+          const mainSwarmHint = resolveSwarmModelFromPreferred(preferredModel);
+          let plan = await planSwarmExecution({
             userPrompt,
             conversationSnippet: snippet,
             sovereignEligible,
             policyProfile,
             mirrorforge,
+            preferredModel: mainSwarmHint ?? undefined,
           });
 
           // Apply user's preferred model if set and the plan uses a direct/delegate strategy
+          const swarmModel = mainSwarmHint;
           if (
-            preferredModel &&
-            (plan.strategy === 'direct' || plan.strategy === 'delegate') &&
-            'model' in plan
+            swarmModel &&
+            (plan.strategy === 'direct' || plan.strategy === 'delegate')
           ) {
-            (plan as { model: string }).model = preferredModel;
+            plan = { ...plan, model: swarmModel } as typeof plan;
           }
 
           const legacy = swarmPlanToGroqRoutingDecision(plan);
