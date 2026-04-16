@@ -188,10 +188,10 @@ export async function enforceSovereignLocalGpu(
 }
 
 // ---------------------------------------------------------------------------
-// Groq Chief of Staff — system prompt (registry + telemetry)
+// Overseer — system prompt (registry + telemetry)
 // ---------------------------------------------------------------------------
 
-const CHIEF_OF_STAFF_SYSTEM = `You are Atlas Chief of Staff (Groq): a swarm orchestrator. You decide HOW compute is dispatched across registered specialists.
+const CHIEF_OF_STAFF_SYSTEM = `You are Atlas Overseer (OpenAI): a swarm orchestrator. You decide HOW compute is dispatched across registered specialists.
 
 AVAILABLE_LLM_REGISTRY (JSON array — you MUST only assign work to "id" values present here):
 ${getLlmRegistryJsonForPrompt()}
@@ -220,16 +220,25 @@ OPERATIONAL LAW:
 
 You will receive ROUTING_PAYLOAD_JSON with ROUTING_METADATA, UserTelemetry, MirrorforgeSignal, and GROQ_ROUTING_DIRECTIVES. Obey it.`;
 
-function getGroqRouterConfig(): { base: string; apiKey: string; model: string } | null {
-  const apiKey = env.groqApiKey?.trim() || env.cloudOpenAiApiKey?.trim();
-  if (!apiKey) return null;
+function getOverseerConfig(): { base: string; apiKey: string; model: string } | null {
+  // Prefer OpenAI (gpt-5.4-nano as Overseer) if configured
+  const openaiKey = env.openaiApiKey?.trim();
+  if (openaiKey) {
+    const base = (env.openaiBaseUrl?.trim() || 'https://api.openai.com/v1').replace(/\/$/, '');
+    const model = env.openaiRouterModel?.trim() || 'gpt-5.4-nano';
+    return { base, apiKey: openaiKey, model };
+  }
+
+  // Fallback: Groq (preserves backward compatibility when OpenAI key is absent)
+  const groqKey = env.groqApiKey?.trim() || env.cloudOpenAiApiKey?.trim();
+  if (!groqKey) return null;
   const base = (
     env.groqBaseUrl?.trim() ||
     env.cloudOpenAiBaseUrl?.trim() ||
     'https://api.groq.com/openai/v1'
   ).replace(/\/$/, '');
   const model = env.groqRouterModel?.trim() || env.cloudChatModel?.trim() || 'llama-3.1-8b-instant';
-  return { base, apiKey, model };
+  return { base, apiKey: groqKey, model };
 }
 
 export interface PlanSwarmExecutionInput {
@@ -244,10 +253,10 @@ export interface PlanSwarmExecutionInput {
 }
 
 /**
- * Ask Groq (Chief of Staff) for a validated {@link ExecutionPlan}.
+ * Ask Overseer (OpenAI/Groq) for a validated {@link ExecutionPlan}.
  */
 export async function planSwarmExecution(input: PlanSwarmExecutionInput): Promise<ExecutionPlan> {
-  const cfg = getGroqRouterConfig();
+  const cfg = getOverseerConfig();
   const payload = buildChiefRoutingPayload({
     userPrompt: input.userPrompt,
     conversationSnippet: input.conversationSnippet,
@@ -258,7 +267,7 @@ export async function planSwarmExecution(input: PlanSwarmExecutionInput): Promis
   });
 
   if (!cfg) {
-    return { strategy: 'direct', model: DEFAULT_SWARM_MODEL_ID, reason: 'groq_router_unconfigured' };
+    return { strategy: 'direct', model: DEFAULT_SWARM_MODEL_ID, reason: 'overseer_unconfigured' };
   }
 
   /** Swarm doctrine: non-sovereign tenants never touch on-prem models in plans. */

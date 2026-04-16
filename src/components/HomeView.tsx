@@ -267,6 +267,13 @@ export function HomeView({ state, setState, onInteraction }: HomeViewProps) {
         body: JSON.stringify(streamBody),
       });
       if (!res.ok) {
+        if (res.status === 429) {
+          const body = await res.json().catch(() => ({})) as { error?: string };
+          if (body.error === 'cognitive_quota_reached') {
+            throw new Error('Daily limit reached (120 chats). Upgrade to Atlas Core or Sovereign for more. Resets at midnight UTC.');
+          }
+          throw new Error('Atlas is momentarily overloaded. Please try again in a few seconds.');
+        }
         const t = await res.text().catch(() => '');
         throw new Error(t || `HTTP ${res.status}`);
       }
