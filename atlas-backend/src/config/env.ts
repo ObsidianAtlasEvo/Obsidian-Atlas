@@ -240,7 +240,6 @@ function parseCorsOrigins(raw: string | undefined): string[] {
 
 // ── Gemini Free-tier Overseer constants ──────────────────────────────────────
 export const GEMINI_MODEL_OVERSEER_FREE = 'gemini-3.1-flash-lite-preview' as const;
-export const OPENAI_MODEL_NANO = 'gpt-5.4-nano' as const;
 export const GEMINI_OVERSEER_FALLBACK = OPENAI_MODEL_NANO;
 
 function parseModelPool(raw: string | undefined): string[] {
