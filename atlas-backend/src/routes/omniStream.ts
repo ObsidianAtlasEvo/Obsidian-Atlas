@@ -10,9 +10,10 @@ import { attachAtlasSession } from '../services/auth/authProvider.js';
 import { getVerifiedUserEmail } from '../services/auth/requestAuth.js';
 import { getPolicyProfile } from '../services/evolution/policyStore.js';
 import { CognitiveQuotaError, assertChatQuotaAllows, recordChatTokenUsage } from '../services/governance/quotaStore.js';
-import type { SubscriptionTier } from '../services/intelligence/groundwork/v4/subscriptionSchema.js';
+import { TIER_MODEL_ACCESS, type SubscriptionTier } from '../services/intelligence/groundwork/v4/subscriptionSchema.js';
 import { getSubscriptionStatus } from '../services/intelligence/groundwork/v4/stripeService.js';
 import { getDb } from '../db/sqlite.js';
+import { supabaseRest } from '../db/supabase.js';
 import { applyOverseerLens } from '../services/governance/overseerService.js';
 import { enqueueGpuTask, newGpuRequestId } from '../services/inference/queueManager.js';
 import { runMaximumClarityTrack } from '../services/intelligence/maximumClarityPipeline.js';
@@ -151,6 +152,31 @@ async function withHeartbeat<T>(
   }
 }
 
+/** Resolve the user's preferred model from Supabase, validated against their tier. */
+async function resolvePreferredModel(
+  userId: string,
+  tier: SubscriptionTier,
+): Promise<string | null> {
+  try {
+    const result = await supabaseRest<{ preferred_model?: string | null }[]>(
+      'GET',
+      `atlas_evolution_profiles?user_id=eq.${encodeURIComponent(userId)}&select=preferred_model`,
+    );
+    if (!result.ok || !result.data || result.data.length === 0) return null;
+
+    const preferred = result.data[0]?.preferred_model;
+    if (!preferred) return null;
+
+    // Validate against tier — if user downgraded, silently ignore stale preference
+    const allowed = TIER_MODEL_ACCESS[tier]?.modelIds ?? [];
+    if (!allowed.includes(preferred)) return null;
+
+    return preferred;
+  } catch {
+    return null; // non-fatal — fall back to auto-selection
+  }
+}
+
 /**
  * Resonance Chamber: SSE stream with routing status → token deltas → done (+ evolution scheduled).
  */
@@ -198,6 +224,11 @@ export function registerOmniStreamRoutes(app: FastifyInstance): void {
       }
       throw e;
     }
+
+    // Resolve user's preferred model (non-blocking — falls back to auto on failure)
+    const preferredModel = stripeTier
+      ? await resolvePreferredModel(userId, stripeTier).catch(() => null)
+      : null;
 
     reply.hijack();
     reply.raw.writeHead(200, {
@@ -313,6 +344,14 @@ export function registerOmniStreamRoutes(app: FastifyInstance): void {
             policyProfile,
             mirrorforge,
           });
+          // Apply preferred model to fallback plan
+          if (
+            preferredModel &&
+            (plan.strategy === 'direct' || plan.strategy === 'delegate') &&
+            'model' in plan
+          ) {
+            (plan as { model: string }).model = preferredModel;
+          }
           const legacy = swarmPlanToGroqRoutingDecision(plan);
           sseWrite(raw, 'route', {
             strategy: plan.strategy,
@@ -394,6 +433,15 @@ export function registerOmniStreamRoutes(app: FastifyInstance): void {
             policyProfile,
             mirrorforge,
           });
+
+          // Apply user's preferred model if set and the plan uses a direct/delegate strategy
+          if (
+            preferredModel &&
+            (plan.strategy === 'direct' || plan.strategy === 'delegate') &&
+            'model' in plan
+          ) {
+            (plan as { model: string }).model = preferredModel;
+          }
 
           const legacy = swarmPlanToGroqRoutingDecision(plan);
 

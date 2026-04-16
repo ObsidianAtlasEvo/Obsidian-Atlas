@@ -4,6 +4,7 @@ import { atlasApiUrl, sanitizeAtlasError } from '../lib/atlasApi';
 import { buildAtlasSystemPrompt } from '../lib/atlasPrompt';
 import { generateId, nowISO } from '../lib/persistence';
 import { useChatRequestState, type ChatRequestStatus } from '../hooks/useChatRequestState';
+import { ModelSelector } from '../components/ModelSelector';
 import type { UserQuestion, AnswerDepthTier, InquiryStyle } from '@/types';
 
 // ── Types ─────────────────────────────────────────────────────────────────
@@ -679,7 +680,10 @@ export default function AtlasChamber() {
       <div style={{ padding: '0 40px 32px', flexShrink: 0 }}>
         {hasMessages && (
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, paddingLeft: 2 }}>
-            <DepthControl />
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <DepthControl />
+              <ModelSelector onUpgradeClick={() => setShowUpgradeModal(true)} compact />
+            </div>
             {isStreaming && (
               <button onClick={handleAbort} style={{ background: 'transparent', border: '1px solid rgba(239,68,68,0.25)', borderRadius: 5, padding: '3px 10px', color: 'rgba(239,68,68,0.5)', fontSize: '0.65rem', cursor: 'pointer', fontFamily: 'inherit', letterSpacing: '0.06em', transition: 'all 140ms ease' }}
                 onMouseEnter={(e) => { (e.target as HTMLButtonElement).style.borderColor = 'rgba(239,68,68,0.5)'; (e.target as HTMLButtonElement).style.color = 'rgba(239,68,68,0.8)'; }}
@@ -712,8 +716,9 @@ export default function AtlasChamber() {
           </button>
         </div>
         {!hasMessages && (
-          <div style={{ marginTop: 10, display: 'flex', justifyContent: 'center' }}>
+          <div style={{ marginTop: 10, display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 10 }}>
             <DepthControl />
+            <ModelSelector onUpgradeClick={() => setShowUpgradeModal(true)} compact />
           </div>
         )}
       </div>

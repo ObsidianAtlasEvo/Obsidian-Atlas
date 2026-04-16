@@ -38,6 +38,7 @@ import modelRoutes from './routes/models.js';
 import { registerGapLedgerRoutes } from './routes/gapLedgerRoutes.js';
 import { registerChangeControlRoutes } from './routes/changeControlRoutes.js';
 import { registerBillingRoutes } from './routes/billingRoutes.js';
+import { registerUserPreferencesRoutes } from './routes/userPreferencesRoutes.js';
 import { loadPersistedJobs } from './services/inference/queueManager.js';
 
 // ---------------------------------------------------------------------------
@@ -266,6 +267,21 @@ await app.register(async (billingScope) => {
   });
 
   await registerBillingRoutes(billingScope, getDb());
+});
+
+// ── User preferences routes — model selection, etc. ──────────────────────
+await app.register(async (userScope) => {
+  userScope.addHook('preHandler', async (request: FastifyRequest, reply: FastifyReply) => {
+    await attachAtlasSession(request);
+    if (!request.atlasAuthUser) {
+      return reply.code(401).send({ error: 'Unauthorized — Atlas session required' });
+    }
+    request.atlasSession = {
+      userId: request.atlasAuthUser.databaseUserId,
+      email: request.atlasAuthUser.email,
+    };
+  });
+  await registerUserPreferencesRoutes(userScope, getDb());
 });
 
 registerDegradedModeRoutes(app);
