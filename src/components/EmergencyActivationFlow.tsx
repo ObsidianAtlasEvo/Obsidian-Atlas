@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
 import { AppState, EmergencyContainment } from '../types';
-import { auth, setEmergencyState, logAudit } from '../services/firebase';
+import { auth, logAudit } from '../services/firebase';
 import { ShieldAlert, ShieldCheck, Lock, Key, Smartphone, AlertTriangle, CheckCircle2, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { SOVEREIGN_CREATOR_EMAIL } from '../config/sovereignCreator';
+import { atlasApiUrl } from '../lib/atlasApi';
 
 interface EmergencyActivationFlowProps {
   state: AppState;
@@ -29,23 +30,26 @@ export const EmergencyActivationFlow: React.FC<EmergencyActivationFlowProps> = (
   const handleActivate = async () => {
     setIsVerifying(true);
     try {
-      const emergencyState: EmergencyContainment = {
-        active: !isLifting,
-        activatedAt: isLifting ? state.emergencyStatus?.activatedAt : new Date().toISOString(),
-        activatedBy: creatorEmail,
-        reason: isLifting ? state.emergencyStatus?.reason : reason,
-        level: 4, // Hard freeze
-        liftedAt: isLifting ? new Date().toISOString() : undefined,
-        liftedBy: isLifting ? creatorEmail : undefined,
-        forensicSnapshot: !isLifting ? {
-          configState: { activeMode: state.activeMode, uiPosture: state.cognitiveLoad.uiPosture },
-          authLogs: [], // In real app, fetch recent logs
-          activeSessions: [auth.currentUser?.uid || 'unknown'],
-          timestamp: new Date().toISOString()
-        } : state.emergencyStatus?.forensicSnapshot
-      };
+      const res = await fetch(atlasApiUrl('/v1/governance/emergency'), {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: isLifting ? 'deactivate' : 'activate',
+          reason: isLifting ? (state.emergencyStatus?.reason ?? 'lifting') : reason,
+          userEmail: state.currentUser?.email,
+          userId: state.currentUser?.uid,
+        }),
+      });
+      if (!res.ok) throw new Error(`Emergency endpoint returned ${res.status}`);
 
-      await setEmergencyState(emergencyState);
+      // Best-effort Firestore audit log — never block the flow
+      logAudit(
+        isLifting ? 'Emergency Deactivated' : 'Emergency Activated',
+        'critical',
+        { reason: isLifting ? state.emergencyStatus?.reason : reason },
+      ).catch(() => {});
+
       onClose();
     } catch (error) {
       console.error("Failed to update emergency state:", error);

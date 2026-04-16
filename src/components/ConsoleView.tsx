@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { AppState, EmergencyContainment, Gap, ChangeProposal, AuditLog } from '../types';
 import { db, auth, logAudit, handleFirestoreError, OperationType } from '../services/firebase';
-import { doc, getDoc, setDoc, updateDoc, onSnapshot, collection, query, orderBy, limit, Timestamp, addDoc, where, getDocs } from 'firebase/firestore';
+import { collection, Timestamp, addDoc } from 'firebase/firestore';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   ShieldAlert, 
@@ -58,37 +58,45 @@ export function ConsoleView({ state, setState }: CreatorConsoleProps) {
     { type: 'output', text: 'SECURE LINK ESTABLISHED. WELCOME, CREATOR.', timestamp: new Date().toISOString() },
   ]);
 
-  // Fix 8: live Firestore metrics for Overview tab
-  const [overviewMetrics, setOverviewMetrics] = useState<{ gaps: number | null; changes: number | null; audits: number | null }>({ gaps: null, changes: null, audits: null });
+  // Overview metrics — wired to GET /v1/cognitive/sovereign-overview (#27)
+  const [overviewMetrics, setOverviewMetrics] = useState<{ gaps: number | null; changes: number | null; audits: number | null; health: string | null }>({ gaps: null, changes: null, audits: null, health: null });
+  const [overviewError, setOverviewError] = useState(false);
 
   useEffect(() => {
     if (activeTab !== 'overview') return;
     let cancelled = false;
+    const userId = state.currentUser?.uid;
+    if (!userId) return;
 
     (async () => {
       try {
-        // Active Gaps: gaps collection where status == 'open'
-        const gapsSnap = await getDocs(query(collection(db, 'gaps'), where('status', '==', 'open')));
-        const gapCount = gapsSnap.docs.length;
-
-        // Pending Changes: change_control collection where status == 'pending'
-        const changesSnap = await getDocs(query(collection(db, 'change_control'), where('status', '==', 'pending')));
-        const changeCount = changesSnap.docs.length;
-
-        // Audit Events: audit_log collection, total count
-        const auditSnap = await getDocs(query(collection(db, 'audit_log')));
-        const auditCount = auditSnap.docs.length;
-
+        const res = await fetch(atlasApiUrl(`/v1/cognitive/sovereign-overview?userId=${encodeURIComponent(userId)}`), {
+          credentials: 'include',
+        });
+        if (!res.ok) throw new Error(`Backend returned ${res.status}`);
+        const data = await res.json() as {
+          unfinishedBusinessOpen: number;
+          openContradictions: number;
+          decisionsDraft: number;
+          evolutionEventsRecorded: number;
+          selfRevisionOpen: number;
+        };
         if (!cancelled) {
-          setOverviewMetrics({ gaps: gapCount, changes: changeCount, audits: auditCount });
+          setOverviewMetrics({
+            gaps: data.unfinishedBusinessOpen + data.openContradictions,
+            changes: data.decisionsDraft,
+            audits: data.evolutionEventsRecorded,
+            health: data.selfRevisionOpen === 0 && data.openContradictions === 0 ? 'Nominal' : 'Attention Required',
+          });
+          setOverviewError(false);
         }
       } catch {
-        // Firestore unavailable — leave as null
+        if (!cancelled) setOverviewError(true);
       }
     })();
 
     return () => { cancelled = true; };
-  }, [activeTab]);
+  }, [activeTab, state.currentUser?.uid]);
 
   useEffect(() => {
     if (state.creatorConsoleState) {
@@ -420,7 +428,12 @@ export function ConsoleView({ state, setState }: CreatorConsoleProps) {
 
               {activeTab === 'overview' && (
                 <div className="space-y-12">
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+                  {overviewError && (
+                    <div className="p-4 bg-red-500/10 border border-red-500/20 rounded-sm text-[10px] text-red-400 uppercase tracking-widest text-center">
+                      Backend unavailable
+                    </div>
+                  )}
+                  <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
                     <div className="p-8 bg-titanium/5 border border-titanium/10 rounded-sm space-y-6">
                       <div className="flex items-center justify-between">
                         <span className="text-[10px] font-mono uppercase tracking-widest text-stone">Active Gaps</span>
@@ -475,6 +488,24 @@ export function ConsoleView({ state, setState }: CreatorConsoleProps) {
                       <div className="pt-4 border-t border-titanium/10">
                         <p className="text-[10px] text-stone leading-relaxed">
                           {overviewMetrics.audits !== null ? `${overviewMetrics.audits} events logged.` : 'Loading...'}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="p-8 bg-titanium/5 border border-titanium/10 rounded-sm space-y-6">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-mono uppercase tracking-widest text-stone">System Health</span>
+                        <ShieldCheck size={16} className="text-gold" />
+                      </div>
+                      <div className="flex items-end gap-3">
+                        <span className={cn("text-lg font-serif", overviewMetrics.health === 'Nominal' ? 'text-teal' : overviewMetrics.health ? 'text-gold' : 'text-stone/40')}>
+                          {overviewMetrics.health ?? (
+                            <RefreshCw size={24} className="animate-spin text-stone/40" />
+                          )}
+                        </span>
+                      </div>
+                      <div className="pt-4 border-t border-titanium/10">
+                        <p className="text-[10px] text-stone leading-relaxed">
+                          {overviewMetrics.health ? `Status: ${overviewMetrics.health}` : 'Loading...'}
                         </p>
                       </div>
                     </div>

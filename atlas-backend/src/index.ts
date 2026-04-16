@@ -24,6 +24,7 @@ import { registerMindMapRoutes } from './routes/mindMapRoutes.js';
 import { registerSovereigntyRoutes } from './routes/sovereigntyRoutes.js';
 import { registerAuthRoutes } from './routes/authRoutes.js';
 import { attachAtlasSession } from './services/auth/authProvider.js';
+import { registerDiagnosticsReportRoutes } from './routes/diagnosticsReportRoutes.js';
 import { registerDegradedModeRoutes } from './routes/degradedModeRoutes.js';
 import { startPolling } from './services/governance/degraded/degradedModeOracle.js';
 import { initAutoRecovery } from './services/governance/degraded/recoveryOrchestrator.js';
@@ -175,6 +176,7 @@ await app.register(async (protected_app) => {
   registerChangeControlRoutes(protected_app);
   registerJournalRoutes(protected_app);
   registerDoctrineRoutes(protected_app);
+  registerDiagnosticsReportRoutes(protected_app);
 });
 // ── Billing routes — session-based billing + Stripe webhook (raw body) ──────
 // Billing routes expect request.atlasSession (userId + email). Bridge from
