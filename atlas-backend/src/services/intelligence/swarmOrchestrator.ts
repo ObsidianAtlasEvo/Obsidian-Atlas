@@ -190,7 +190,49 @@ export async function enforceSovereignLocalGpu(
 }
 
 // ---------------------------------------------------------------------------
-// Overseer — system prompt (registry + telemetry)
+// Overseer — identity-enforcement system prompt (final synthesis layer)
+// ---------------------------------------------------------------------------
+
+const OVERSEER_SYSTEM_PROMPT = `
+You are Atlas — a sovereign intelligence layer operating as the final synthesis and identity-enforcement lens.
+
+ROLE:
+You receive the outputs of multiple specialist worker models, the user's evolution profile, memory context, and tool outputs. Your task is to synthesize these into a single, coherent, Atlas-identity response.
+
+IDENTITY ENFORCEMENT:
+- Apply Atlas doctrine to every response
+- Enforce truth constraints — never speculate as fact
+- Apply the user's evolution context and preferences
+- Resolve contradictions between worker outputs using doctrine as the tiebreaker
+
+OUTPUT:
+- Produce the final user-facing response in Atlas voice
+- If a policy conflict exists that cannot be resolved by synthesis, emit requireProAudit: true and describe the conflict. Do not resolve it yourself.
+- Never expose raw worker outputs to the user
+- Never break Atlas identity to defer to a model provider's style
+
+WORKERS:
+The inputs you receive come from specialist worker models. They are raw material, not final answers.
+`.trim();
+
+/**
+ * Resolve the correct Overseer model for the user's subscription tier.
+ * Free → gpt-5.4-nano; Core + Sovereign → gpt-5.4.
+ */
+function resolveOverseerModel(tier?: string): string {
+  if (tier === 'free') return 'gpt-5.4-nano';
+  return 'gpt-5.4'; // Core + Sovereign
+}
+
+/**
+ * Intermediate synthesis model for swarm pipelines (between workers and Overseer).
+ * Used when multi-step swarms need consolidation before the final Overseer pass.
+ * Exported for use by future intermediate synthesis steps — not Groq.
+ */
+export const INTERMEDIATE_SYNTHESIS_MODEL = 'gpt-5.4-mini';
+
+// ---------------------------------------------------------------------------
+// Chief of Staff — routing planner (decides strategy, NOT the final synthesis)
 // ---------------------------------------------------------------------------
 
 const CHIEF_OF_STAFF_SYSTEM = `You are Atlas Overseer (OpenAI): a swarm orchestrator. You decide HOW compute is dispatched across registered specialists.
@@ -223,7 +265,7 @@ OPERATIONAL LAW:
 You will receive ROUTING_PAYLOAD_JSON with ROUTING_METADATA, UserTelemetry, MirrorforgeSignal, and GROQ_ROUTING_DIRECTIVES. Obey it.`;
 
 function getOverseerConfig(): { base: string; apiKey: string; model: string } | null {
-  // Prefer OpenAI (gpt-5.4-nano as Overseer) if configured
+  // Prefer OpenAI (gpt-5.4-nano as routing planner) if configured
   const openaiKey = env.openaiApiKey?.trim();
   if (openaiKey) {
     const base = (env.openaiBaseUrl?.trim() || 'https://api.openai.com/v1').replace(/\/$/, '');
@@ -488,7 +530,8 @@ export type SwarmTickerHandler = (evt: {
 }) => void;
 
 /**
- * Execute plan: every LLM call uses Prime Directive in-system; swarm ends with a Groq synthesis pass so the user sees one Atlas voice.
+ * Execute plan: every LLM call uses Prime Directive in-system; swarm ends with
+ * a gpt-5.4 Overseer synthesis pass (tier-gated) so the user sees one Atlas voice.
  */
 export async function executeSwarmPipeline(input: {
   userId: string;
@@ -498,6 +541,8 @@ export async function executeSwarmPipeline(input: {
   onSwarmTicker?: SwarmTickerHandler | undefined;
   signal?: AbortSignal;
   timeoutMs?: number;
+  /** User subscription tier — determines Overseer model (free → gpt-5.4-nano, else gpt-5.4). */
+  userTier?: string;
 }): Promise<{ fullText: string; surface: string; model: string }> {
   const prepared = messagesWithPrimeDirective(input.userId, input.messages);
   const baseMessages = delegatorMessagesToUniversal(prepared);
@@ -591,53 +636,134 @@ export async function executeSwarmPipeline(input: {
   }
 
   const combined = outputs.join('\n\n');
+
+  // ── Overseer: gpt-5.4 (Core/Sovereign) or gpt-5.4-nano (Free) ──
+  // The Overseer is the LAST step — all worker outputs must be fully collected
+  // before this point. Groq must NOT be used at or after the Overseer position.
+  const overseerModelId = resolveOverseerModel(input.userTier);
+  const overseerEntry = getRegistryEntry(overseerModelId);
+
   onSwarmTicker?.({
     phase: 'synthesize',
-    message: 'Atlas synthesizing final response (Chief consolidation)…',
+    message: `Atlas Overseer (${overseerModelId}) synthesizing final response…`,
   });
 
-  const synthEntry = getRegistryEntry(DEFAULT_SWARM_MODEL_ID)!;
-  const synthMessages: UniversalMessage[] = [
-    ...baseMessages.slice(0, 1),
+  const overseerMessages: UniversalMessage[] = [
+    { role: 'system', content: OVERSEER_SYSTEM_PROMPT },
     {
       role: 'user',
-      content: `You are the final synthesis layer for Obsidian Atlas. You have received outputs from ${outputs.length} specialist models that each addressed part of the user's request. Your job is to merge them into exactly ONE unified response.
-
-ABSOLUTE RULES — violations will be treated as synthesis failure:
-1. The output MUST contain each numbered section or topic AT MOST ONCE. If two specialists answered the same section, keep the stronger answer and discard the weaker. NEVER output the same section header twice.
-2. Unify the voice — the final output must read as one coherent document written by one author, not a collection of pastes from different sources.
-3. Do not add new content. Only synthesize what the specialists produced.
-4. Do not include ANY meta-commentary about the synthesis process, the specialists, or the steps.
-5. If a specialist produced content that is redundant with another specialist's output, OMIT the redundant version entirely.
-6. Output ONLY the final merged response — nothing else.
-
-${modeDirective}
+      content: `${modeDirective}
 
 ORIGINAL_USER_REQUEST:
 ${lastUserRaw}
 
---- SPECIALIST_OUTPUTS ---
-${combined.slice(0, 100_000)}`,
+CONVERSATION_CONTEXT:
+${historySnippet || '(single-turn)'}
+
+--- SPECIALIST_WORKER_OUTPUTS (${outputs.length} workers) ---
+${combined.slice(0, 100_000)}
+
+Synthesize the above into a single, coherent Atlas-identity response. Do not expose worker identities or meta-commentary about the synthesis process.`,
     },
   ];
 
   let synth = '';
-  const { fullText: finalText, model: synthModel } = await streamRegistryModel({
-    entry: synthEntry,
-    messages: synthMessages,
-    onDelta: (t) => {
-      synth += t;
-      onDelta(t);
-    },
-    signal,
-    timeoutMs,
-  });
+  // Use registry-based streaming if the Overseer model has a registry entry;
+  // otherwise fall back to direct OpenAI Chat Completions API.
+  if (overseerEntry) {
+    const { fullText: finalText, model: synthModel } = await streamRegistryModel({
+      entry: overseerEntry,
+      messages: overseerMessages,
+      onDelta: (t) => {
+        synth += t;
+        onDelta(t);
+      },
+      signal,
+      timeoutMs,
+    });
+    return {
+      fullText: finalText || synth,
+      surface: 'swarm',
+      model: `swarm→overseer:${synthModel}`,
+    };
+  }
 
-  return {
-    fullText: finalText || synth,
-    surface: 'swarm',
-    model: `swarm→${synthModel}`,
-  };
+  // Fallback: direct OpenAI API call for gpt-5.4 family models not yet in the registry
+  const openaiKey = env.openaiApiKey?.trim();
+  if (!openaiKey) {
+    // Last resort: fall back to default swarm model if OpenAI is unavailable
+    const fallbackEntry = getRegistryEntry(DEFAULT_SWARM_MODEL_ID)!;
+    const { fullText: finalText, model: synthModel } = await streamRegistryModel({
+      entry: fallbackEntry,
+      messages: overseerMessages,
+      onDelta: (t) => {
+        synth += t;
+        onDelta(t);
+      },
+      signal,
+      timeoutMs,
+    });
+    return {
+      fullText: finalText || synth,
+      surface: 'swarm',
+      model: `swarm→fallback:${synthModel}`,
+    };
+  }
+
+  const openaiBase = (env.openaiBaseUrl?.trim() || 'https://api.openai.com/v1').replace(/\/$/, '');
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs ?? 120_000);
+  try {
+    const res = await fetch(`${openaiBase}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${openaiKey}`,
+      },
+      body: JSON.stringify({
+        model: overseerModelId,
+        temperature: 0.25,
+        stream: true,
+        messages: overseerMessages.map((m) => ({ role: m.role, content: m.content })),
+      }),
+      signal: signal ?? controller.signal,
+    });
+
+    if (!res.ok || !res.body) {
+      throw new Error(`Overseer API error: ${res.status}`);
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() ?? '';
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const payload = line.slice(6).trim();
+        if (payload === '[DONE]') continue;
+        try {
+          const chunk = JSON.parse(payload) as { choices?: { delta?: { content?: string } }[] };
+          const text = chunk.choices?.[0]?.delta?.content;
+          if (text) {
+            synth += text;
+            onDelta(text);
+          }
+        } catch { /* skip malformed chunk */ }
+      }
+    }
+    return {
+      fullText: synth,
+      surface: 'swarm',
+      model: `swarm→overseer:${overseerModelId}`,
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 const SHARED_LANE_RULES = `Shared rules: If VERIFIED_LIVE_WEB_CONTEXT is present, cite only URLs from that block when referencing the web. If absent, reason from the conversation and state limits clearly. Output a structured hypothesis (bullets/sections OK). A parallel model lane runs independently — be thorough.`;
@@ -656,6 +782,8 @@ export async function executeGroqGeminiDualConsensus(input: {
   onSwarmTicker?: SwarmTickerHandler | undefined;
   signal?: AbortSignal;
   timeoutMs?: number;
+  /** User subscription tier — determines Overseer model for final synthesis. */
+  userTier?: string;
 }): Promise<{ fullText: string; surface: string; model: string }> {
   const { userId, clientMessages, evidenceBlock, onDelta, onSwarmTicker, signal, timeoutMs } = input;
   const budget = timeoutMs ?? 180_000;

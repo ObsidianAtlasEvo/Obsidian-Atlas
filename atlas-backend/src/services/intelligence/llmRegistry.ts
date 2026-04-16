@@ -13,15 +13,40 @@ export type LlmInferenceBackend =
   | 'openai_responses'   // [Phase 2] OpenAI Responses API (/v1/responses)
   | 'openai_embeddings'; // [Phase 2] OpenAI Embeddings API (/v1/embeddings)
 
+export type LlmModelStatus = 'active' | 'DEPRECATED' | 'REMOVED' | 'BLOCKED';
+
 export interface LlmRegistryEntry {
   /** Canonical id — Groq must emit one of these (aliases normalized server-side). */
   id: string;
-  specialty: string;
-  context: string;
-  tier: LlmCostTier;
-  backend: LlmInferenceBackend;
-  /** Provider-specific model identifier (Groq model name, Gemini id, OpenRouter slug, Ollama tag). */
+  /** Provider-specific model identifier (Groq model name, Gemini id, OpenRouter slug, Ollama tag, OpenAI model). */
   apiModel: string;
+
+  // --- Legacy fields (existing Groq/Gemini/OpenRouter/Ollama entries) ---
+  specialty?: string;
+  context?: string;
+  tier?: LlmCostTier;
+  backend?: LlmInferenceBackend;
+
+  // --- GPT-5.4+ fields ---
+  provider?: string;
+  contextWindow?: number;
+  maxOutputTokens?: number;
+  pricingInputPerMTok?: number;
+  pricingCachedPerMTok?: number | null;
+  pricingOutputPerMTok?: number;
+  longContextThreshold?: number;
+  longContextPricingInputPerMTok?: number;
+  longContextPricingOutputPerMTok?: number;
+  role?: string[];
+  gated?: boolean;
+  status?: LlmModelStatus;
+  supportsStructuredOutput?: boolean;
+  knowledgeCutoff?: string;
+  notes?: string;
+
+  // --- Deprecation / removal fields ---
+  primaryPath?: boolean;
+  allowedUse?: string;
 }
 
 export const LLM_REGISTRY: readonly LlmRegistryEntry[] = [
@@ -56,6 +81,9 @@ export const LLM_REGISTRY: readonly LlmRegistryEntry[] = [
     tier: 'premium',
     backend: 'openrouter',
     apiModel: 'openai/gpt-4o',
+    status: 'DEPRECATED',
+    primaryPath: false,
+    allowedUse: 'compatibility-fallback-only',
   },
   {
     id: 'local-ollama',
@@ -72,6 +100,93 @@ export const LLM_REGISTRY: readonly LlmRegistryEntry[] = [
     tier: 'free',
     backend: 'gemini_sdk',
     apiModel: 'gemini-3.1-flash-lite-preview',
+  },
+
+  // ── GPT-5.4 family ──────────────────────────────────────────────────
+  {
+    id: 'gpt-5.4-nano',
+    provider: 'openai',
+    apiModel: 'gpt-5.4-nano',
+    contextWindow: 400_000,
+    maxOutputTokens: 128_000,
+    pricingInputPerMTok: 0.20,
+    pricingCachedPerMTok: 0.02,
+    pricingOutputPerMTok: 1.25,
+    role: ['intake-router', 'worker', 'classifier', 'overseer-free'],
+    gated: false,
+    status: 'active',
+    supportsStructuredOutput: true,
+    knowledgeCutoff: '2025-08-31',
+  },
+  {
+    id: 'gpt-5.4-mini',
+    provider: 'openai',
+    apiModel: 'gpt-5.4-mini',
+    contextWindow: 400_000,
+    maxOutputTokens: 128_000,
+    pricingInputPerMTok: 0.75,
+    pricingCachedPerMTok: 0.075,
+    pricingOutputPerMTok: 4.50,
+    role: ['worker', 'specialist', 'intermediate-synthesis'],
+    gated: false,
+    status: 'active',
+    supportsStructuredOutput: true,
+    knowledgeCutoff: '2025-08-31',
+  },
+  {
+    id: 'gpt-5.4',
+    provider: 'openai',
+    apiModel: 'gpt-5.4',
+    contextWindow: 1_050_000,
+    maxOutputTokens: 128_000,
+    pricingInputPerMTok: 2.50,
+    pricingCachedPerMTok: 0.25,
+    pricingOutputPerMTok: 15.00,
+    longContextThreshold: 272_000,
+    longContextPricingInputPerMTok: 5.00,
+    longContextPricingOutputPerMTok: 22.50,
+    role: ['overseer', 'worker'],
+    gated: false,
+    status: 'active',
+    supportsStructuredOutput: true,
+    knowledgeCutoff: '2025-08-31',
+  },
+  {
+    id: 'gpt-5.4-pro',
+    provider: 'openai',
+    apiModel: 'gpt-5.4-pro',
+    contextWindow: 1_050_000,
+    maxOutputTokens: 128_000,
+    pricingInputPerMTok: 30.00,
+    pricingCachedPerMTok: null,
+    pricingOutputPerMTok: 180.00,
+    longContextThreshold: 272_000,
+    longContextPricingInputPerMTok: 60.00,
+    longContextPricingOutputPerMTok: 270.00,
+    role: ['hard-arbitration'],
+    gated: true,   // requires routeDecision.requireProAudit === true
+    status: 'active',
+    supportsStructuredOutput: false,  // confirmed: gpt-5.4-pro does not support structured outputs
+    knowledgeCutoff: '2025-08-31',
+    notes: 'No structured outputs. Slowest model — use background mode for long requests. Parse arbitration output as free-form text.',
+  },
+
+  // ── Legacy stubs (not in active routing) ─────────────────────────────
+  {
+    id: 'gpt-4o-mini',
+    provider: 'openai',
+    apiModel: 'gpt-4o-mini',
+    status: 'DEPRECATED',
+    primaryPath: false,
+    allowedUse: 'last-resort-fallback-only',
+  },
+  {
+    id: 'gpt-3.5-turbo',
+    provider: 'openai',
+    apiModel: 'gpt-3.5-turbo',
+    status: 'REMOVED',
+    primaryPath: false,
+    allowedUse: 'none',
   },
 ] as const;
 
@@ -152,10 +267,36 @@ const MODEL_REGISTRY_TO_SWARM: Record<string, RegistryModelId | null> = {
   'google/gemini-3.1-flash-lite-preview': 'gemini-3.1-flash-lite-preview',
   // omnirouter = "let Atlas decide" — no swarm model override
   'omnirouter':                 null,
+  // GPT-5.4 family
+  'openai/gpt-5.4-nano':       'gpt-5.4-nano',
+  'openai/gpt-5.4-mini':       'gpt-5.4-mini',
+  'openai/gpt-5.4':            'gpt-5.4',
+  'openai/gpt-5.4-pro':        null,  // arbitration only, not a swarm strategy
 };
 
 export function mapModelRegistryIdToSwarm(modelRegistryId: string): RegistryModelId | null | undefined {
   if (!(modelRegistryId in MODEL_REGISTRY_TO_SWARM)) return undefined;
   return MODEL_REGISTRY_TO_SWARM[modelRegistryId];
+}
+
+/**
+ * Validate that a registry entry may be dispatched in the current routing context.
+ * Throws on REMOVED/BLOCKED entries and on gated entries without pro-audit authorization.
+ */
+export function assertEntryUsable(
+  entry: LlmRegistryEntry,
+  routeDecision?: { requireProAudit?: boolean }
+): void {
+  if (entry.status === 'REMOVED') {
+    throw new Error(`Model '${entry.id}' is REMOVED and must not be used in any Atlas path.`);
+  }
+  if ((entry.status as string) === 'DEPRECATED' && entry.allowedUse === 'none') {
+    throw new Error(`Model '${entry.id}' is REMOVED. Do not use.`);
+  }
+  if (entry.gated && routeDecision?.requireProAudit !== true) {
+    throw new Error(
+      `Model '${entry.id}' is gated and may only be dispatched when routeDecision.requireProAudit === true.`
+    );
+  }
 }
 
