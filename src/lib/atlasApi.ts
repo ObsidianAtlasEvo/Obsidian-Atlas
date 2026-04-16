@@ -60,6 +60,91 @@ export function atlasAuthUrl(path: string): string {
   return p;
 }
 
+// ---------------------------------------------------------------------------
+// User preferences API
+// ---------------------------------------------------------------------------
+
+export interface UserPreferences {
+  preferredModel: string | null;
+  availableModels: string[];
+  tier: string;
+}
+
+export async function getUserPreferences(): Promise<UserPreferences | null> {
+  try {
+    const res = await fetch(atlasApiUrl('/api/user/preferences'), {
+      credentials: 'include',
+    });
+    if (!res.ok) return null;
+    return (await res.json()) as UserPreferences;
+  } catch {
+    return null;
+  }
+}
+
+export async function patchUserPreferences(
+  preferredModel: string | null,
+): Promise<{ preferredModel: string | null } | null> {
+  try {
+    const res = await fetch(atlasApiUrl('/api/user/preferences'), {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ preferredModel }),
+    });
+    if (!res.ok) return null;
+    return (await res.json()) as { preferredModel: string | null };
+  } catch {
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Model display names and tier metadata
+// ---------------------------------------------------------------------------
+
+/** Map from model registry ID to human-readable display name. */
+export const MODEL_DISPLAY_NAMES: Record<string, string> = {
+  'gpt-5.4-nano':               'GPT-5.4 Nano',
+  'groq:llama-3.3-70b-versatile': 'Llama 3 (Groq)',
+  'gemini:gemini-2.5-flash':    'Gemini Flash',
+  'omnirouter':                  'OmniRouter',
+  'gpt-5.4-mini':               'GPT-5.4 Mini',
+  'gemini-pro':                  'Gemini Pro',
+  'gpt-5.4':                    'GPT-5.4',
+  'gpt-5.4-pro':                'GPT-5.4 Pro',
+  'claude-opus':                 'Claude Opus',
+  'claude-sonnet':               'Claude Sonnet',
+};
+
+/** Which tier first unlocks each model (for lock icon display). */
+export const MODEL_MIN_TIER: Record<string, string> = {
+  'groq:llama-3.3-70b-versatile': 'free',
+  'gemini:gemini-2.5-flash':      'free',
+  'omnirouter':                    'free',
+  'gpt-5.4-nano':                 'free',
+  'gpt-5.4-mini':                 'core',
+  'gemini-pro':                    'core',
+  'gpt-5.4':                      'sovereign',
+  'gpt-5.4-pro':                  'sovereign',
+  'claude-opus':                   'sovereign',
+  'claude-sonnet':                 'sovereign',
+};
+
+/** All known models in display order. */
+export const ALL_MODELS_ORDERED: string[] = [
+  'gpt-5.4-nano',
+  'groq:llama-3.3-70b-versatile',
+  'gemini:gemini-2.5-flash',
+  'omnirouter',
+  'gpt-5.4-mini',
+  'gemini-pro',
+  'gpt-5.4',
+  'gpt-5.4-pro',
+  'claude-opus',
+  'claude-sonnet',
+];
+
 const TRANSIENT_USER_MESSAGE = 'Atlas is momentarily overloaded. Please try again in a few seconds.';
 
 /** Replace raw API error strings with a clean user-facing message. */
