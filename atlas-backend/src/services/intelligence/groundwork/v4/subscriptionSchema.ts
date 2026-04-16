@@ -126,9 +126,10 @@ export const TIER_MODEL_ACCESS: Record<SubscriptionTier, TierModelAccess> = {
     modelIds: [
       'groq/llama-3.1-70b-versatile',
       'google/gemini-2.5-flash',
+      'google/gemini-3.1-flash-lite-preview',
       'omnirouter',
     ],
-    description: 'Groq Llama 3.1 70B, Gemini 2.5 Flash, OmniRouter. No OpenAI access.',
+    description: 'Groq Llama 3.1 70B, Gemini 2.5 Flash, Gemini 3.1 Flash Lite (Overseer), OmniRouter. No OpenAI access.',
   },
   core: {
     modelIds: [

@@ -362,6 +362,7 @@ export function registerOmniStreamRoutes(app: FastifyInstance): void {
             policyProfile,
             mirrorforge,
             preferredModel: fallbackSwarmHint ?? undefined,
+            userTier: stripeTier ?? 'free',
           });
           // Apply preferred model to fallback plan (mapped to swarm registry ID)
           if (
@@ -452,6 +453,7 @@ export function registerOmniStreamRoutes(app: FastifyInstance): void {
             policyProfile,
             mirrorforge,
             preferredModel: mainSwarmHint ?? undefined,
+            userTier: stripeTier ?? 'free',
           });
 
           // Apply user's preferred model if set and the plan uses a direct/delegate strategy

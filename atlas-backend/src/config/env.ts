@@ -223,6 +223,11 @@ function parseCorsOrigins(raw: string | undefined): string[] {
     .filter(Boolean);
 }
 
+// ── Gemini Free-tier Overseer constants ──────────────────────────────────────
+export const GEMINI_MODEL_OVERSEER_FREE = 'gemini-3.1-flash-lite-preview' as const;
+export const OPENAI_MODEL_NANO = 'gpt-5.4-nano' as const;
+export const GEMINI_OVERSEER_FALLBACK = OPENAI_MODEL_NANO;
+
 function parseModelPool(raw: string | undefined): string[] {
   if (!raw?.trim()) return [];
   return raw
@@ -277,6 +282,8 @@ export const env = {
   groqDelegateModel: raw.GROQ_DELEGATE_MODEL?.trim() || undefined,
   geminiApiKey: raw.GEMINI_API_KEY?.trim() || undefined,
   geminiModel: raw.GEMINI_MODEL?.trim() || 'gemini-2.5-flash',
+  geminiOverseerModelFree: process.env['GEMINI_OVERSEER_MODEL_FREE'] ?? GEMINI_MODEL_OVERSEER_FREE,
+  geminiOverseerFallback: process.env['GEMINI_OVERSEER_FALLBACK'] ?? GEMINI_OVERSEER_FALLBACK,
   omniRouterTimeoutMs: raw.OMNI_ROUTER_TIMEOUT_MS ?? 12_000,
   /** Local Ollama stream budget for sovereign lane (was 180s; large prompts + slow GPUs need more). */
   omniLocalTimeoutMs: raw.OMNI_LOCAL_TIMEOUT_MS ?? 600_000,

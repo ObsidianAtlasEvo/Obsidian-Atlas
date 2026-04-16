@@ -1,4 +1,5 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import { GoogleGenAI } from '@google/genai';
 import { env } from '../../config/env.js';
 import type { LlmRegistryEntry } from './llmRegistry.js';
 
@@ -770,4 +771,115 @@ export async function streamGroqChat(params: {
     signal: params.signal,
     timeoutMs: params.timeoutMs,
   });
+}
+
+// ---------------------------------------------------------------------------
+// Gemini Free-tier Overseer (@google/genai SDK — new; replaces legacy
+// @google/generative-ai for the Overseer path only)
+// ---------------------------------------------------------------------------
+
+/** Lazy singleton — only allocated when a free-tier overseer call is made. */
+let _geminiGenAiClient: InstanceType<typeof GoogleGenAI> | null = null;
+function getGeminiGenAiClient(): InstanceType<typeof GoogleGenAI> {
+  if (!_geminiGenAiClient) {
+    const key = env.geminiApiKey?.trim();
+    if (!key) throw new Error('GEMINI_API_KEY not set — cannot use Gemini Free Overseer');
+    _geminiGenAiClient = new GoogleGenAI({ apiKey: key });
+  }
+  return _geminiGenAiClient;
+}
+
+/** Convert @google/genai async-iterable stream to a web ReadableStream<Uint8Array>. */
+function geminiStreamToReadableStream(
+  geminiStream: AsyncIterable<{ text?: string }>,
+): ReadableStream<Uint8Array> {
+  const encoder = new TextEncoder();
+  return new ReadableStream({
+    async start(controller) {
+      try {
+        for await (const chunk of geminiStream) {
+          if (chunk.text) {
+            controller.enqueue(encoder.encode(chunk.text));
+          }
+        }
+        controller.close();
+      } catch (err) {
+        controller.error(err);
+      }
+    },
+  });
+}
+
+/**
+ * Stream the Gemini Free-tier Overseer (primary path).
+ * Uses the new @google/genai SDK with `generateContentStream`.
+ */
+export async function streamGeminiOverseerFree(params: {
+  systemPrompt: string;
+  userContent: string;
+  temperature?: number;
+  onDelta: StreamDeltaHandler;
+  timeoutMs?: number;
+}): Promise<{ fullText: string; model: string }> {
+  const client = getGeminiGenAiClient();
+  const model = env.geminiOverseerModelFree;
+
+  const controller = new AbortController();
+  const t = params.timeoutMs ? setTimeout(() => controller.abort(), params.timeoutMs) : undefined;
+  let full = '';
+
+  try {
+    const stream = await client.models.generateContentStream({
+      model,
+      contents: params.userContent,
+      config: {
+        systemInstruction: params.systemPrompt,
+        temperature: params.temperature ?? 0.08,
+      },
+    });
+
+    for await (const chunk of stream) {
+      const piece = typeof chunk.text === 'string' ? chunk.text : '';
+      if (piece) {
+        full += piece;
+        params.onDelta(piece);
+      }
+    }
+    return { fullText: full.trim(), model };
+  } finally {
+    if (t) clearTimeout(t);
+  }
+}
+
+/**
+ * Non-streaming Gemini Free-tier Overseer completion (for routing JSON).
+ */
+export async function completeGeminiOverseerFree(params: {
+  systemPrompt: string;
+  userContent: string;
+  temperature?: number;
+  timeoutMs?: number;
+}): Promise<{ text: string; model: string }> {
+  const client = getGeminiGenAiClient();
+  const model = env.geminiOverseerModelFree;
+
+  const controller = new AbortController();
+  const t = params.timeoutMs ? setTimeout(() => controller.abort(), params.timeoutMs) : undefined;
+
+  try {
+    const response = await client.models.generateContent({
+      model,
+      contents: params.userContent,
+      config: {
+        systemInstruction: params.systemPrompt,
+        temperature: params.temperature ?? 0.08,
+        responseMimeType: 'application/json',
+      },
+    });
+
+    const text = typeof response.text === 'string' ? response.text : '';
+    return { text: text.trim(), model };
+  } finally {
+    if (t) clearTimeout(t);
+  }
 }
