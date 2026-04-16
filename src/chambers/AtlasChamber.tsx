@@ -264,6 +264,14 @@ async function streamOmniChat(
   if (!response.ok) {
     if (response.status === 401 || response.status === 403) {
       callbacks.onError('Authentication required. Please sign in to continue.', 'AUTH');
+    } else if (response.status === 429) {
+      // Try to parse quota error vs rate limit
+      const body = await response.json().catch(() => ({})) as { error?: string; message?: string };
+      if (body.error === 'cognitive_quota_reached') {
+        callbacks.onError('QUOTA_EXCEEDED', 'QUOTA');
+      } else {
+        callbacks.onError('Atlas is momentarily overloaded. Please try again in a few seconds.', 'RATE_LIMIT');
+      }
     } else {
       callbacks.onError(`Server error ${response.status}`, 'SERVER_ERROR');
     }
@@ -365,6 +373,7 @@ export default function AtlasChamber() {
   const [inputValue, setInputValue] = useState('');
   const [thinkingState, setThinkingState] = useState<ThinkingState>(null);
   const [isStreaming, setIsStreaming] = useState(false);
+  const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const thinkingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -541,6 +550,14 @@ export default function AtlasChamber() {
             return;
           }
 
+          if (code === 'QUOTA') {
+            setShowUpgradeModal(true);
+            // Still set the message as failed so the chat state is clean
+            finalizeMessage(assistantMsgId, { requestStatus: 'failed', error: '', content: '' });
+            if (convId) store.updateConversationMessage(convId, assistantMsgId, { requestStatus: 'failed', error: '' });
+            return;
+          }
+
           request.transition('failed');
           // If tokens already streamed, preserve accumulated content instead
           // of wiping it with an error.  The user was reading a partial
@@ -700,6 +717,76 @@ export default function AtlasChamber() {
           </div>
         )}
       </div>
+
+      {showUpgradeModal && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 9999,
+          background: 'rgba(0,0,0,0.75)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          backdropFilter: 'blur(4px)',
+        }}>
+          <div style={{
+            background: 'var(--atlas-void-surface, #0f1117)',
+            border: '1px solid rgba(201,162,39,0.3)',
+            borderRadius: '12px',
+            padding: '32px',
+            maxWidth: '420px',
+            width: '90%',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '16px',
+            boxShadow: '0 0 40px rgba(201,162,39,0.1)',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <span style={{ fontSize: '1.5rem' }}>⚡</span>
+              <h2 style={{ margin: 0, color: 'rgba(201,162,39,0.9)', fontSize: '1.1rem', fontWeight: 600 }}>
+                Daily Limit Reached
+              </h2>
+            </div>
+            <p style={{ margin: 0, color: 'rgba(226,232,240,0.7)', fontSize: '0.875rem', lineHeight: 1.6 }}>
+              You've used your 120 free chats for today. Your limit resets at midnight UTC.
+            </p>
+            <p style={{ margin: 0, color: 'rgba(226,232,240,0.5)', fontSize: '0.8rem', lineHeight: 1.6 }}>
+              Upgrade to <strong style={{ color: 'rgba(201,162,39,0.9)' }}>Atlas Core</strong> for 500 chats/day with GPT-5.4 mini access, or <strong style={{ color: 'rgba(201,162,39,0.9)' }}>Atlas Sovereign</strong> for unlimited chats and full model access.
+            </p>
+            <div style={{ display: 'flex', gap: '10px', marginTop: '4px' }}>
+              <button
+                onClick={() => {
+                  setShowUpgradeModal(false);
+                  window.location.href = '/billing';
+                }}
+                style={{
+                  flex: 1,
+                  padding: '10px 16px',
+                  background: 'rgba(201,162,39,0.15)',
+                  border: '1px solid rgba(201,162,39,0.4)',
+                  borderRadius: '8px',
+                  color: 'rgba(201,162,39,0.9)',
+                  fontSize: '0.875rem',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                }}
+              >
+                Upgrade Now
+              </button>
+              <button
+                onClick={() => setShowUpgradeModal(false)}
+                style={{
+                  padding: '10px 16px',
+                  background: 'transparent',
+                  border: '1px solid rgba(226,232,240,0.15)',
+                  borderRadius: '8px',
+                  color: 'rgba(226,232,240,0.4)',
+                  fontSize: '0.875rem',
+                  cursor: 'pointer',
+                }}
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

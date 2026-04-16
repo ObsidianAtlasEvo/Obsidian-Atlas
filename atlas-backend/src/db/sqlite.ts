@@ -3,6 +3,7 @@ import Database from 'better-sqlite3';
 import fs from 'node:fs';
 import path from 'node:path';
 import { env } from '../config/env.js';
+import { runMigration as runBillingMigration } from '../services/billing/subscriptionSchema.js';
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS memories (
@@ -918,11 +919,38 @@ export function initSqlite(): Database.Database {
   database.exec(GAP_LEDGER_TABLES);
   database.exec(CHANGE_CONTROL_TABLE);
   database.exec(SUBSTRATE_UNIFICATION);
+  migrateBillingSubscriptionSchema(database);
+  runBillingMigration(database);
   migratePolicyProfileColumns(database);
   migrateSectionVIIIContinuity(database);
   migrateArchivedAtIndexes(database);
   _db = database;
   return _db;
+}
+
+/**
+ * Reconcile the user_subscriptions table from the old snake_case schema
+ * (Phase 3 initial commit) to the canonical camelCase schema used by
+ * subscriptionSchema.ts / stripeService.ts. Idempotent — skips if already
+ * migrated or table does not exist yet.
+ */
+function migrateBillingSubscriptionSchema(database: Database.Database): void {
+  const tableExists = database
+    .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='user_subscriptions'`)
+    .get() as { name: string } | undefined;
+  if (!tableExists) return; // runBillingMigration will create it fresh
+
+  const cols = database.prepare(`PRAGMA table_info(user_subscriptions)`).all() as { name: string }[];
+  const colNames = new Set(cols.map((c) => c.name));
+
+  // If the table already has camelCase columns, nothing to do
+  if (colNames.has('userId')) return;
+
+  // Old schema detected (snake_case: user_id, stripe_customer_id, etc.)
+  // Drop and let runBillingMigration recreate with canonical camelCase schema.
+  // Safe because this table was only added in the Phase 3 groundwork commit
+  // and has no production data yet.
+  database.exec(`DROP TABLE IF EXISTS user_subscriptions`);
 }
 
 /** Add Chrysalis telemetry columns on existing DBs (idempotent). */

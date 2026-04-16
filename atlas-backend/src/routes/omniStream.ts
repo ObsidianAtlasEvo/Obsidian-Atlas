@@ -10,6 +10,9 @@ import { attachAtlasSession } from '../services/auth/authProvider.js';
 import { getVerifiedUserEmail } from '../services/auth/requestAuth.js';
 import { getPolicyProfile } from '../services/evolution/policyStore.js';
 import { CognitiveQuotaError, assertChatQuotaAllows, recordChatTokenUsage } from '../services/governance/quotaStore.js';
+import type { SubscriptionTier } from '../services/intelligence/groundwork/v4/subscriptionSchema.js';
+import { getSubscriptionStatus } from '../services/intelligence/groundwork/v4/stripeService.js';
+import { getDb } from '../db/sqlite.js';
 import { applyOverseerLens } from '../services/governance/overseerService.js';
 import { enqueueGpuTask, newGpuRequestId } from '../services/inference/queueManager.js';
 import { runMaximumClarityTrack } from '../services/intelligence/maximumClarityPipeline.js';
@@ -179,8 +182,16 @@ export function registerOmniStreamRoutes(app: FastifyInstance): void {
     await attachAtlasSession(request);
     const verifiedEmail = getVerifiedUserEmail(request);
 
+    let stripeTier: SubscriptionTier | undefined;
     try {
-      assertChatQuotaAllows(userId);
+      const subStatus = await getSubscriptionStatus(userId, getDb(), verifiedEmail ?? undefined);
+      stripeTier = subStatus?.tier ?? undefined;
+    } catch {
+      // non-fatal — fall back to flat quota
+    }
+
+    try {
+      assertChatQuotaAllows(userId, stripeTier);
     } catch (e) {
       if (e instanceof CognitiveQuotaError) {
         return reply.status(429).send({ error: e.code, message: e.message });

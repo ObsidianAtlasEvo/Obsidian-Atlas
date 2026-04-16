@@ -1,5 +1,12 @@
 import { getDb } from '../../db/sqlite.js';
 import { env } from '../../config/env.js';
+import type { SubscriptionTier } from '../intelligence/groundwork/v4/subscriptionSchema.js';
+
+const TIER_CHAT_LIMIT: Record<NonNullable<SubscriptionTier>, number | null> = {
+  free: 120,
+  core: 500,
+  sovereign: null, // unlimited
+};
 
 export class CognitiveQuotaError extends Error {
   readonly code = 'cognitive_quota_reached' as const;
@@ -65,14 +72,29 @@ export function getOrCreateDailyQuotaRow(userId: string): QuotaSnapshot {
 
 /**
  * Throws CognitiveQuotaError if the user would exceed daily chat/token limits.
+ * When a SubscriptionTier is provided the chat limit is resolved from the
+ * tier→limit map; otherwise it falls back to the flat env limit.
  */
-export function assertChatQuotaAllows(userId: string): QuotaSnapshot {
+export function assertChatQuotaAllows(
+  userId: string,
+  tier?: SubscriptionTier
+): QuotaSnapshot {
+  // Sovereign tier = unlimited
+  if (tier === null || tier === 'sovereign') return getOrCreateDailyQuotaRow(userId);
+
+  const limit =
+    tier !== undefined && tier in TIER_CHAT_LIMIT
+      ? TIER_CHAT_LIMIT[tier]
+      : env.quotaDailyChatLimit ?? 120;
+
+  if (limit === null) return getOrCreateDailyQuotaRow(userId); // belt-and-suspenders for future tiers
+
   const s = getOrCreateDailyQuotaRow(userId);
   const totalTokens = s.promptTokens + s.completionTokens;
 
-  if (s.chatRequests >= env.quotaDailyChatLimit) {
+  if (s.chatRequests >= limit) {
     throw new CognitiveQuotaError(
-      `Daily chat request limit reached (${env.quotaDailyChatLimit}). Resets at UTC midnight.`
+      `Daily chat request limit reached (${limit}). Resets at UTC midnight.`
     );
   }
   if (totalTokens >= env.quotaDailyTokenLimit) {
