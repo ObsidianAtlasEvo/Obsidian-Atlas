@@ -4,10 +4,52 @@ import type { LlmRegistryEntry } from './llmRegistry.js';
 
 export type UniversalMessage = { role: 'system' | 'user' | 'assistant'; content: string };
 
+/** Message type that supports both string and array content (multi-modal). */
+export type ChatMessage = {
+  role: 'system' | 'user' | 'assistant';
+  content: string | Array<{ type: string; text?: string; [key: string]: unknown }>;
+};
+
 export type StreamDeltaHandler = (textDelta: string) => void;
 
 /** User-facing message when every model in the fallback chain has failed. */
 export const TRANSIENT_USER_MESSAGE = 'Atlas is momentarily overloaded. Please try again in a few seconds.';
+
+// ─── Overseer system prompt ─────────────────────────────────────────────────
+
+export const OVERSEER_SYSTEM_PROMPT = `You are Atlas — a sovereign intelligence layer operating as the final synthesis and identity-enforcement lens.
+
+ROLE:
+You receive the outputs of multiple specialist worker models, the user's evolution profile, memory context, and tool outputs. Your task is to synthesize these into a single, coherent, Atlas-identity response.
+
+IDENTITY ENFORCEMENT:
+- Apply Atlas doctrine to every response
+- Enforce truth constraints — never speculate as fact
+- Apply the user's evolution context and preferences
+- Resolve contradictions between worker outputs using doctrine as the tiebreaker
+
+OUTPUT:
+- Produce the final user-facing response in Atlas voice
+- If a policy conflict exists that cannot be resolved by synthesis, emit requireProAudit: true and describe the conflict. Do not resolve it yourself.
+- Never expose raw worker outputs to the user
+- Never break Atlas identity to defer to a model provider's style
+
+WORKERS:
+The inputs you receive come from specialist worker models. They are raw material, not final answers.`;
+
+// ─── OpenAI Responses API types ─────────────────────────────────────────────
+
+export interface OpenAIResponsesInput {
+  messages: Array<{ role: string; content: string }>;
+  systemPrompt?: string;
+}
+
+export interface OpenAIResponsesOptions {
+  model: string;
+  stream: boolean;
+  store: boolean;
+  responseFormat?: { type: string };
+}
 
 /** Detect Google Gemini transient capacity / rate-limit errors.
  *
@@ -770,4 +812,241 @@ export async function streamGroqChat(params: {
     signal: params.signal,
     timeoutMs: params.timeoutMs,
   });
+}
+
+// ─── GPT-5.4 Responses API path ────────────────────────────────────────────
+
+/**
+ * Hard gate: gpt-5.4-pro does not support structured outputs.
+ * Call this at the top of any function that builds an OpenAI API call body.
+ */
+export function assertNoStructuredOutput(
+  modelId: string,
+  options?: { responseFormat?: { type: string } },
+): void {
+  if (modelId === 'gpt-5.4-pro' && options?.responseFormat?.type === 'json_schema') {
+    throw new Error(
+      'gpt-5.4-pro does not support structured outputs. Remove response_format from this call.',
+    );
+  }
+}
+
+/**
+ * Invoke the OpenAI Responses API (/v1/responses).
+ *
+ * Uses the existing resolveOpenAiAuth() credentials — does NOT create a new SDK instance.
+ * store: false is enforced on ALL calls — Atlas manages its own memory layer.
+ *
+ * When stream=true, returns a Response object (caller reads SSE from response.body).
+ * When stream=false, returns the parsed JSON response body.
+ */
+export async function invokeOpenAIResponses(
+  input: OpenAIResponsesInput,
+  options: OpenAIResponsesOptions,
+): Promise<Response | object> {
+  const auth = resolveOpenAiAuth();
+  if (!auth) throw new Error('OpenAI credentials not configured for Responses API');
+
+  // Hard gate: gpt-5.4-pro cannot use structured outputs
+  assertNoStructuredOutput(options.model, options);
+
+  const body: Record<string, unknown> = {
+    model: options.model,
+    input: input.messages,
+    store: false, // critical: never let OpenAI store conversation history
+    stream: options.stream,
+  };
+
+  if (input.systemPrompt) {
+    body.instructions = input.systemPrompt;
+  }
+
+  const res = await fetch(`${auth.base}/responses`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${auth.apiKey}`,
+      ...(options.stream ? { Accept: 'text/event-stream' } : {}),
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(
+      `OpenAI Responses API failed (${res.status}): ${errText.slice(0, 240)}`,
+    );
+  }
+
+  if (options.stream) {
+    return res;
+  }
+
+  return (await res.json()) as object;
+}
+
+// ─── Overseer model resolution ──────────────────────────────────────────────
+
+/**
+ * Resolve the Overseer model based on user tier (Option 2: tier-gated).
+ * Free tier uses gpt-5.4-nano; Core + Sovereign use gpt-5.4.
+ */
+export function resolveOverseerModel(tier: 'free' | 'core' | 'sovereign'): string {
+  if (tier === 'free') return 'gpt-5.4-nano';
+  return 'gpt-5.4';
+}
+
+/**
+ * Build the Overseer input from worker outputs, memory, evolution context, and history.
+ * All worker outputs must be collected BEFORE calling this.
+ */
+export function buildOverseerInput(params: {
+  userPrompt: string;
+  workerOutputs: string[];
+  memoryContext?: string;
+  evolutionContext?: string;
+  toolOutputs?: string[];
+  conversationHistory: ChatMessage[];
+}): OpenAIResponsesInput {
+  const parts: string[] = [];
+
+  // Conversation history (prior turns)
+  if (params.conversationHistory.length > 0) {
+    parts.push('=== CONVERSATION HISTORY ===');
+    for (const msg of params.conversationHistory) {
+      const content = typeof msg.content === 'string'
+        ? msg.content
+        : (msg.content as Array<{ type: string; text?: string }>)
+            .filter((p) => p.type === 'text')
+            .map((p) => p.text ?? '')
+            .join('\n');
+      parts.push(`[${msg.role}]: ${content}`);
+    }
+  }
+
+  // Memory context
+  if (params.memoryContext) {
+    parts.push('=== MEMORY CONTEXT ===');
+    parts.push(params.memoryContext);
+  }
+
+  // Evolution context
+  if (params.evolutionContext) {
+    parts.push('=== EVOLUTION CONTEXT ===');
+    parts.push(params.evolutionContext);
+  }
+
+  // Worker outputs
+  parts.push('=== WORKER OUTPUTS ===');
+  for (let i = 0; i < params.workerOutputs.length; i++) {
+    parts.push(`--- Worker ${i + 1} ---`);
+    parts.push(params.workerOutputs[i]!);
+  }
+
+  // Tool outputs
+  if (params.toolOutputs && params.toolOutputs.length > 0) {
+    parts.push('=== TOOL OUTPUTS ===');
+    for (const output of params.toolOutputs) {
+      parts.push(output);
+    }
+  }
+
+  // User prompt (always last — most salient)
+  parts.push('=== USER PROMPT ===');
+  parts.push(params.userPrompt);
+
+  return {
+    messages: [{ role: 'user', content: parts.join('\n\n') }],
+    systemPrompt: OVERSEER_SYSTEM_PROMPT,
+  };
+}
+
+/**
+ * Invoke the Overseer using the collect-then-stream pattern.
+ *
+ * All worker outputs are collected BEFORE this call. The Overseer synthesizes
+ * them into a single Atlas-identity response and streams it back.
+ *
+ * Returns the raw Response (SSE stream) — caller reads from response.body.
+ */
+export async function invokeOverseer(params: {
+  userPrompt: string;
+  workerOutputs: string[];
+  memoryContext?: string;
+  evolutionContext?: string;
+  toolOutputs?: string[];
+  conversationHistory: ChatMessage[];
+  userTier: 'free' | 'core' | 'sovereign';
+}): Promise<Response> {
+  const overseerModel = resolveOverseerModel(params.userTier);
+  const overseerInput = buildOverseerInput(params);
+
+  const result = await invokeOpenAIResponses(overseerInput, {
+    model: overseerModel,
+    stream: true,
+    store: false,
+  });
+
+  // When streaming, invokeOpenAIResponses returns a Response object
+  return result as Response;
+}
+
+// ─── extractSystemContent ───────────────────────────────────────────────────
+
+/**
+ * Extract system message content, handling both string and array content parts.
+ * Returns empty string if no system message is found.
+ */
+export function extractSystemContent(messages: ChatMessage[]): string {
+  const sys = messages.find((m) => m.role === 'system');
+  if (!sys) return '';
+  if (typeof sys.content === 'string') return sys.content;
+  if (Array.isArray(sys.content)) {
+    return sys.content
+      .filter((p: { type: string; text?: string }) => p.type === 'text')
+      .map((p: { type: string; text?: string }) => p.text ?? '')
+      .join('\n');
+  }
+  return '';
+}
+
+// ─── extractJsonFromPlainText ───────────────────────────────────────────────
+
+/**
+ * Extract JSON from plain text output.
+ * 1. Tries fenced code blocks (```json ... ```)
+ * 2. Falls back to balanced bracket extraction (not greedy regex)
+ * 3. Returns null if no valid JSON found (does not throw)
+ */
+export function extractJsonFromPlainText(text: string): unknown | null {
+  // 1. Try fenced code block first
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fenced) {
+    try {
+      return JSON.parse(fenced[1]!.trim());
+    } catch {
+      // fenced block wasn't valid JSON — fall through
+    }
+  }
+
+  // 2. Balanced bracket extraction
+  const start = text.indexOf('{');
+  if (start === -1) return null;
+
+  let depth = 0;
+  for (let i = start; i < text.length; i++) {
+    if (text[i] === '{') depth++;
+    else if (text[i] === '}') {
+      depth--;
+      if (depth === 0) {
+        try {
+          return JSON.parse(text.slice(start, i + 1));
+        } catch {
+          // malformed JSON — continue scanning is unlikely to help
+        }
+      }
+    }
+  }
+
+  return null;
 }
