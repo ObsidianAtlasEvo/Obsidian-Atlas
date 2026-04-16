@@ -1226,5 +1226,5 @@ export const useAtlasStore = create<AtlasStore>()(
  * Safe to call multiple times (subsequent calls are no-ops after first auth event).
  */
 export function bootstrapAtlas(): void {
-  useAtlasStore.getState().hydrateAuth();
+  useAtlasStore.setState({ isAuthReady: true });
 }

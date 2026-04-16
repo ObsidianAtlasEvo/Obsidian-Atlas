@@ -49,7 +49,7 @@ function stateCookieOptions(): {
     path: '/',
     httpOnly: true,
     secure,
-    sameSite: secure ? 'strict' : 'lax',
+    sameSite: 'lax',
     maxAge: STATE_MAX_AGE_SEC,
   };
 }
