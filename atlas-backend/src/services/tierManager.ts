@@ -1,3 +1,23 @@
+/**
+ * ATLAS TIER MANAGER — ISOLATION BOUNDARY
+ * =========================================
+ * This file defines UserTier = 'free' | 'sovereign' | 'creator'
+ * and is used exclusively by:
+ *   - atlas-backend/src/routes/models.ts
+ *   - atlas-backend/src/routes/orchestrate.ts
+ *
+ * The v4 groundwork layer uses a SEPARATE taxonomy:
+ *   free | core | sovereign  (groundwork/v4/subscriptionSchema.ts)
+ *
+ * DO NOT consolidate these until Phase 3 billing is live and confirmed.
+ * Planned consolidation mapping:
+ *   groundwork 'free'      → tierManager 'free'
+ *   groundwork 'core'      → tierManager 'sovereign'
+ *   groundwork 'sovereign' → tierManager 'creator'
+ *
+ * See ISSUE-03 in final_audit_and_patch_handoff.txt for full context.
+ */
+
 // ── Tier Manager ──────────────────────────────────────────────────────────────
 // Controls which models and features are accessible to users based on their
 // subscription tier. This is the single source of truth for tier logic.

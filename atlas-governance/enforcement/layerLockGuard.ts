@@ -8,6 +8,7 @@
 
 import { PolicyLayer } from './precedenceConflictResolver.ts';
 import { AtlasEventBus } from '../infrastructure/eventBus.ts';
+import { SOVEREIGN_CREATOR_EMAIL } from '../../atlas-backend/src/services/intelligence/sovereignCreatorDirective.js';
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -18,8 +19,7 @@ export interface UnlockResult {
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
-/** The sole authority permitted to unlock protected layers. */
-const SOVEREIGN_CREATOR_EMAIL = 'crowleyrc62@gmail.com';
+/** The sole authority permitted to unlock protected layers. Imported from sovereignCreatorDirective. */
 
 // ── State ───────────────────────────────────────────────────────────────────
 

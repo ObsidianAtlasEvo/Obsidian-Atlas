@@ -88,6 +88,22 @@ const CLOUD_INFERENCE_REQUIRED: VarSpec[] = [
   },
 ];
 
+/**
+ * Required only when STRIPE_ENABLED=true (i.e. billing infrastructure is active).
+ */
+const BILLING_REQUIRED: VarSpec[] = [
+  {
+    name: 'STRIPE_SECRET_KEY',
+    description: 'Stripe secret key (required when STRIPE_ENABLED=true)',
+    requiredWhen: () => process.env.STRIPE_ENABLED === 'true',
+  },
+  {
+    name: 'STRIPE_WEBHOOK_SECRET',
+    description: 'Stripe webhook signing secret (required when STRIPE_ENABLED=true)',
+    requiredWhen: () => process.env.STRIPE_ENABLED === 'true',
+  },
+];
+
 // ── Safety checks ────────────────────────────────────────────────────────────
 
 /**
@@ -167,7 +183,20 @@ export function validateEnv(): void {
     }
   }
 
-  // ── 3. Dangerous dev values in production ─────────────────────────────────
+  // ── 3. Conditional billing vars ───────────────────────────────────────────
+  for (const spec of BILLING_REQUIRED) {
+    const applies = spec.requiredWhen?.() ?? true;
+    if (applies && isMissing(spec.name)) {
+      const line = `  MISSING  ${spec.name}\n           ${spec.description}`;
+      if (isProduction) {
+        errors.push(line);
+      } else {
+        warnings.push(line);
+      }
+    }
+  }
+
+  // ── 4. Dangerous dev values in production ─────────────────────────────────
   if (isProduction) {
     for (const spec of DANGEROUS_IN_PRODUCTION) {
       if (isSet(spec.name) && process.env[spec.name]?.trim() === spec.dangerousValue) {
@@ -176,7 +205,7 @@ export function validateEnv(): void {
     }
   }
 
-  // ── 4. Cloud inference sanity: at least one provider ──────────────────────
+  // ── 5. Cloud inference sanity: at least one provider ──────────────────────
   const disableOllama = (process.env.DISABLE_LOCAL_OLLAMA ?? 'true') === 'true';
   if (disableOllama) {
     const hasGroq = isSet('GROQ_API_KEY');

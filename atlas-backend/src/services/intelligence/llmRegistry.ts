@@ -5,7 +5,13 @@
 
 export type LlmCostTier = 'free' | 'premium';
 
-export type LlmInferenceBackend = 'groq' | 'gemini_sdk' | 'ollama' | 'openrouter';
+export type LlmInferenceBackend =
+  | 'groq'
+  | 'gemini_sdk'
+  | 'ollama'
+  | 'openrouter'
+  | 'openai_responses'   // [Phase 2] OpenAI Responses API (/v1/responses)
+  | 'openai_embeddings'; // [Phase 2] OpenAI Embeddings API (/v1/embeddings)
 
 export interface LlmRegistryEntry {
   /** Canonical id — Groq must emit one of these (aliases normalized server-side). */
@@ -114,3 +120,4 @@ export function getLlmRegistryJsonForPrompt(): string {
     0
   );
 }
+
