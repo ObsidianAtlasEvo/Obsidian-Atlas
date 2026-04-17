@@ -157,7 +157,7 @@ jobs:
 
           echo "[7/9] Running migrations..."
           MIGRATION_DIR="$DEPLOY_DIR/atlas-backend/migrations"
-          DB_PATH="$DEPLOY_DIR/atlas-backend/data/atlas.db"
+          DB_PATH="${SQLITE_PATH:-/var/data/atlas/atlas.db}"
           if [ -d "$MIGRATION_DIR" ]; then
             for migration in $(ls "$MIGRATION_DIR"/*.sql 2>/dev/null | sort); do
               echo "      Applying: $(basename $migration)"
@@ -188,7 +188,7 @@ jobs:
           # Start fresh from the compiled backend
           cd atlas-backend
           NODE_ENV=production $PM2_BIN start dist/index.js --name atlas-backend \
-            --node-args="--max-old-space-size=256" \
+            --node-args="--max-old-space-size=384" \
             --update-env
           cd ..
           $PM2_BIN save
@@ -213,17 +213,10 @@ jobs:
 
       - name: Post-deploy health check
         run: |
-          echo "Waiting 10s for PM2 to stabilize..."
-          sleep 10
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 \
-            https://obsidianatlastech.com/api/health 2>/dev/null || echo "000")
-          echo "HTTP status: $STATUS"
-          if [ "$STATUS" = "200" ]; then
-            echo "✅ Health check passed (status $STATUS)"
-          else
-            echo "❌ Health check failed — HTTP $STATUS"
-            exit 1
-          fi
+          echo "Waiting 15s for PM2 to stabilize..."
+          sleep 15
+          echo "Running health check via SSH (bypasses Cloudflare)..."
+          ssh atlas-vps 'response=$(curl -sf --max-time 15 http://localhost:3001/health 2>&1); rc=$?; echo "$response"; if [ $rc -ne 0 ]; then echo "❌ Health check FAILED — curl error $rc"; exit 1; fi; if echo "$response" | grep -q "\"status\":\"ok\""; then echo "✅ Health check passed"; else echo "❌ Health check FAILED — unexpected response"; exit 1; fi'
 
       - name: Notify on failure
         if: failure()
