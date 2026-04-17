@@ -4,6 +4,7 @@
 // 'assistant' → 'model' (Gemini's name for assistant turns).
 
 import type { ModelProvider, ProviderMessage, CompletionOptions, CompletionResult } from './base.js';
+import { env } from '../../config/env.js';
 
 const GOOGLE_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta/models';
 const DEFAULT_MAX_OUTPUT_TOKENS = 4096;
@@ -67,7 +68,7 @@ export class GoogleProvider implements ModelProvider {
     messages: ProviderMessage[],
     options: CompletionOptions,
   ): Promise<CompletionResult> {
-    const apiKey = process.env['GOOGLE_API_KEY'];
+    const apiKey = env.googleApiKey;
     if (!apiKey) {
       throw new Error(
         'Google API key not configured. Set the GOOGLE_API_KEY environment variable.',
@@ -165,7 +166,7 @@ export class GoogleProvider implements ModelProvider {
   }
 
   async isAvailable(): Promise<boolean> {
-    const apiKey = process.env['GOOGLE_API_KEY'];
+    const apiKey = env.googleApiKey;
     return Boolean(apiKey && apiKey.length > 0);
   }
 }
