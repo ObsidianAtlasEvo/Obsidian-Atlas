@@ -4,6 +4,7 @@ import type { PolicyProfile } from '../../types/atlas.js';
 import type { GroqRoutingDecision } from './routingTypes.js';
 import {
   DEFAULT_SWARM_MODEL_ID,
+  FALLBACK_SWARM_MODEL_ID,
   assertEntryUsable,
   getRegistryEntry,
   getLlmRegistryJsonForPrompt,
@@ -132,7 +133,7 @@ function canRunRegistryEntry(entry: LlmRegistryEntry): boolean {
 export function enforcePlanRegistryAndCredentials(plan: ExecutionPlan): ExecutionPlan {
   const norm = normalizeExecutionPlan(plan);
 
-  const fallback = (): RegistryModelId => DEFAULT_SWARM_MODEL_ID;
+  const fallback = (): RegistryModelId => FALLBACK_SWARM_MODEL_ID;
 
   if (norm.strategy === 'swarm') {
     return {
@@ -179,7 +180,7 @@ export function enforceTierModelAccess(plan: ExecutionPlan, userTier?: Subscript
     allowedSet.add('gemini-3.1-flash-lite-preview');
   }
 
-  const freeTierDefault: RegistryModelId = DEFAULT_SWARM_MODEL_ID; // groq-llama3-70b
+  const freeTierDefault: RegistryModelId = FALLBACK_SWARM_MODEL_ID; // groq-llama3-70b — fast safe fallback
 
   if (plan.strategy === 'swarm') {
     return {
@@ -306,7 +307,8 @@ OPERATIONAL LAW:
 - When GROQ_ROUTING_DIRECTIVES.skip_premium_for_speed is true, avoid premium-tier models unless indispensable.
 - Use "swarm" when steps genuinely require different modalities (e.g. huge read → structured matrix). Keep steps ≤ 6 when possible.
 - For prompts requiring unified psychological analysis, philosophical depth, personal calibration, self-concept examination, or holistic identity work: ALWAYS use "direct" or "delegate" strategy, NEVER "swarm". These prompts need a single coherent voice — splitting them into sub-tasks produces fragmented, duplicated, generic output.
-- If you are unsure, {"strategy":"direct","model":"groq-llama3-70b","reason":"default safe path"}.
+- If you are unsure, {"strategy":"direct","model":"gemini-2.5-flash","reason":"default primary path"}.
+- If the task is very simple or speed is critical, {"strategy":"direct","model":"groq-llama3-70b","reason":"fast fallback"}.
 
 You will receive ROUTING_PAYLOAD_JSON with ROUTING_METADATA, UserTelemetry, MirrorforgeSignal, and GROQ_ROUTING_DIRECTIVES. Obey it.`;
 
@@ -362,7 +364,7 @@ async function applyPostGuards(input: PlanSwarmExecutionInput, guarded: Executio
         strategy: 'swarm',
         steps: [
           { step: 1, model: plan.model, task: 'Primary synthesis' },
-          { step: 2, model: DEFAULT_SWARM_MODEL_ID, task: 'Critical review and gap analysis' },
+          { step: 2, model: FALLBACK_SWARM_MODEL_ID, task: 'Critical review and gap analysis' },
         ],
         reason: `feature_flag:advanced_reasoning_mode(confidence=${armFlag.confidence.toFixed(2)})`,
       };
@@ -385,7 +387,7 @@ async function applyPostGuards(input: PlanSwarmExecutionInput, guarded: Executio
           strategy: 'swarm',
           steps: [
             { step: 1, model: baseModel, task: 'Primary synthesis' },
-            { step: 2, model: DEFAULT_SWARM_MODEL_ID, task: 'Coherence stabilization — cross-check and reconcile' },
+            { step: 2, model: FALLBACK_SWARM_MODEL_ID, task: 'Coherence stabilization — cross-check and reconcile' },
           ],
           reason: `mind_coherence_low(${coherence.toFixed(3)})`,
         };
@@ -417,7 +419,7 @@ export async function planSwarmExecution(input: PlanSwarmExecutionInput): Promis
   });
 
   if (!cfg && input.userTier !== 'free') {
-    return { strategy: 'direct', model: DEFAULT_SWARM_MODEL_ID, reason: 'overseer_unconfigured' };
+    return { strategy: 'direct', model: FALLBACK_SWARM_MODEL_ID, reason: 'overseer_unconfigured' };
   }
 
   /** Swarm doctrine: non-sovereign tenants never touch on-prem models in plans. */
