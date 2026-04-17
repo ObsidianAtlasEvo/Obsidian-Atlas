@@ -15,6 +15,10 @@ export interface AtlasPromptPackage {
 /**
  * Assembles policy, recent memories, trace summaries, response constraints, and the current user turn
  * into one system preamble for the model.
+ *
+ * CRITICAL: Policy profile values (verbosity, tone, etc.) are ONLY injected into the system prompt
+ * when profile.isLearned === true. For new users the profile contains structural defaults that have
+ * no evidentiary basis — presenting them to the LLM as user preferences is a metadata lie.
  */
 export function assembleAtlasContext(
   userId: string,
@@ -46,7 +50,7 @@ export function assembleAtlasContext(
       : memories
           .map(
             (m) =>
-              `- [${m.kind} conf=${m.confidence.toFixed(2)}] ${m.summary}: ${m.detail.slice(0, 200)}${m.detail.length > 200 ? '…' : ''}`
+              `- [${m.kind} conf=${m.confidence.toFixed(2)}] ${m.summary}: ${m.detail.slice(0, 200)}${m.detail.length > 200 ? '\u2026' : ''}`
           )
           .join('\n');
 
@@ -56,19 +60,36 @@ export function assembleAtlasContext(
       : traces
           .map(
             (t) =>
-              `- traceScore=${t.responseScore.toFixed(2)} candidates=${t.memoryCandidates} dataset=${t.datasetApproved} user="${t.userMessage.slice(0, 80)}${t.userMessage.length > 80 ? '…' : ''}"`
+              `- traceScore=${t.responseScore.toFixed(2)} candidates=${t.memoryCandidates} dataset=${t.datasetApproved} user="${t.userMessage.slice(0, 80)}${t.userMessage.length > 80 ? '\u2026' : ''}"`
           )
           .join('\n');
 
-  const constraints = [
-    `Verbosity: ${policy.verbosity} (low = terse answers, high = fuller explanations).`,
-    `Tone: ${policy.tone}.`,
-    `Structure: ${policy.structurePreference} (minimal = few headings, structured = clear sections when helpful).`,
-    `Truth-first strictness: ${policy.truthFirstStrictness} — higher means hedge less, separate fact from inference clearly.`,
-    policy.writingStyleEnabled
-      ? 'User enables writing-style mirroring: match formality and rhythm when it does not harm clarity.'
-      : 'Do not mimic idiosyncratic style unless needed for clarity.',
-  ].join('\n');
+  // Only inject policy values the system has actually learned from the user.
+  // Default values (isLearned=false) must not be presented as user preferences.
+  const policySection = policy.isLearned
+    ? [
+        'POLICY_PROFILE (learned from this user — apply these):',
+        `- verbosity: ${policy.verbosity}`,
+        `- tone: ${policy.tone}`,
+        `- structurePreference: ${policy.structurePreference}`,
+        `- truthFirstStrictness: ${policy.truthFirstStrictness}`,
+        `- preferredComputeDepth: ${policy.preferredComputeDepth}`,
+        `- latencyTolerance: ${policy.latencyTolerance}`,
+        `- writingStyleEnabled: ${policy.writingStyleEnabled}`,
+        '',
+        'RESPONSE_CONSTRAINTS (obey unless they conflict with safety):',
+        `Verbosity: ${policy.verbosity} (low = terse answers, high = fuller explanations).`,
+        `Tone: ${policy.tone}.`,
+        `Structure: ${policy.structurePreference} (minimal = few headings, structured = clear sections when helpful).`,
+        `Truth-first strictness: ${policy.truthFirstStrictness} — higher means hedge less, separate fact from inference clearly.`,
+        policy.writingStyleEnabled
+          ? 'User enables writing-style mirroring: match formality and rhythm when it does not harm clarity.'
+          : 'Do not mimic idiosyncratic style unless needed for clarity.',
+      ]
+    : [
+        'POLICY_PROFILE: not yet learned — this user has no established preferences on record.',
+        'Do not infer or assert stylistic preferences. Calibrate from live evidence in this conversation only.',
+      ];
 
   const turn =
     currentUserMessage.trim().length === 0
@@ -83,17 +104,7 @@ export function assembleAtlasContext(
     'CURRENT_USER_MESSAGE (latest turn focus):',
     turn,
     '',
-    'POLICY_PROFILE:',
-    `- verbosity: ${policy.verbosity}`,
-    `- tone: ${policy.tone}`,
-    `- structurePreference: ${policy.structurePreference}`,
-    `- truthFirstStrictness: ${policy.truthFirstStrictness}`,
-    `- preferredComputeDepth: ${policy.preferredComputeDepth}`,
-    `- latencyTolerance: ${policy.latencyTolerance}`,
-    `- writingStyleEnabled: ${policy.writingStyleEnabled}`,
-    '',
-    'RESPONSE_CONSTRAINTS (obey unless they conflict with safety):',
-    constraints,
+    ...policySection,
     '',
     ...(behavioralAddendum
       ? [
