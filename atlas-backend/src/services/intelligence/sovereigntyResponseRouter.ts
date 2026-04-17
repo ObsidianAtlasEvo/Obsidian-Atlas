@@ -14,6 +14,7 @@ export const SOVEREIGN_RESPONSE_MODES = [
   'identity_operationalization',
   'legacy_extraction',
   'self_revision',
+  'calibration_test',
 ] as const;
 
 export type SovereignResponseMode = (typeof SOVEREIGN_RESPONSE_MODES)[number];
@@ -22,7 +23,8 @@ export function isSovereignResponseMode(s: string): s is SovereignResponseMode {
   return (SOVEREIGN_RESPONSE_MODES as readonly string[]).includes(s);
 }
 
-const TRUTH_PRESSURE = /\b(truth pressure|truth chamber|steel-?man|steelman|devil'?s advocate|challenge (me|this)|assumption audit|red team|falsifiable|behavioral mechanism|disconfirm|self-concept|under pressure|blind spots?|adversarial test|hard truth|calibration test|calibrate me|compensatory|what drives me|what i am optimizing)\b/i;
+const TRUTH_PRESSURE = /\b(truth pressure|truth chamber|steel-?man|steelman|devil'?s advocate|challenge (me|this)|assumption audit|red team|falsifiable|behavioral mechanism|disconfirm|self-concept|under pressure|blind spots?|adversarial test|hard truth|compensatory|what drives me|what i am optimizing)\b/i;
+const CALIBRATION_TEST = /\b(zero-?history calibration|calibration test|calibrate me|calibrate my model|build.{0,20}user model|model me|evidence discipline|high-?value questions|provisional model|zero history)\b/i;
 const TRUTH_PRESSURE_COMPOUND = /\b(psychological)\b.{0,30}\b(read|analysis|profile)\b/i;
 const DECISION = /\b(should i|which option|decide between|tradeoff|commit to|walk away|say yes)\b/i;
 const CONTRADICTION = /\b(contradict|in tension with|both be true|inconsistent|doesn'?t align)\b/i;
@@ -38,6 +40,8 @@ const SELF_REV = /\b(think better|reasoning habit|mental model|self correction|h
  */
 export function inferSovereignResponseMode(userText: string): SovereignResponseMode {
   const t = userText.trim();
+  // Calibration test must be detected BEFORE truth_pressure — it is a stricter epistemic frame
+  if (CALIBRATION_TEST.test(t)) return 'calibration_test';
   if (TRUTH_PRESSURE.test(t) || TRUTH_PRESSURE_COMPOUND.test(t)) return 'truth_pressure';
   if (LEGACY.test(t)) return 'legacy_extraction';
   if (CONTRADICTION.test(t)) return 'contradiction_analysis';
@@ -86,6 +90,30 @@ REQUIRED IN THIS MODE:
       return `MODE: LEGACY_EXTRACTION. If the user states an enduring principle, propose a concise legacy artifact (kind + title + body sketch) they can save — distinguish fleeting venting from durable doctrine. ${common}`;
     case 'self_revision':
       return `MODE: SELF_REVISION. Recommend better reasoning structures, reflection forms, and correction loops; tie to open self-revision records when relevant. ${common}`;
+    case 'calibration_test':
+      return `MODE: CALIBRATION_TEST. This is an explicit zero-history evaluation.
+
+HARD RULES FOR THIS MODE:
+1. EVIDENCE DISCIPLINE IS ABSOLUTE. Every claim about the user must cite the exact text that warrants it.
+   Label each item: [OBSERVATION], [INFERENCE], or [UNCERTAINTY]. Never blur these categories.
+2. NO METADATA SMUGGLING. You have no stored profile, no learned preferences, no prior history.
+   Do not reference verbosity, tone, or style settings — they are not in evidence.
+   Do not write phrases like "you have specified a preference for X" unless the user wrote those words.
+3. HIGH-VALUE QUESTIONS ONLY. Each question must target a different dimension and have information
+   gain that cannot be obtained by responsible inference from what is already available.
+   Do not ask about conciseness vs. detail, speed vs. thoroughness, or topic preferences —
+   these are low-yield configuration questions, not calibration questions.
+   High-value calibration questions reveal how someone thinks, not what they like.
+4. SECOND-ORDER INFERENCE. The provisional user model must go beyond mirroring the prompt's
+   own vocabulary back at the user. Extract structural implications:
+   - What kind of person designs a 7-section evaluation rubric for an AI?
+   - What professional or intellectual background does this test design imply?
+   - What failure modes is the author trying to prevent, and what does that reveal about past experience?
+5. CHALLENGE THE USER, NOT THE TEST. The adversarial check section must challenge the person
+   writing this prompt, not the evaluation methodology itself.
+
+${common}`;
+
     default:
       return `MODE: DIRECT_QA. Answer directly; still respect verified ledger and constitution when supplied. ${common}`;
   }
