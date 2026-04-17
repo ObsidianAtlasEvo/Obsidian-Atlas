@@ -130,28 +130,45 @@ jobs:
 
           cd "$DEPLOY_DIR"
 
-          echo "[1/8] Pulling latest code..."
+          echo "[1/9] Pulling latest code..."
           git fetch origin main
           git reset --hard origin/main
           echo "      ✓ $(git rev-parse --short HEAD)"
 
-          echo "[2/8] Installing frontend deps..."
+          echo "[2/9] Installing frontend deps..."
           npm ci --prefer-offline
           echo "      ✓ Done"
 
-          echo "[3/8] Building frontend..."
+          echo "[3/9] Cleaning stale frontend assets..."
+          npm run clean 2>/dev/null || rm -rf dist
+          echo "      ✓ dist/ cleaned"
+
+          echo "[4/9] Building frontend..."
           VITE_ATLAS_SAME_ORIGIN=true npm run build
           echo "      ✓ dist/ ready"
 
-          echo "[4/8] Installing backend deps..."
+          echo "[5/9] Installing backend deps..."
           npm ci --prefix atlas-backend --prefer-offline
           echo "      ✓ Done"
 
-          echo "[5/8] Building backend..."
+          echo "[6/9] Building backend..."
           npm run build --prefix atlas-backend
           echo "      ✓ atlas-backend/dist/ ready"
 
-          echo "[6/8] Reloading PM2..."
+          echo "[7/9] Running migrations..."
+          MIGRATION_DIR="$DEPLOY_DIR/atlas-backend/migrations"
+          DB_PATH="$DEPLOY_DIR/atlas-backend/data/atlas.db"
+          if [ -d "$MIGRATION_DIR" ]; then
+            for migration in $(ls "$MIGRATION_DIR"/*.sql 2>/dev/null | sort); do
+              echo "      Applying: $(basename $migration)"
+              sqlite3 "$DB_PATH" < "$migration" || true
+            done
+            echo "      ✓ Migrations applied"
+          else
+            echo "      ⚠ No migrations dir — skipping"
+          fi
+
+          echo "[8/9] Reloading PM2..."
           ENV_FILE="$DEPLOY_DIR/atlas-backend/.env"
           if [ -f "$ENV_FILE" ]; then
             set -a && source "$ENV_FILE" && set +a
@@ -170,27 +187,14 @@ jobs:
 
           # Start fresh from the compiled backend
           cd atlas-backend
-          $PM2_BIN start dist/index.js --name atlas-backend \
+          NODE_ENV=production $PM2_BIN start dist/index.js --name atlas-backend \
             --node-args="--max-old-space-size=512" \
             --update-env
           cd ..
           $PM2_BIN save
           echo "      ✓ PM2 restarted (fresh)"
 
-          echo "[7/8] Running migrations..."
-          MIGRATION_DIR="$DEPLOY_DIR/atlas-backend/migrations"
-          DB_PATH="$DEPLOY_DIR/atlas-backend/data/atlas.db"
-          if [ -d "$MIGRATION_DIR" ]; then
-            for migration in $(ls "$MIGRATION_DIR"/*.sql 2>/dev/null | sort); do
-              echo "      Applying: $(basename $migration)"
-              sqlite3 "$DB_PATH" < "$migration" || true
-            done
-            echo "      ✓ Migrations applied"
-          else
-            echo "      ⚠ No migrations dir — skipping"
-          fi
-
-          echo "[8/8] Reloading web server..."
+          echo "[9/9] Reloading web server..."
           if command -v caddy &>/dev/null; then
             sudo caddy reload --config /etc/caddy/Caddyfile --force 2>/dev/null || sudo systemctl reload caddy 2>/dev/null || true
             echo "      ✓ Caddy reloaded"
@@ -214,7 +218,7 @@ jobs:
           STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 \
             https://obsidianatlastech.com/api/health 2>/dev/null || echo "000")
           echo "HTTP status: $STATUS"
-          if [ "$STATUS" = "200" ] || [ "$STATUS" = "503" ]; then
+          if [ "$STATUS" = "200" ]; then
             echo "✅ Health check passed (status $STATUS)"
           else
             echo "❌ Health check failed — HTTP $STATUS"

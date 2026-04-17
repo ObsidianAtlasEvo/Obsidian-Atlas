@@ -8,7 +8,7 @@ import { streamChat } from '../services/ollama.js';
  * but routes through Groq when DISABLE_LOCAL_OLLAMA=true.
  */
 export async function registerOllamaCompatRoutes(app: FastifyInstance): Promise<void> {
-  app.post('/api/chat', async (request, reply) => {
+  app.post('/v1/ollama/chat', async (request, reply) => {
     // Guard: when Ollama is disabled, at least one cloud provider key must be set
     if (
       env.disableLocalOllama &&

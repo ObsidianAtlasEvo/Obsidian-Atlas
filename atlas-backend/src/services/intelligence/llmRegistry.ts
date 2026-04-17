@@ -12,6 +12,7 @@ export type LlmInferenceBackend =
   | 'gemini_sdk'
   | 'ollama'
   | 'openrouter'
+  | 'openai_chat'        // OpenAI Chat Completions API (/v1/chat/completions) — GPT-5.4 family
   | 'openai_responses'   // [Phase 2] OpenAI Responses API (/v1/responses)
   | 'openai_embeddings'; // [Phase 2] OpenAI Embeddings API (/v1/embeddings)
 
@@ -118,6 +119,7 @@ export const LLM_REGISTRY: readonly LlmRegistryEntry[] = [
     id: 'gpt-5.4-nano',
     provider: 'openai',
     apiModel: 'gpt-5.4-nano',
+    backend: 'openai_chat',
     contextWindow: 400_000,
     maxOutputTokens: 128_000,
     pricingInputPerMTok: 0.20,
@@ -133,6 +135,7 @@ export const LLM_REGISTRY: readonly LlmRegistryEntry[] = [
     id: 'gpt-5.4-mini',
     provider: 'openai',
     apiModel: 'gpt-5.4-mini',
+    backend: 'openai_chat',
     contextWindow: 400_000,
     maxOutputTokens: 128_000,
     pricingInputPerMTok: 0.75,
@@ -148,6 +151,7 @@ export const LLM_REGISTRY: readonly LlmRegistryEntry[] = [
     id: 'gpt-5.4',
     provider: 'openai',
     apiModel: 'gpt-5.4',
+    backend: 'openai_chat',
     contextWindow: 1_050_000,
     maxOutputTokens: 128_000,
     pricingInputPerMTok: 2.50,
@@ -166,6 +170,7 @@ export const LLM_REGISTRY: readonly LlmRegistryEntry[] = [
     id: 'gpt-5.4-pro',
     provider: 'openai',
     apiModel: 'gpt-5.4-pro',
+    backend: 'openai_chat',
     contextWindow: 1_050_000,
     maxOutputTokens: 128_000,
     pricingInputPerMTok: 30.00,

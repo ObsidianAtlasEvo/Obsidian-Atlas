@@ -81,7 +81,7 @@ function buildRuleBasedDigest(entries: ExplanationEntry[]): string {
  */
 async function tryLlmSummary(entries: ExplanationEntry[]): Promise<string | null> {
   try {
-    const resp = await fetch('/api/governance/nlsummary', {
+    const resp = await fetch('/api/v1/governance/nlsummary', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
