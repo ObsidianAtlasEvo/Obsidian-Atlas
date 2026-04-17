@@ -93,7 +93,7 @@ function normalizePlanModelField(model: string): RegistryModelId {
   return normalizeRegistryModelId(model);
 }
 
-/** Coerce invalid / unknown models → default Groq registry id (fail-safe). */
+/** Coerce invalid / unknown models → default registry id (fail-safe). */
 export function normalizeExecutionPlan(plan: ExecutionPlan): ExecutionPlan {
   if (plan.strategy === 'swarm') {
     return {
@@ -128,7 +128,7 @@ function canRunRegistryEntry(entry: LlmRegistryEntry): boolean {
 }
 
 /**
- * Downgrade unavailable specialists to {@link DEFAULT_SWARM_MODEL_ID} (server truth).
+ * Downgrade unavailable specialists to {@link FALLBACK_SWARM_MODEL_ID} (server truth).
  */
 export function enforcePlanRegistryAndCredentials(plan: ExecutionPlan): ExecutionPlan {
   const norm = normalizeExecutionPlan(plan);
@@ -469,7 +469,7 @@ export async function planSwarmExecution(input: PlanSwarmExecutionInput): Promis
         // Fall through to standard OpenAI path below
         console.warn('[overseer] Gemini parse failure — degrading to gpt-5.4-nano');
       } else {
-        return { strategy: 'direct', model: DEFAULT_SWARM_MODEL_ID, reason: 'gemini_overseer_failed_no_fallback' };
+        return { strategy: 'direct', model: FALLBACK_SWARM_MODEL_ID, reason: 'gemini_overseer_failed_no_fallback' };
       }
     } else {
       // Gemini succeeded — apply guards and return
@@ -483,7 +483,7 @@ export async function planSwarmExecution(input: PlanSwarmExecutionInput): Promis
 
   // ── Core/Sovereign path (or free-tier Gemini fallback): OpenAI/Groq ──────
   if (!cfg) {
-    return { strategy: 'direct', model: DEFAULT_SWARM_MODEL_ID, reason: 'overseer_unconfigured' };
+    return { strategy: 'direct', model: FALLBACK_SWARM_MODEL_ID, reason: 'overseer_unconfigured' };
   }
 
   const controller = new AbortController();
@@ -514,22 +514,22 @@ export async function planSwarmExecution(input: PlanSwarmExecutionInput): Promis
     try {
       data = rawText ? JSON.parse(rawText) : null;
     } catch {
-      return { strategy: 'direct', model: DEFAULT_SWARM_MODEL_ID, reason: 'chief_non_json' };
+      return { strategy: 'direct', model: FALLBACK_SWARM_MODEL_ID, reason: 'chief_non_json' };
     }
     if (!res.ok) {
-      return { strategy: 'direct', model: DEFAULT_SWARM_MODEL_ID, reason: `chief_http_${res.status}` };
+      return { strategy: 'direct', model: FALLBACK_SWARM_MODEL_ID, reason: `chief_http_${res.status}` };
     }
 
     const obj = data as Record<string, unknown>;
     const choices = obj?.choices;
     if (!Array.isArray(choices) || !choices[0]) {
-      return { strategy: 'direct', model: DEFAULT_SWARM_MODEL_ID, reason: 'chief_missing_choices' };
+      return { strategy: 'direct', model: FALLBACK_SWARM_MODEL_ID, reason: 'chief_missing_choices' };
     }
     const msg = (choices[0] as Record<string, unknown>).message as Record<string, unknown> | undefined;
     const content = typeof msg?.content === 'string' ? msg.content : '';
     const parsed = parseExecutionPlan(content);
     if (!parsed) {
-      return { strategy: 'direct', model: DEFAULT_SWARM_MODEL_ID, reason: 'chief_parse_fail' };
+      return { strategy: 'direct', model: FALLBACK_SWARM_MODEL_ID, reason: 'chief_parse_fail' };
     }
 
     let guarded = await enforceSovereignLocalGpu(parsed, input.sovereignEligible, input.signal);
@@ -540,7 +540,7 @@ export async function planSwarmExecution(input: PlanSwarmExecutionInput): Promis
     return applyPostGuards(input, guarded);
   } catch (err) {
     console.warn('[swarm] Chief of Staff routing failed:', err); // AUDIT FIX: P1-6 log silent failure
-    return { strategy: 'direct', model: DEFAULT_SWARM_MODEL_ID, reason: 'chief_exception' };
+    return { strategy: 'direct', model: FALLBACK_SWARM_MODEL_ID, reason: 'chief_exception' };
   } finally {
     clearTimeout(timeout);
   }
