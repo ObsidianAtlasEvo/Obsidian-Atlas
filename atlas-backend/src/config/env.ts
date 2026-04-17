@@ -1,7 +1,14 @@
 import path from 'node:path';
 import { z } from 'zod';
 
+// NOTE: NODE_ENV is intentionally included in the Zod schema below.
+// Operators MUST set NODE_ENV=production in their PM2 ecosystem file or shell
+// environment. Without it, error messages are unredacted, pino-pretty is used
+// (slow), and some security guards are relaxed. All code that branches on
+// NODE_ENV should read `env.nodeEnv` from this module rather than accessing
+// process.env.NODE_ENV directly, so the value is validated and centralised.
 const envSchema = z.object({
+  NODE_ENV: z.enum(['development', 'production', 'test']).optional(),
   /** Bind address (production: 0.0.0.0 behind reverse proxy). */
   HOST: z.string().min(1).optional(),
   PORT: z.coerce.number().int().positive(),
@@ -93,6 +100,8 @@ const envSchema = z.object({
   // ── Sovereign identity (Phase 1) ─────────────────────────────────────────
   SOVEREIGN_CREATOR_USER_ID: z.string().optional(),
   SOVEREIGN_CREATOR_EMAIL:   z.string().optional(),
+  /** Google Generative Language API key (direct REST calls to Gemini). */
+  GOOGLE_API_KEY: z.string().optional(),
   /** Google Programmable Search (Custom Search JSON API). */
   GOOGLE_CSE_API_KEY: z.string().optional(),
   GOOGLE_CSE_ENGINE_ID: z.string().optional(),
@@ -125,6 +134,7 @@ const envSchema = z.object({
 });
 
 const raw = envSchema.parse({
+  NODE_ENV: process.env.NODE_ENV,
   HOST: process.env.HOST,
   PORT: process.env.PORT ?? '3001',
   // Ollama is optional in cloud/production — Zod defaults handle missing vars.
@@ -185,6 +195,7 @@ const raw = envSchema.parse({
   STRIPE_CANCEL_URL:                    process.env.STRIPE_CANCEL_URL,
   SOVEREIGN_CREATOR_USER_ID:            process.env.SOVEREIGN_CREATOR_USER_ID,
   SOVEREIGN_CREATOR_EMAIL:              process.env.SOVEREIGN_CREATOR_EMAIL,
+  GOOGLE_API_KEY: process.env.GOOGLE_API_KEY,
   GOOGLE_CSE_API_KEY: process.env.GOOGLE_CSE_API_KEY,
   GOOGLE_CSE_ENGINE_ID: process.env.GOOGLE_CSE_ENGINE_ID,
   TAVILY_API_KEY: process.env.TAVILY_API_KEY,
@@ -251,6 +262,7 @@ function parseModelPool(raw: string | undefined): string[] {
 }
 
 export const env = {
+  nodeEnv: raw.NODE_ENV ?? 'development',
   host: raw.HOST?.trim() || '0.0.0.0',
   port: raw.PORT,
   ollamaBaseUrl: raw.OLLAMA_BASE_URL.replace(/\/$/, ''),
@@ -335,6 +347,7 @@ export const env = {
   // ── Sovereign identity (Phase 1) ─────────────────────────────────────────
   sovereignCreatorUserId: raw.SOVEREIGN_CREATOR_USER_ID?.trim() || undefined,
   sovereignCreatorEmail:  raw.SOVEREIGN_CREATOR_EMAIL?.trim() || undefined,
+  googleApiKey: raw.GOOGLE_API_KEY?.trim() || undefined,
   googleCseApiKey: raw.GOOGLE_CSE_API_KEY?.trim() || undefined,
   googleCseEngineId: raw.GOOGLE_CSE_ENGINE_ID?.trim() || undefined,
   tavilyApiKey: raw.TAVILY_API_KEY?.trim() || undefined,
