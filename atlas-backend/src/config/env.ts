@@ -150,7 +150,7 @@ const raw = envSchema.parse({
   EVAL_GAP_THRESHOLD: process.env.EVAL_GAP_THRESHOLD ?? '0.42',
   DATASET_MIN_AXIS_SCORE: process.env.DATASET_MIN_AXIS_SCORE ?? '9',
   EVOLUTION_LLM_TIMEOUT_MS: process.env.EVOLUTION_LLM_TIMEOUT_MS ?? '120000',
-  SQLITE_PATH: process.env.SQLITE_PATH ?? '/var/www/obsidian-atlas-src/atlas-backend/data/atlas.db',
+  SQLITE_PATH: process.env.SQLITE_PATH ?? '/var/data/atlas/atlas.db',
   CHRONOS_ENABLED: process.env.CHRONOS_ENABLED,
   CHRONOS_TICK_MS: process.env.CHRONOS_TICK_MS,
   CHRONOS_IDLE_MS: process.env.CHRONOS_IDLE_MS,
