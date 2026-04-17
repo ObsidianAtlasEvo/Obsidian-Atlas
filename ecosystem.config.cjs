@@ -13,7 +13,7 @@ module.exports = {
       script: 'atlas-backend/dist/index.js',
       cwd: '/var/www/obsidian-atlas-src',
       interpreter: 'node',
-      node_args: '--max-old-space-size=512',
+      node_args: '--max-old-space-size=256',
       // Load .env file from atlas-backend directory
       // (Node 20.6+ supports --env-file natively)
       interpreter_args: '--env-file=atlas-backend/.env',
