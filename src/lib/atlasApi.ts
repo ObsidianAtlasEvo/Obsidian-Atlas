@@ -72,7 +72,7 @@ export interface UserPreferences {
 
 export async function getUserPreferences(): Promise<UserPreferences | null> {
   try {
-    const res = await fetch(atlasApiUrl('/user/preferences'), {
+    const res = await fetch(atlasApiUrl('/v1/user/preferences'), {
       credentials: 'include',
     });
     if (!res.ok) return null;
@@ -86,7 +86,7 @@ export async function patchUserPreferences(
   preferredModel: string | null,
 ): Promise<{ preferredModel: string | null } | null> {
   try {
-    const res = await fetch(atlasApiUrl('/user/preferences'), {
+    const res = await fetch(atlasApiUrl('/v1/user/preferences'), {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
