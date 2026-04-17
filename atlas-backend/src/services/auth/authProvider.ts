@@ -188,13 +188,18 @@ export async function attachAtlasSession(request: FastifyRequest): Promise<void>
 }
 
 export function upsertTenantFromGoogleOAuth(sub: string, email: string): void {
-  const db = getDb();
-  const now = new Date().toISOString();
-  db.prepare(
-    `INSERT INTO tenant_users (id, email, created_at, plan_tier)
-     VALUES (?, ?, ?, 'free')
-     ON CONFLICT(id) DO UPDATE SET email = excluded.email`
-  ).run(sub, email, now);
+  try {
+    const db = getDb();
+    const now = new Date().toISOString();
+    db.prepare(
+      `INSERT INTO tenant_users (id, email, created_at, plan_tier)
+       VALUES (?, ?, ?, 'free')
+       ON CONFLICT(id) DO UPDATE SET email = excluded.email`
+    ).run(sub, email, now);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(`[AUTH] tenant_users upsert failed (table may not exist in Supabase): ${msg}`);
+  }
 }
 
 export function authSuccessRedirectLocation(): string {
