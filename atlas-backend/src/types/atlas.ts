@@ -22,8 +22,6 @@ export interface MemoryRecord {
   tags: string[];
   createdAt: string;
   updatedAt: string;
-  /** True once the profile has been updated by at least one real user signal. False for new users on structural defaults. */
-  isLearned: boolean;
 }
 
 export interface PolicyProfile {
