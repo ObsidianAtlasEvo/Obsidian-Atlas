@@ -70,11 +70,11 @@ export default async function healthRoutes(app: FastifyInstance): Promise<void> 
         db.prepare('SELECT 1').get();
       }),
 
-      // 4. Memory / heap usage (fail if heap used > 92%)
+      // 4. Memory / heap usage (fail if heap used > 96%)
       probeWithTimeout('memory', async () => {
         const { heapUsed, heapTotal } = process.memoryUsage();
         const pct = heapUsed / heapTotal;
-        if (pct > 0.92) throw new Error(`Heap at ${Math.round(pct * 100)}%`);
+        if (pct > 0.96) throw new Error(`Heap at ${Math.round(pct * 100)}%`);
       }),
     ]);
 
