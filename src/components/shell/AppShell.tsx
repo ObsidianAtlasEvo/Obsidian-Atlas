@@ -5,7 +5,7 @@ import { atlasAuthUrl } from '../../lib/atlasApi';
 import NavRail from './NavRail';
 import ChamberView from './ChamberView';
 import { SettingsMenu } from '../SettingsMenu';
-import type { AppState } from '@/types';
+import type { AppState } from '../../types';
 
 export default function AppShell() {
   const sidebarCollapsed = useAtlasStore((s) => s.uiConfig.sidebarCollapsed);
