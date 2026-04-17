@@ -216,6 +216,12 @@ jobs:
 
           echo "[9/9] Reloading web server..."
           if command -v caddy &>/dev/null; then
+            echo "      Syncing Caddyfile from repo..."
+            sudo cp "$DEPLOY_DIR/deploy/Caddyfile" /etc/caddy/Caddyfile
+            echo "      ✓ Caddyfile copied"
+            echo "      Validating Caddy config..."
+            sudo caddy validate --config /etc/caddy/Caddyfile
+            echo "      ✓ Config valid"
             sudo caddy reload --config /etc/caddy/Caddyfile --force 2>/dev/null || sudo systemctl reload caddy 2>/dev/null || true
             echo "      ✓ Caddy reloaded"
           fi
