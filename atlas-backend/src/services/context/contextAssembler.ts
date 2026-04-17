@@ -1,5 +1,6 @@
 import { getPolicyProfile } from '../evolution/policyStore.js';
 import { listRecentMemories, listRecentTraces } from '../memory/memoryStore.js';
+import { getDb } from '../../db/sqlite.js';
 
 const CONTEXT_MEMORY_LIMIT = 12;
 const CONTEXT_TRACE_LIMIT = 8;
@@ -22,6 +23,22 @@ export function assembleAtlasContext(
   const policy = getPolicyProfile(userId);
   const memories = listRecentMemories(userId, CONTEXT_MEMORY_LIMIT);
   const traces = listRecentTraces(userId, CONTEXT_TRACE_LIMIT);
+
+  // Fetch the most recent behavioral calibration addendum from the evolution engine.
+  let behavioralAddendum = '';
+  try {
+    const db = getDb();
+    const row = db
+      .prepare(
+        `SELECT prompt_addendum FROM user_prompt_addenda WHERE user_id = ? LIMIT 1`
+      )
+      .get(userId) as { prompt_addendum?: string } | undefined;
+    if (row?.prompt_addendum?.trim()) {
+      behavioralAddendum = row.prompt_addendum.trim();
+    }
+  } catch {
+    // Table may not exist yet if evolution has never run; silently skip.
+  }
 
   const memoryBlock =
     memories.length === 0
@@ -78,6 +95,13 @@ export function assembleAtlasContext(
     'RESPONSE_CONSTRAINTS (obey unless they conflict with safety):',
     constraints,
     '',
+    ...(behavioralAddendum
+      ? [
+          'BEHAVIORAL_CALIBRATION (evolved from interaction history):',
+          behavioralAddendum,
+          '',
+        ]
+      : []),
     'IMPORTANT_MEMORIES (recent, highest recency first):',
     memoryBlock,
     '',
