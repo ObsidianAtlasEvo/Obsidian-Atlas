@@ -65,6 +65,9 @@ function formatSovereigntyLiteBlocks(userId: string): string {
 
 function formatPolicyBlock(userId: string): string {
   const p = getPolicyProfile(userId);
+  if (!p.isLearned) {
+    return 'USER_POLICY_PROFILE: not yet learned — this user has no established preferences on record. Calibrate from live evidence in this conversation only. Do not assert stylistic preferences.';
+  }
   return [
     'USER_POLICY_PROFILE:',
     `- verbosity: ${p.verbosity}`,

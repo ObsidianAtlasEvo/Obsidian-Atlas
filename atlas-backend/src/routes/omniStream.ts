@@ -232,7 +232,6 @@ export function registerOmniStreamRoutes(app: FastifyInstance): void {
     }
 
     const {
-      userId: bodyUserId,
       messages,
       requestId: bodyRequestId,
       mirrorforge,
@@ -253,9 +252,13 @@ export function registerOmniStreamRoutes(app: FastifyInstance): void {
     }
     const verifiedEmail = getVerifiedUserEmail(request);
 
-    // AUDIT FIX: P0-1 — Session-derived userId is authoritative for quota, tier, and evolution.
-    // Body userId is only used as a fallback for preference lookups (backward compat).
-    const userId = request.atlasAuthUser?.databaseUserId ?? request.atlasSession?.userId ?? bodyUserId ?? '';
+    // AUDIT FIX: P0-1 — Session-derived userId is authoritative. No body or empty-string fallback.
+    const userId = request.atlasAuthUser?.databaseUserId ?? request.atlasSession?.userId;
+    if (!userId) {
+      // Auth gate earlier should have caught this, but fail hard here
+      request.log.error({ path: request.url }, 'userId could not be resolved from session — rejecting');
+      return reply.code(401).send({ error: 'Authentication required' });
+    }
 
     touchChronosActivity(userId);
 

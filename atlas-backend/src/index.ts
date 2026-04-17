@@ -33,7 +33,6 @@ import { registerRetentionRoutes } from './routes/retentionRoutes.js';
 import { registerGovernanceConsoleRoutes } from './routes/governanceConsoleRoutes.js';
 import { registerJournalRoutes } from './routes/journalRoutes.js';
 import { registerDoctrineRoutes } from './routes/doctrineRoutes.js';
-import orchestrateRoutes from './routes/orchestrate.js';
 import embeddingsRoutes from './routes/embeddings.js';
 import modelRoutes from './routes/models.js';
 import { registerGapLedgerRoutes } from './routes/gapLedgerRoutes.js';
@@ -184,7 +183,6 @@ await registerRateLimit(app);
 await registerHealthRoutes(app);
 registerInferenceQueueRoutes(app);
 registerAuthRoutes(app);
-await registerOllamaCompatRoutes(app);
 registerOmniStreamRoutes(app);
 registerSovereigntyRoutes(app);
 // ── Governance routes — all require a valid Atlas session ─────────────────
@@ -195,6 +193,7 @@ await app.register(async (protected_app) => {
       return reply.code(401).send({ error: 'Unauthorized — Atlas session required' });
     }
   });
+  await registerOllamaCompatRoutes(protected_app);
   registerCognitiveGovernanceRoutes(protected_app);
   registerLongitudinalRoutes(protected_app);
   registerStrategicModelingRoutes(protected_app);
@@ -209,6 +208,7 @@ await app.register(async (protected_app) => {
   registerJournalRoutes(protected_app);
   registerDoctrineRoutes(protected_app);
   registerDiagnosticsReportRoutes(protected_app);
+  registerExplanationRoutes(protected_app);
 });
 // ── Billing routes — session-based billing + Stripe webhook (raw body) ──────
 // Billing routes expect request.atlasSession (userId + email). Bridge from
@@ -319,8 +319,6 @@ await app.register(async (userScope) => {
 }, { prefix: '/v1' });
 
 registerDegradedModeRoutes(app);
-registerExplanationRoutes(app);
-await app.register(orchestrateRoutes);
 await app.register(embeddingsRoutes);
 await app.register(modelRoutes);
 
