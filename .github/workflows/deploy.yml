@@ -215,7 +215,7 @@ jobs:
           # Start fresh from the compiled backend
           cd atlas-backend
           NODE_ENV=production $PM2_BIN start dist/index.js --name atlas-backend \
-            --node-args="--max-old-space-size=512" \
+            --node-args="--max-old-space-size=2048" \
             --update-env
           cd ..
           $PM2_BIN save
