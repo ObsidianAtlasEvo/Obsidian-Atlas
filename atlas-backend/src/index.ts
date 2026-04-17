@@ -33,7 +33,6 @@ import { registerRetentionRoutes } from './routes/retentionRoutes.js';
 import { registerGovernanceConsoleRoutes } from './routes/governanceConsoleRoutes.js';
 import { registerJournalRoutes } from './routes/journalRoutes.js';
 import { registerDoctrineRoutes } from './routes/doctrineRoutes.js';
-import orchestrateRoutes from './routes/orchestrate.js';
 import embeddingsRoutes from './routes/embeddings.js';
 import modelRoutes from './routes/models.js';
 import { registerGapLedgerRoutes } from './routes/gapLedgerRoutes.js';
@@ -320,7 +319,6 @@ await app.register(async (userScope) => {
 
 registerDegradedModeRoutes(app);
 registerExplanationRoutes(app);
-await app.register(orchestrateRoutes);
 await app.register(embeddingsRoutes);
 await app.register(modelRoutes);
 
