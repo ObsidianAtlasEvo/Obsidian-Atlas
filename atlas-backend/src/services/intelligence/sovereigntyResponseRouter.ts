@@ -115,6 +115,6 @@ HARD RULES FOR THIS MODE:
 ${common}`;
 
     default:
-      return \`MODE: DIRECT_QA. Answer directly; still respect verified ledger and constitution when supplied. \${common}\`;
+      return `MODE: DIRECT_QA. Answer directly; still respect verified ledger and constitution when supplied. ${common}`;
   }
 }
