@@ -117,7 +117,7 @@ app.addContentTypeParser(
   'application/json',
   { parseAs: 'buffer' },
   (req, body, done) => {
-    if (req.url === '/webhooks/stripe' || req.url === '/api/v1/webhooks/stripe') {
+    if (req.url === '/webhooks/stripe' || req.url === '/v1/webhooks/stripe') {
       done(null, body); // keep as raw Buffer for Stripe signature verification
     } else {
       try {
@@ -269,7 +269,7 @@ await app.register(async (billingScope) => {
   });
 
   await registerBillingRoutes(billingScope, getDb());
-}, { prefix: '/api/v1' });
+}, { prefix: '/v1' });
 
 // ── User preferences routes — model selection, etc. ──────────────────────
 await app.register(async (userScope) => {
@@ -284,7 +284,7 @@ await app.register(async (userScope) => {
     };
   });
   await registerUserPreferencesRoutes(userScope, getDb());
-}, { prefix: '/api/v1' });
+}, { prefix: '/v1' });
 
 registerDegradedModeRoutes(app);
 registerExplanationRoutes(app);
