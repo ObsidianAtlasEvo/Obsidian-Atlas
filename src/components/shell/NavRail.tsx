@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useAtlasStore } from '../../store/useAtlasStore';
+import { ModelSelector } from '../ModelSelector';
 import type { AppState } from '@/types';
 
 // ── Chamber Registry ─────────────────────────────────────────────────────
@@ -111,9 +112,11 @@ interface NavRailProps {
   expanded: boolean;
   onToggle: () => void;
   isMobile?: boolean;
+  onSettingsClick?: () => void;
+  onSignOutClick?: () => void;
 }
 
-export default function NavRail({ expanded, onToggle, isMobile }: NavRailProps) {
+export default function NavRail({ expanded, onToggle, isMobile, onSettingsClick, onSignOutClick }: NavRailProps) {
   const activeMode = useAtlasStore((s) => s.activeMode);
   const setActiveMode = useAtlasStore((s) => s.setActiveMode);
   const currentUser = useAtlasStore((s) => s.currentUser);
@@ -396,63 +399,162 @@ export default function NavRail({ expanded, onToggle, isMobile }: NavRailProps) 
         })}
       </div>
 
+      {/* Model Selector */}
+      <div
+        style={{
+          borderTop: '1px solid var(--border-structural)',
+          padding: expanded ? '8px 12px' : '8px 0',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: expanded ? 'flex-start' : 'center',
+          flexShrink: 0,
+        }}
+      >
+        <ModelSelector onUpgradeClick={() => {}} compact={!expanded} />
+      </div>
+
       {/* Bottom user area */}
       <div
         style={{
           borderTop: '1px solid var(--border-structural)',
-          padding: expanded ? '12px 16px' : '12px 0',
+          padding: expanded ? '10px 16px' : '10px 0',
           display: 'flex',
-          alignItems: 'center',
-          justifyContent: expanded ? 'flex-start' : 'center',
-          gap: 10,
+          flexDirection: 'column',
+          gap: 8,
           flexShrink: 0,
         }}
       >
+        {/* User info row */}
         <div
           style={{
-            width: 28,
-            height: 28,
-            borderRadius: '50%',
-            background: 'rgba(88, 28, 135, 0.35)',
-            border: '1px solid var(--border-subtle)',
             display: 'flex',
             alignItems: 'center',
-            justifyContent: 'center',
-            flexShrink: 0,
-            fontSize: '0.65rem',
-            fontWeight: 600,
-            color: 'rgba(167, 139, 250, 0.8)',
-            letterSpacing: '0.05em',
+            justifyContent: expanded ? 'flex-start' : 'center',
+            gap: 10,
           }}
         >
-          {currentUser?.email?.[0]?.toUpperCase() ?? 'A'}
-        </div>
-        {expanded && (
-          <div style={{ overflow: 'hidden' }}>
-            <div
-              style={{
-                fontSize: '0.75rem',
-                color: 'rgba(226,232,240,0.7)',
-                whiteSpace: 'nowrap',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                maxWidth: 160,
-              }}
-            >
-              {currentUser?.email ?? ''}
-            </div>
-            <div
-              style={{
-                fontSize: '0.625rem',
-                color: 'rgba(201, 162, 39, 0.7)',
-                letterSpacing: '0.08em',
-                textTransform: 'uppercase',
-              }}
-            >
-              {currentUser?.role?.replace(/_/g, ' ') ?? ''}
-            </div>
+          <div
+            style={{
+              width: 28,
+              height: 28,
+              borderRadius: '50%',
+              background: 'rgba(88, 28, 135, 0.35)',
+              border: '1px solid var(--border-subtle)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              flexShrink: 0,
+              fontSize: '0.65rem',
+              fontWeight: 600,
+              color: 'rgba(167, 139, 250, 0.8)',
+              letterSpacing: '0.05em',
+            }}
+          >
+            {currentUser?.email?.[0]?.toUpperCase() ?? 'A'}
           </div>
-        )}
+          {expanded && (
+            <div style={{ overflow: 'hidden', flex: 1, minWidth: 0 }}>
+              <div
+                style={{
+                  fontSize: '0.75rem',
+                  color: 'rgba(226,232,240,0.7)',
+                  whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  maxWidth: 160,
+                }}
+              >
+                {currentUser?.email ?? ''}
+              </div>
+              <div
+                style={{
+                  fontSize: '0.625rem',
+                  color: 'rgba(201, 162, 39, 0.7)',
+                  letterSpacing: '0.08em',
+                  textTransform: 'uppercase',
+                }}
+              >
+                {currentUser?.role?.replace(/_/g, ' ') ?? ''}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Settings + Sign Out buttons */}
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: expanded ? 'flex-start' : 'center',
+            gap: 4,
+          }}
+        >
+          <button
+            onClick={onSettingsClick}
+            title="Settings"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              padding: expanded ? '5px 8px' : '5px',
+              background: 'transparent',
+              border: '1px solid rgba(88,28,135,0.2)',
+              borderRadius: 4,
+              cursor: 'pointer',
+              color: 'rgba(226,232,240,0.5)',
+              fontSize: '0.65rem',
+              fontFamily: 'inherit',
+              letterSpacing: '0.04em',
+              transition: 'all 140ms ease',
+            }}
+            onMouseEnter={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.color = 'rgba(226,232,240,0.85)';
+              (e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(88,28,135,0.4)';
+            }}
+            onMouseLeave={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.color = 'rgba(226,232,240,0.5)';
+              (e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(88,28,135,0.2)';
+            }}
+          >
+            <Icon path={ICONS.settings} size={14} />
+            {expanded && <span>Settings</span>}
+          </button>
+
+          <button
+            onClick={onSignOutClick}
+            title="Sign Out"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              padding: expanded ? '5px 8px' : '5px',
+              background: 'transparent',
+              border: '1px solid rgba(220,38,38,0.15)',
+              borderRadius: 4,
+              cursor: 'pointer',
+              color: 'rgba(248,113,113,0.5)',
+              fontSize: '0.65rem',
+              fontFamily: 'inherit',
+              letterSpacing: '0.04em',
+              transition: 'all 140ms ease',
+            }}
+            onMouseEnter={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.color = 'rgba(248,113,113,0.9)';
+              (e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(220,38,38,0.35)';
+            }}
+            onMouseLeave={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.color = 'rgba(248,113,113,0.5)';
+              (e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(220,38,38,0.15)';
+            }}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4" />
+              <polyline points="16 17 21 12 16 7" />
+              <line x1="21" y1="12" x2="9" y2="12" />
+            </svg>
+            {expanded && <span>Sign Out</span>}
+          </button>
+        </div>
       </div>
     </nav>
   );
