@@ -135,30 +135,23 @@ function requireSession(request: FastifyRequest, reply: FastifyReply): AtlasSess
 // ---------------------------------------------------------------------------
 
 /**
- * Counts how many chat messages the user has sent today (UTC day boundary).
+ * Returns today's chat_requests count from user_quota_daily — the SAME table
+ * that quotaStore.ts uses for enforcement. This ensures the billing status
+ * display matches the actual quota enforcer (no divergence between traces
+ * table and quota table).
  *
- * [REPAIR 7] Uses the real Atlas `traces` table with columns:
- *   - user_id TEXT
- *   - created_at TEXT (ISO string, e.g. "2026-04-15T14:30:00.000Z")
- *
- * Daily boundary is midnight UTC expressed as an ISO string.
- * ISO 8601 strings sort lexicographically in SQLite — string comparison is correct.
- * One row per user turn confirmed. COUNT(*) is the correct usage metric.
+ * Date key format: YYYY-MM-DD in UTC, matching quotaStore.utcDateString().
  */
 function getDailyUsage(userId: string, db: Database): number {
-  const startOfDay = new Date();
-  startOfDay.setUTCHours(0, 0, 0, 0);
-  const startOfDayIso = startOfDay.toISOString(); // e.g. "2026-04-15T00:00:00.000Z"
+  const dateUtc = new Date().toISOString().slice(0, 10); // "YYYY-MM-DD"
 
-  const stmt = db.prepare<[string, string], { count: number }>(`
-    SELECT COUNT(*) as count
-    FROM traces
-    WHERE user_id = ?
-      AND created_at >= ?
-  `);
+  const row = db
+    .prepare<[string, string], { chat_requests: number }>(
+      `SELECT chat_requests FROM user_quota_daily WHERE user_id = ? AND date_utc = ?`
+    )
+    .get(userId, dateUtc);
 
-  const result = stmt.get(userId, startOfDayIso);
-  return result?.count ?? 0;
+  return row?.chat_requests ?? 0;
 }
 
 // ---------------------------------------------------------------------------

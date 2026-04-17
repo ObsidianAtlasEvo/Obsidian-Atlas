@@ -218,10 +218,10 @@ const PROVIDERS: ProviderDef[] = [
 const MODELS: ModelDef[] = [
   // Ollama (local)
   {
-    id: 'ollama/llama3.2',
+    id: 'ollama/llama3.1:70b',
     provider: 'ollama',
-    name: 'Llama 3.2',
-    description: 'Meta\'s latest open-source frontier model',
+    name: 'Llama 3.1 70B',
+    description: 'Meta\'s flagship open-source model. Excellent all-rounder.',
     tier: 'free',
     strengths: ['Reasoning', 'Code', 'Instruction following'],
     contextWindow: 128000,
@@ -231,94 +231,120 @@ const MODELS: ModelDef[] = [
     enabled: true,
   },
   {
-    id: 'ollama/mistral',
+    id: 'ollama/llama3.1:8b',
     provider: 'ollama',
-    name: 'Mistral 7B',
-    description: 'Efficient European model, excellent instruction following',
+    name: 'Llama 3.1 8B',
+    description: 'Lightweight Llama 3.1 — fast local inference',
     tier: 'free',
-    strengths: ['Speed', 'Multilingual', 'Concise answers'],
-    contextWindow: 32000,
+    strengths: ['Speed', 'General-purpose', 'Low resource'],
+    contextWindow: 128000,
     estimatedCostPer1k: 0,
     isLocal: true,
     requiresApiKey: false,
     enabled: true,
   },
   {
-    id: 'ollama/phi3',
+    id: 'ollama/mistral-nemo',
     provider: 'ollama',
-    name: 'Phi-3 Mini',
-    description: 'Microsoft\'s compact powerhouse',
+    name: 'Mistral Nemo',
+    description: 'Compact 12B model — multilingual and function calling',
     tier: 'free',
-    strengths: ['Compact', 'Math', 'Reasoning'],
+    strengths: ['Multilingual', 'Function calling', 'Speed'],
     contextWindow: 128000,
     estimatedCostPer1k: 0,
     isLocal: true,
     requiresApiKey: false,
     enabled: false,
   },
-  // OpenAI
   {
-    id: 'openai/gpt-4o',
-    provider: 'openai',
-    name: 'GPT-4o',
-    description: 'OpenAI\'s flagship omni model',
-    tier: 'paid',
-    strengths: ['Vision', 'Code', 'Complex reasoning'],
+    id: 'ollama/deepseek-r1:70b',
+    provider: 'ollama',
+    name: 'DeepSeek R1 70B',
+    description: 'Local reasoning model with chain-of-thought',
+    tier: 'free',
+    strengths: ['Chain-of-thought', 'Math', 'Reasoning'],
     contextWindow: 128000,
-    estimatedCostPer1k: 0.005,
+    estimatedCostPer1k: 0,
+    isLocal: true,
+    requiresApiKey: false,
+    enabled: false,
+  },
+  // OpenAI (GPT-5.4 family)
+  {
+    id: 'openai/gpt-5.4-nano',
+    provider: 'openai',
+    name: 'GPT-5.4 Nano',
+    description: 'Fastest GPT-5.4 — routing, classification, high-throughput',
+    tier: 'free',
+    strengths: ['Speed', 'Classification', 'Routing', 'Structured output'],
+    contextWindow: 400000,
+    estimatedCostPer1k: 0.0002,
     isLocal: false,
     requiresApiKey: true,
     enabled: true,
   },
   {
-    id: 'openai/gpt-4o-mini',
+    id: 'openai/gpt-5.4-mini',
     provider: 'openai',
-    name: 'GPT-4o Mini',
-    description: 'Fast and affordable GPT-4 class model',
+    name: 'GPT-5.4 Mini',
+    description: 'Balanced reasoning and coding at moderate cost',
     tier: 'paid',
-    strengths: ['Speed', 'Cost efficiency', 'High throughput'],
-    contextWindow: 128000,
-    estimatedCostPer1k: 0.00015,
+    strengths: ['Reasoning', 'Coding', 'Synthesis', 'Structured output'],
+    contextWindow: 400000,
+    estimatedCostPer1k: 0.00075,
     isLocal: false,
     requiresApiKey: true,
-    enabled: true,
+    enabled: false,
   },
   {
-    id: 'openai/o1-mini',
+    id: 'openai/gpt-5.4',
     provider: 'openai',
-    name: 'o1-mini',
-    description: 'OpenAI reasoning model, optimized for STEM',
+    name: 'GPT-5.4',
+    description: 'OpenAI flagship — 1M+ context, powerful reasoning',
     tier: 'paid',
-    strengths: ['Math', 'Science', 'Chain-of-thought'],
-    contextWindow: 128000,
+    strengths: ['Reasoning', 'Coding', 'Analysis', 'Long context'],
+    contextWindow: 1050000,
+    estimatedCostPer1k: 0.0025,
+    isLocal: false,
+    requiresApiKey: true,
+    enabled: false,
+  },
+  {
+    id: 'openai/gpt-5.4-pro',
+    provider: 'openai',
+    name: 'GPT-5.4 Pro',
+    description: 'Most powerful — hard arbitration, sovereign only',
+    tier: 'paid',
+    strengths: ['Complex reasoning', 'Arbitration', 'Deep analysis'],
+    contextWindow: 1050000,
+    estimatedCostPer1k: 0.03,
+    isLocal: false,
+    requiresApiKey: true,
+    enabled: false,
+  },
+  // Anthropic (Claude 4.6)
+  {
+    id: 'anthropic/claude-sonnet-4-6',
+    provider: 'anthropic',
+    name: 'Claude Sonnet 4.6',
+    description: 'Fast elite coding, nuanced writing — sovereign only',
+    tier: 'paid',
+    strengths: ['Coding', 'Writing', 'Reasoning', 'Analysis'],
+    contextWindow: 200000,
     estimatedCostPer1k: 0.003,
     isLocal: false,
     requiresApiKey: true,
     enabled: false,
   },
-  // Anthropic
   {
-    id: 'anthropic/claude-3-5-sonnet',
+    id: 'anthropic/claude-opus-4-6',
     provider: 'anthropic',
-    name: 'Claude 3.5 Sonnet',
-    description: 'Anthropic\'s most intelligent model',
+    name: 'Claude Opus 4.6',
+    description: 'Frontier reasoning, elite coding — sovereign only',
     tier: 'paid',
-    strengths: ['Analysis', 'Writing', 'Nuanced reasoning'],
+    strengths: ['Frontier reasoning', 'Elite coding', 'Research', 'Creative writing'],
     contextWindow: 200000,
-    estimatedCostPer1k: 0.003,
-    isLocal: false,
-    requiresApiKey: true,
-    enabled: true,
-  },
-  {
-    id: 'anthropic/claude-3-haiku',
-    provider: 'anthropic',
-    name: 'Claude 3 Haiku',
-    description: 'Fast and compact Claude model',
-    tier: 'paid',
-    strengths: ['Speed', 'Summaries', 'Classification'],
-    contextWindow: 200000,
-    estimatedCostPer1k: 0.00025,
+    estimatedCostPer1k: 0.015,
     isLocal: false,
     requiresApiKey: true,
     enabled: false,
@@ -328,11 +354,11 @@ const MODELS: ModelDef[] = [
     id: 'google/gemini-2.5-flash',
     provider: 'google',
     name: 'Gemini 2.5 Flash',
-    description: 'Google\'s multimodal frontier model',
-    tier: 'paid',
-    strengths: ['Long context', 'Multimodal', 'Code'],
+    description: 'Google\'s most capable — 1M context, multimodal',
+    tier: 'free',
+    strengths: ['Long context', 'Multimodal', 'Code', 'Reasoning'],
     contextWindow: 1000000,
-    estimatedCostPer1k: 0.0035,
+    estimatedCostPer1k: 0.00125,
     isLocal: false,
     requiresApiKey: true,
     enabled: true,
@@ -341,14 +367,27 @@ const MODELS: ModelDef[] = [
     id: 'google/gemini-2.0-flash',
     provider: 'google',
     name: 'Gemini 2.0 Flash',
-    description: 'Fast, affordable Gemini variant',
-    tier: 'paid',
-    strengths: ['Speed', 'Multimodal', 'Summarization'],
+    description: 'Fast agentic Gemini with realtime performance',
+    tier: 'free',
+    strengths: ['Speed', 'Agentic', 'Multimodal', 'Realtime'],
     contextWindow: 1000000,
-    estimatedCostPer1k: 0.00035,
+    estimatedCostPer1k: 0.0001,
     isLocal: false,
     requiresApiKey: true,
     enabled: false,
+  },
+  {
+    id: 'google/gemini-3.1-flash-lite-preview',
+    provider: 'google',
+    name: 'Gemini 3.1 Flash Lite (Preview)',
+    description: 'Free-tier Overseer — lightweight, 1M context',
+    tier: 'free',
+    strengths: ['Speed', 'Cost efficiency', 'Overseer', 'Classification'],
+    contextWindow: 1000000,
+    estimatedCostPer1k: 0,
+    isLocal: false,
+    requiresApiKey: true,
+    enabled: true,
   },
   // Mistral
   {
@@ -356,10 +395,23 @@ const MODELS: ModelDef[] = [
     provider: 'mistral',
     name: 'Mistral Large',
     description: 'Top-tier European reasoning model',
-    tier: 'paid',
-    strengths: ['Multilingual', 'Math', 'Code'],
+    tier: 'free',
+    strengths: ['Multilingual', 'Reasoning', 'Code'],
     contextWindow: 128000,
-    estimatedCostPer1k: 0.008,
+    estimatedCostPer1k: 0.002,
+    isLocal: false,
+    requiresApiKey: true,
+    enabled: false,
+  },
+  {
+    id: 'mistral/mistral-nemo',
+    provider: 'mistral',
+    name: 'Mistral Nemo',
+    description: 'Efficient multilingual model with function calling',
+    tier: 'free',
+    strengths: ['Multilingual', 'Function calling', 'Cost efficiency'],
+    contextWindow: 128000,
+    estimatedCostPer1k: 0.00015,
     isLocal: false,
     requiresApiKey: true,
     enabled: true,
@@ -368,119 +420,119 @@ const MODELS: ModelDef[] = [
     id: 'mistral/codestral',
     provider: 'mistral',
     name: 'Codestral',
-    description: 'Specialized code generation model',
-    tier: 'paid',
-    strengths: ['Code generation', 'Completion', 'Bug fixing'],
+    description: 'Specialized code generation — 80+ languages',
+    tier: 'free',
+    strengths: ['Code generation', 'Completion', 'Multi-language'],
     contextWindow: 32000,
-    estimatedCostPer1k: 0.001,
+    estimatedCostPer1k: 0.0003,
     isLocal: false,
     requiresApiKey: true,
     enabled: false,
   },
   // DeepSeek
   {
-    id: 'deepseek/deepseek-r1',
+    id: 'deepseek/deepseek-chat',
     provider: 'deepseek',
-    name: 'DeepSeek R1',
-    description: 'China\'s frontier reasoning model',
-    tier: 'paid',
-    strengths: ['Chain-of-thought', 'Math', 'Science'],
-    contextWindow: 128000,
-    estimatedCostPer1k: 0.00055,
+    name: 'DeepSeek V3',
+    description: 'Competitive with GPT-4 at a fraction of the cost',
+    tier: 'free',
+    strengths: ['Coding', 'Reasoning', 'Math', 'Cost efficiency'],
+    contextWindow: 64000,
+    estimatedCostPer1k: 0.00014,
     isLocal: false,
     requiresApiKey: true,
     enabled: true,
   },
   {
-    id: 'deepseek/deepseek-v3',
+    id: 'deepseek/deepseek-reasoner',
     provider: 'deepseek',
-    name: 'DeepSeek V3',
-    description: 'Balanced performance and cost',
-    tier: 'paid',
-    strengths: ['Coding', 'Reasoning', 'Instruction'],
-    contextWindow: 128000,
-    estimatedCostPer1k: 0.00027,
+    name: 'DeepSeek R1',
+    description: 'Reasoning model with transparent chain-of-thought',
+    tier: 'free',
+    strengths: ['Chain-of-thought', 'Math', 'Logic', 'Transparency'],
+    contextWindow: 64000,
+    estimatedCostPer1k: 0.00055,
     isLocal: false,
     requiresApiKey: true,
     enabled: false,
   },
   // Groq
   {
-    id: 'groq/llama3-70b-8192',
+    id: 'groq/llama-3.3-70b-versatile',
     provider: 'groq',
-    name: 'Llama 3 70B (Groq)',
-    description: 'Ultra-fast inference via Groq hardware',
-    tier: 'paid',
-    strengths: ['Speed', 'Throughput', 'Llama-class quality'],
-    contextWindow: 8192,
-    estimatedCostPer1k: 0.00059,
+    name: 'Llama 3.3 70B (Groq)',
+    description: 'Ultra-fast LPU inference — primary free-tier routing model',
+    tier: 'free',
+    strengths: ['Speed', 'Routing', 'Reasoning', 'Free tier'],
+    contextWindow: 128000,
+    estimatedCostPer1k: 0,
     isLocal: false,
     requiresApiKey: true,
     enabled: true,
   },
   {
-    id: 'groq/mixtral-8x7b',
+    id: 'groq/mixtral-8x7b-32768',
     provider: 'groq',
     name: 'Mixtral 8x7B (Groq)',
-    description: 'MoE model on Groq infrastructure',
-    tier: 'paid',
+    description: 'Sparse MoE on Groq — fast multilingual',
+    tier: 'free',
     strengths: ['MoE efficiency', 'Multilingual', 'Speed'],
     contextWindow: 32768,
-    estimatedCostPer1k: 0.00027,
+    estimatedCostPer1k: 0,
     isLocal: false,
     requiresApiKey: true,
     enabled: false,
   },
   // Together AI
   {
-    id: 'together/qwen2.5-72b',
+    id: 'together/meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo',
     provider: 'together',
-    name: 'Qwen 2.5 72B',
-    description: 'Alibaba\'s flagship open-weight model',
-    tier: 'paid',
-    strengths: ['Multilingual', 'Long context', 'Code'],
+    name: 'Llama 3.1 70B Turbo (Together)',
+    description: 'Llama 3.1 70B optimized for throughput',
+    tier: 'free',
+    strengths: ['Reasoning', 'Instruction following', 'Coding'],
     contextWindow: 128000,
-    estimatedCostPer1k: 0.0009,
+    estimatedCostPer1k: 0.00088,
     isLocal: false,
     requiresApiKey: true,
-    enabled: true,
+    enabled: false,
   },
   // Cohere
   {
     id: 'cohere/command-r-plus',
     provider: 'cohere',
     name: 'Command R+',
-    description: 'Cohere\'s enterprise-grade RAG model',
-    tier: 'paid',
-    strengths: ['RAG', 'Tool use', 'Grounding'],
+    description: 'Enterprise RAG and tool-use model',
+    tier: 'free',
+    strengths: ['RAG', 'Tool use', 'Document Q&A'],
     contextWindow: 128000,
     estimatedCostPer1k: 0.003,
     isLocal: false,
     requiresApiKey: true,
-    enabled: true,
+    enabled: false,
   },
   // Perplexity
   {
-    id: 'perplexity/llama-3.1-sonar-large',
+    id: 'perplexity/llama-3.1-sonar-large-128k-online',
     provider: 'perplexity',
-    name: 'Sonar Large',
-    description: 'Perplexity online model with web search',
+    name: 'Sonar Large (Online)',
+    description: 'Real-time web search grounded model',
     tier: 'paid',
     strengths: ['Web search', 'Current events', 'Citations'],
     contextWindow: 128000,
     estimatedCostPer1k: 0.001,
     isLocal: false,
     requiresApiKey: true,
-    enabled: true,
+    enabled: false,
   },
   // xAI
   {
     id: 'xai/grok-2',
     provider: 'xai',
     name: 'Grok 2',
-    description: 'xAI\'s reasoning model with real-time data',
+    description: 'xAI reasoning model with real-time data access',
     tier: 'paid',
-    strengths: ['Real-time data', 'Wit', 'STEM'],
+    strengths: ['Real-time data', 'Reasoning', 'Analysis'],
     contextWindow: 131072,
     estimatedCostPer1k: 0.002,
     isLocal: false,
@@ -489,98 +541,7 @@ const MODELS: ModelDef[] = [
   },
 ];
 
-// ─────────────────────────────────────────────────────────────────────────────
-// MOCK ORCHESTRATION RESULT (placeholder when backend is unavailable)
-// ─────────────────────────────────────────────────────────────────────────────
-
-const MOCK_ORCHESTRATION: OrchestrationResult = {
-  query: 'What is the most important cognitive bias to understand in 2025?',
-  timestamp: new Date(Date.now() - 3 * 60000).toISOString(),
-  responses: [
-    {
-      modelId: 'ollama/llama3.2',
-      provider: 'ollama',
-      modelName: 'Llama 3.2',
-      content:
-        'The availability heuristic has intensified dramatically with algorithmic content feeds. We now mistake recency and virality for importance, leading to distorted probability estimates across nearly every domain of decision-making.',
-      durationMs: 1240,
-      status: 'success',
-      tokenCount: 48,
-      expanded: false,
-    },
-    {
-      modelId: 'openai/gpt-4o',
-      provider: 'openai',
-      modelName: 'GPT-4o',
-      content:
-        'Automation bias — the tendency to defer to AI systems — is the defining cognitive vulnerability of 2025. As AI becomes embedded in decision workflows, humans systematically over-trust its outputs even when visibly wrong.',
-      durationMs: 2100,
-      status: 'success',
-      tokenCount: 52,
-      expanded: false,
-    },
-    {
-      modelId: 'anthropic/claude-3-5-sonnet',
-      provider: 'anthropic',
-      modelName: 'Claude 3.5 Sonnet',
-      content:
-        'Confirmation bias, amplified by personalized information ecosystems. The unprecedented scale of belief-confirming content available on demand has made it structurally harder than ever to encounter genuinely disconfirming evidence.',
-      durationMs: 1870,
-      status: 'success',
-      tokenCount: 55,
-      expanded: false,
-    },
-    {
-      modelId: 'google/gemini-2.5-flash',
-      provider: 'google',
-      modelName: 'Gemini 2.5 Flash',
-      content:
-        'Scope insensitivity — our inability to scale our emotional response proportionally to scale. With global-scale problems (climate, AI risk, pandemics) dominating the agenda, the mismatch between felt urgency and actual magnitude leads to both under-reaction and over-reaction.',
-      durationMs: 3100,
-      status: 'success',
-      tokenCount: 71,
-      expanded: false,
-    },
-    {
-      modelId: 'mistral/mistral-large',
-      provider: 'mistral',
-      modelName: 'Mistral Large',
-      content:
-        'Connection timeout after 5 seconds.',
-      durationMs: 5000,
-      status: 'timeout',
-      expanded: false,
-    },
-    {
-      modelId: 'deepseek/deepseek-r1',
-      provider: 'deepseek',
-      modelName: 'DeepSeek R1',
-      content:
-        'The illusion of explanatory depth — people consistently overestimate their understanding of complex systems. In an era of black-box AI, geopolitical volatility, and technological acceleration, this manifests as catastrophic policy and personal decisions made with false confidence.',
-      durationMs: 2450,
-      status: 'success',
-      tokenCount: 63,
-      expanded: false,
-    },
-  ],
-  synthesis: {
-    content:
-      'The convergence of your six advisor models points to a single meta-theme: 2025 is the year cognitive biases became structurally reinforced by the information environment itself. The availability heuristic (Llama), automation bias (GPT-4o), confirmation bias (Claude), and scope insensitivity (Gemini) are not independent phenomena — they are facets of a deeper epistemic problem: algorithmic systems that profit from bias amplification have made self-correction structurally harder.\n\nApplying your doctrine: you have historically prioritized calibration over confidence. The illusion of explanatory depth (DeepSeek) aligns most closely with your logged cognitive vulnerabilities. The advisor consensus points to automation bias as the most novel and highest-stakes bias of 2025 — but your constitution flags sycophancy risk in agreeing with the plurality. My synthesis: the illusion of explanatory depth is your personal highest-leverage target, because it is the bias that makes all other biases invisible to you.',
-    sourcesUsed: ['Llama 3.2', 'GPT-4o', 'Claude 3.5 Sonnet', 'Gemini 2.5 Flash', 'DeepSeek R1'],
-    consensusAreas: [
-      'All models agree the information environment structurally amplifies bias',
-      'Algorithmic personalization is a root cause, not a symptom',
-      'The problem has intensified post-2023',
-    ],
-    disagreementAreas: [
-      'Which specific bias is most important (5 different answers from 5 models)',
-      'Whether the solution is individual (calibration) or systemic (regulation)',
-    ],
-    atlasJudgment:
-      'Your personal cognitive signature weights first-principles reasoning over consensus. I applied a 0.6× discount to models agreeing with the plurality and a 1.4× boost to the outlier (DeepSeek R1) given your documented pattern of finding value in contrarian framings.',
-    confidence: 0.82,
-  },
-};
+// No mock orchestration data — use real data from backend or show empty state
 
 // ─────────────────────────────────────────────────────────────────────────────
 // UTILITY FUNCTIONS
@@ -2071,8 +2032,8 @@ export default function ModelHubChamber() {
     return init as Record<ProviderID, ProviderState>;
   });
 
-  // Orchestration monitor data
-  const [orchResult, setOrchResult] = useState<OrchestrationResult | null>(MOCK_ORCHESTRATION);
+  // Orchestration monitor data — null until real data arrives from backend
+  const [orchResult, setOrchResult] = useState<OrchestrationResult | null>(null);
 
   // ── Effects ──────────────────────────────────────────────────────────────
 
@@ -2114,7 +2075,7 @@ export default function ModelHubChamber() {
         }
       })
       .catch(() => {
-        // Use mock data — already set
+        // No orchestration data available — leave as null for empty state
       });
     return () => controller.abort();
   }, []);
@@ -2149,26 +2110,35 @@ export default function ModelHubChamber() {
     try {
       const res = await fetch(
         `/api/v1/models/check?provider=${providerId}`,
-        { signal: AbortSignal.timeout(6000) }
+        { signal: AbortSignal.timeout(6000), credentials: 'include' }
       );
-      if (res.ok) {
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+      const data = await res.json() as { available?: boolean };
+      if (data.available) {
         setProviderStates((prev) => ({
           ...prev,
           [providerId]: { ...prev[providerId], connectionStatus: 'connected' },
         }));
       } else {
-        throw new Error(`HTTP ${res.status}`);
+        setProviderStates((prev) => ({
+          ...prev,
+          [providerId]: {
+            ...prev[providerId],
+            connectionStatus: 'error',
+            errorMsg: 'API key not configured',
+          },
+        }));
       }
     } catch {
-      // Simulate when backend is unavailable
-      await new Promise((r) => setTimeout(r, 1000));
-      const success = Math.random() > 0.35;
+      // Backend unavailable — report honestly instead of random simulation
       setProviderStates((prev) => ({
         ...prev,
         [providerId]: {
           ...prev[providerId],
-          connectionStatus: success ? 'connected' : 'error',
-          errorMsg: success ? undefined : 'Could not reach provider endpoint.',
+          connectionStatus: 'error',
+          errorMsg: 'Backend unavailable — cannot test connectivity',
         },
       }));
     }
