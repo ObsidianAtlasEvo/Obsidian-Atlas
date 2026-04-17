@@ -1,0 +1,33 @@
+-- ============================================================================
+-- Migration 003: Audit note — empty Supabase tables (no-op)
+-- Date: 2026-04-17
+-- ============================================================================
+--
+-- The following Supabase tables exist but contain 0 rows:
+--
+--   atlas_system_prompts
+--   atlas_feature_flags
+--   atlas_mind_profiles
+--
+-- AUDIT RESULT: These tables are NOT used by the application code.
+-- The backend uses local SQLite equivalents instead:
+--
+--   atlas_system_prompts  -> SQLite: user_prompt_addenda      (contextAssembler.ts)
+--   atlas_feature_flags   -> SQLite: user_feature_recommendations (policyStore.ts)
+--   atlas_mind_profiles   -> SQLite: mind_profiles            (overseerService.ts)
+--
+-- All SQLite read paths handle empty/missing tables gracefully:
+--   - user_prompt_addenda:          returns '' on empty   (contextAssembler.ts:39-41)
+--   - user_feature_recommendations: returns []  on empty   (policyStore.ts:43-46)
+--   - mind_profiles:                defaults depth=0.5     (overseerService.ts:244-246)
+--
+-- Data is populated on first user interaction via the evolution engine
+-- (subsystemEvolvers.ts), not via seed data. Empty tables are expected
+-- until a user triggers an evolution cycle.
+--
+-- The Supabase tables appear to be reserved for a future migration of
+-- these local stores to Supabase. No seed data is needed.
+--
+-- This migration is intentionally a no-op.
+-- ============================================================================
+SELECT 1;
