@@ -183,7 +183,6 @@ await registerRateLimit(app);
 await registerHealthRoutes(app);
 registerInferenceQueueRoutes(app);
 registerAuthRoutes(app);
-await registerOllamaCompatRoutes(app);
 registerOmniStreamRoutes(app);
 registerSovereigntyRoutes(app);
 // ── Governance routes — all require a valid Atlas session ─────────────────
@@ -194,6 +193,7 @@ await app.register(async (protected_app) => {
       return reply.code(401).send({ error: 'Unauthorized — Atlas session required' });
     }
   });
+  await registerOllamaCompatRoutes(protected_app);
   registerCognitiveGovernanceRoutes(protected_app);
   registerLongitudinalRoutes(protected_app);
   registerStrategicModelingRoutes(protected_app);

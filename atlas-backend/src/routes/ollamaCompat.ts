@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { env } from '../config/env.js';
 import { streamChat } from '../services/ollama.js';
+import { messagesWithPrimeDirective } from '../services/intelligence/primeDirective.js';
 
 /**
  * Ollama-compatible /api/chat endpoint.
@@ -9,6 +10,12 @@ import { streamChat } from '../services/ollama.js';
  */
 export async function registerOllamaCompatRoutes(app: FastifyInstance): Promise<void> {
   app.post('/v1/ollama/chat', async (request, reply) => {
+    // Auth gate: userId must come from verified session (route is inside protectedApp scope)
+    const userId = request.atlasAuthUser?.databaseUserId ?? request.atlasSession?.userId;
+    if (!userId) {
+      return reply.code(401).send({ error: 'Authentication required' });
+    }
+
     // Guard: when Ollama is disabled, at least one cloud provider key must be set
     if (
       env.disableLocalOllama &&
@@ -33,10 +40,13 @@ export async function registerOllamaCompatRoutes(app: FastifyInstance): Promise<
       return reply.code(400).send({ error: 'messages array required' });
     }
 
-    const messages = body.messages.map((m) => ({
+    const rawMessages = body.messages.map((m) => ({
       role: m.role as 'system' | 'user' | 'assistant',
       content: m.content,
     }));
+
+    // Inject Prime Directive so the LLM operates under Atlas identity context
+    const messages = messagesWithPrimeDirective(userId, rawMessages);
 
     const temperature = body.options?.temperature ?? 0.7;
 
