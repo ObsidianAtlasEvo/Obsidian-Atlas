@@ -382,7 +382,7 @@ async function applyPostGuards(input: PlanSwarmExecutionInput, guarded: Executio
         .get(input.userId) as { confidence: number } | undefined;
       const coherence = coherenceRow?.confidence ?? 1.0;
       if (coherence < 0.4) {
-        const baseModel = plan.strategy === 'direct' ? plan.model : DEFAULT_SWARM_MODEL_ID;
+        const baseModel = plan.strategy === 'direct' ? plan.model : FALLBACK_SWARM_MODEL_ID;
         plan = {
           strategy: 'swarm',
           steps: [
