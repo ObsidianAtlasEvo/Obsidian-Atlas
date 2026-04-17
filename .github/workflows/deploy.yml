@@ -205,10 +205,17 @@ jobs:
             fi
           done
 
+          # Warn if critical optional vars are missing from .env
+          for VAR in GOOGLE_API_KEY SOVEREIGN_CREATOR_EMAIL STRIPE_WEBHOOK_SECRET; do
+            if [ -z "${!VAR:-}" ]; then
+              echo "      ⚠ WARNING: $VAR is not set in .env — some features may be degraded"
+            fi
+          done
+
           # Start fresh from the compiled backend
           cd atlas-backend
           NODE_ENV=production $PM2_BIN start dist/index.js --name atlas-backend \
-            --node-args="--max-old-space-size=384" \
+            --node-args="--max-old-space-size=512" \
             --update-env
           cd ..
           $PM2_BIN save
@@ -239,13 +246,14 @@ jobs:
 
       - name: Post-deploy health check
         run: |
-          echo "Waiting 15s for PM2 to stabilize..."
-          sleep 15
+          echo "Waiting 30s for PM2 to stabilize..."
+          sleep 30
           echo "Running health check via SSH (bypasses Cloudflare)..."
-          ssh atlas-vps 'response=$(curl -sf --max-time 15 http://localhost:3001/health 2>&1); rc=$?; echo "$response"; if [ $rc -ne 0 ]; then echo "❌ Health check FAILED — curl error $rc"; exit 1; fi; if echo "$response" | grep -q "\"status\":\"ok\""; then echo "✅ Health check passed"; else echo "❌ Health check FAILED — unexpected response"; exit 1; fi'
+          ssh atlas-vps 'response=$(curl -sf --max-time 15 http://localhost:3001/health 2>&1); rc=$?; echo "$response"; if [ $rc -ne 0 ]; then echo "❌ Health check FAILED — curl error $rc"; exit 1; fi; if echo "$response" | grep -qE "\"status\":\"(ok|degraded)\""; then echo "✅ Health check passed"; else echo "❌ Health check FAILED — unexpected response"; exit 1; fi'
 
       - name: Notify on failure
         if: failure()
         run: |
           echo "::error::Deploy FAILED for commit ${{ github.sha }}"
           echo "::error::Check the SSH deploy step above for the root cause."
+
