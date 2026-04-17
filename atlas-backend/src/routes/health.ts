@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import { getDb } from '../db/sqlite.js';
 
 // ---------------------------------------------------------------------------
 // Dependency probe with timeout
@@ -63,11 +64,17 @@ export default async function healthRoutes(app: FastifyInstance): Promise<void> 
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
       }),
 
-      // 3. Memory / heap usage (fail if heap used > 90%)
+      // 3. SQLite (backbone of 20+ tables — locked WAL, corruption, disk full)
+      probeWithTimeout('sqlite', async () => {
+        const db = getDb();
+        db.prepare('SELECT 1').get();
+      }),
+
+      // 4. Memory / heap usage (fail if heap used > 85%)
       probeWithTimeout('memory', async () => {
         const { heapUsed, heapTotal } = process.memoryUsage();
         const pct = heapUsed / heapTotal;
-        if (pct > 0.97) throw new Error(`Heap at ${Math.round(pct * 100)}%`);
+        if (pct > 0.85) throw new Error(`Heap at ${Math.round(pct * 100)}%`);
       }),
     ]);
 
