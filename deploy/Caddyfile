@@ -27,11 +27,9 @@ obsidianatlastech.com, www.obsidianatlastech.com {
 
 	# Strip /api prefix (same as Vite: /api/v1/foo → upstream /v1/foo)
 	handle_path /api/* {
-		# Strip spoofable identity header before it reaches the backend
-		header_up -X-Atlas-Verified-Email
-
-		# flush_interval -1 disables buffering so SSE streams reach the browser immediately
 		reverse_proxy 127.0.0.1:3001 {
+			# Strip spoofable identity header before it reaches the backend
+			header_up -X-Atlas-Verified-Email
 			flush_interval -1
 		}
 	}
