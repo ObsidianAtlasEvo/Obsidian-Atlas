@@ -75,9 +75,9 @@ export function createGroqModelProvider(modelId?: string): ModelProvider {
     },
 
     async embed(_input: EmbeddingInput): Promise<number[][]> {
-      // Groq does not offer an embeddings endpoint — return empty vectors
-      // Background services that call embed() will need to handle this gracefully
-      return _input.input.map(() => []);
+      // AUDIT FIX: P2-16 — Groq does not support embeddings. Throw instead of returning empty vectors
+      // which cause downstream vector search to return meaningless results.
+      throw new Error('Groq does not support embeddings. Configure a dedicated embedding provider (e.g., GEMINI_API_KEY for Gemini embeddings).');
     },
   };
 }

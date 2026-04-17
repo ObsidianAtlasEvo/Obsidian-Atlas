@@ -1,6 +1,7 @@
 import { GoogleGenAI } from '@google/genai';
 import { env } from '../../config/env.js';
 import type { LlmRegistryEntry } from './llmRegistry.js';
+import { assertEntryUsable } from './llmRegistry.js'; // AUDIT FIX: P1-5 import assertEntryUsable
 
 export type UniversalMessage = { role: 'system' | 'user' | 'assistant'; content: string };
 
@@ -493,6 +494,9 @@ export async function streamRegistryModel(params: {
   timeoutMs?: number;
 }): Promise<{ fullText: string; model: string }> {
   const { entry, messages, onDelta, signal, timeoutMs } = params;
+
+  // AUDIT FIX: P1-5 — validate entry is usable before dispatch (not DEPRECATED/REMOVED/gated)
+  assertEntryUsable(entry);
 
   switch (entry.backend) {
     case 'groq': {

@@ -22,7 +22,7 @@ obsidianatlastech.com, www.obsidianatlastech.com {
 		X-Content-Type-Options "nosniff"
 		Referrer-Policy "strict-origin-when-cross-origin"
 		Permissions-Policy "camera=(), microphone=(), geolocation=()"
-		Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://js.stripe.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://*.supabase.co wss://*.supabase.co https://api.openai.com https://api.groq.com https://api.anthropic.com https://generativelanguage.googleapis.com https://accounts.google.com https://js.stripe.com; frame-src https://js.stripe.com; object-src 'none'; base-uri 'self'"
+		Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' https://js.stripe.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://*.supabase.co wss://*.supabase.co https://api.openai.com https://api.groq.com https://api.anthropic.com https://generativelanguage.googleapis.com https://accounts.google.com https://js.stripe.com; frame-src https://js.stripe.com; object-src 'none'; base-uri 'self'"
 	}
 
 	# Strip /api prefix (same as Vite: /api/v1/foo → upstream /v1/foo)
@@ -34,8 +34,11 @@ obsidianatlastech.com, www.obsidianatlastech.com {
 		}
 	}
 
+	# AUDIT FIX: P2-10 — strip spoofable identity header on /auth* path
 	handle /auth* {
-		reverse_proxy 127.0.0.1:3001
+		reverse_proxy 127.0.0.1:3001 {
+			header_up -X-Atlas-Verified-Email
+		}
 	}
 
 	# Optional: same-origin Ollama for browser (matches default OLLAMA_CHAT_URL /ollama/api/chat)

@@ -63,8 +63,20 @@ function validateRequiredEnv(): void {
 }
 validateRequiredEnv();
 
-initSqlite();
-await initSemanticVectorIndex();
+// AUDIT FIX: P2-17 — wrap boot steps in error boundaries for clear failure messages
+try {
+  initSqlite();
+} catch (err) {
+  console.error('[FATAL] SQLite initialization failed. Check SQLITE_PATH and disk permissions.', err);
+  process.exit(1);
+}
+
+try {
+  await initSemanticVectorIndex();
+} catch (err) {
+  console.error('[FATAL] Semantic vector index initialization failed.', err);
+  process.exit(1);
+}
 
 // Validate auth secret is usable at boot, not lazily on first request.
 if (isGoogleAuthConfigured()) {
