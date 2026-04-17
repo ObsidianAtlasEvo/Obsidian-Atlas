@@ -366,6 +366,125 @@ async function streamOmniChat(
   }
 }
 
+// ── AUDIT FIX: P0-2 — Upgrade Modal with Stripe checkout integration ─────
+
+function UpgradeModal({ onClose }: { onClose: () => void }) {
+  const [loading, setLoading] = React.useState<'core' | 'sovereign' | null>(null);
+  const [error, setError] = React.useState<string | null>(null);
+
+  const handleCheckout = async (tier: 'core' | 'sovereign') => {
+    setLoading(tier);
+    setError(null);
+    try {
+      const res = await fetch(atlasApiUrl('/v1/billing/create-checkout-session'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ tier }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+        throw new Error((body as { error?: string }).error ?? `Checkout failed (${res.status})`);
+      }
+      const data = (await res.json()) as { url: string };
+      window.location.href = data.url; // AUDIT FIX: redirect to Stripe Checkout
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Checkout failed');
+      setLoading(null);
+    }
+  };
+
+  const btnBase: React.CSSProperties = {
+    flex: 1,
+    padding: '10px 16px',
+    borderRadius: '8px',
+    fontSize: '0.875rem',
+    fontWeight: 600,
+    cursor: 'pointer',
+    transition: 'opacity 0.15s',
+  };
+
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, zIndex: 9999,
+      background: 'rgba(0,0,0,0.75)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      backdropFilter: 'blur(4px)',
+    }}>
+      <div style={{
+        background: 'var(--atlas-void-surface, #0f1117)',
+        border: '1px solid rgba(201,162,39,0.3)',
+        borderRadius: '12px',
+        padding: '32px',
+        maxWidth: '420px',
+        width: '90%',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '16px',
+        boxShadow: '0 0 40px rgba(201,162,39,0.1)',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <span style={{ fontSize: '1.5rem' }}>&#9889;</span>
+          <h2 style={{ margin: 0, color: 'rgba(201,162,39,0.9)', fontSize: '1.1rem', fontWeight: 600 }}>
+            Daily Limit Reached
+          </h2>
+        </div>
+        <p style={{ margin: 0, color: 'rgba(226,232,240,0.7)', fontSize: '0.875rem', lineHeight: 1.6 }}>
+          You have used your 120 free chats for today. Your limit resets at midnight UTC.
+        </p>
+        <p style={{ margin: 0, color: 'rgba(226,232,240,0.5)', fontSize: '0.8rem', lineHeight: 1.6 }}>
+          Upgrade to <strong style={{ color: 'rgba(201,162,39,0.9)' }}>Atlas Core</strong> for 500 chats/day with GPT-5.4 access, or <strong style={{ color: 'rgba(201,162,39,0.9)' }}>Atlas Sovereign</strong> for unlimited chats and full model access.
+        </p>
+        {error && (
+          <p style={{ margin: 0, color: '#ef4444', fontSize: '0.8rem' }}>{error}</p>
+        )}
+        <div style={{ display: 'flex', gap: '10px', marginTop: '4px' }}>
+          <button
+            disabled={loading !== null}
+            onClick={() => handleCheckout('core')}
+            style={{
+              ...btnBase,
+              background: 'rgba(201,162,39,0.15)',
+              border: '1px solid rgba(201,162,39,0.4)',
+              color: 'rgba(201,162,39,0.9)',
+              opacity: loading !== null ? 0.6 : 1,
+            }}
+          >
+            {loading === 'core' ? 'Loading...' : 'Upgrade to Core'}
+          </button>
+          <button
+            disabled={loading !== null}
+            onClick={() => handleCheckout('sovereign')}
+            style={{
+              ...btnBase,
+              background: 'rgba(147,51,234,0.15)',
+              border: '1px solid rgba(147,51,234,0.4)',
+              color: 'rgba(147,51,234,0.9)',
+              opacity: loading !== null ? 0.6 : 1,
+            }}
+          >
+            {loading === 'sovereign' ? 'Loading...' : 'Upgrade to Sovereign'}
+          </button>
+        </div>
+        <button
+          onClick={onClose}
+          style={{
+            padding: '8px 16px',
+            background: 'transparent',
+            border: '1px solid rgba(226,232,240,0.15)',
+            borderRadius: '8px',
+            color: 'rgba(226,232,240,0.4)',
+            fontSize: '0.875rem',
+            cursor: 'pointer',
+          }}
+        >
+          Dismiss
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ── Main Chamber ──────────────────────────────────────────────────────────
 
 export default function AtlasChamber() {
@@ -723,74 +842,9 @@ export default function AtlasChamber() {
         )}
       </div>
 
+      {/* AUDIT FIX: P0-2 — Wire billing checkout flow via Stripe create-checkout-session */}
       {showUpgradeModal && (
-        <div style={{
-          position: 'fixed', inset: 0, zIndex: 9999,
-          background: 'rgba(0,0,0,0.75)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          backdropFilter: 'blur(4px)',
-        }}>
-          <div style={{
-            background: 'var(--atlas-void-surface, #0f1117)',
-            border: '1px solid rgba(201,162,39,0.3)',
-            borderRadius: '12px',
-            padding: '32px',
-            maxWidth: '420px',
-            width: '90%',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '16px',
-            boxShadow: '0 0 40px rgba(201,162,39,0.1)',
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-              <span style={{ fontSize: '1.5rem' }}>⚡</span>
-              <h2 style={{ margin: 0, color: 'rgba(201,162,39,0.9)', fontSize: '1.1rem', fontWeight: 600 }}>
-                Daily Limit Reached
-              </h2>
-            </div>
-            <p style={{ margin: 0, color: 'rgba(226,232,240,0.7)', fontSize: '0.875rem', lineHeight: 1.6 }}>
-              You've used your 120 free chats for today. Your limit resets at midnight UTC.
-            </p>
-            <p style={{ margin: 0, color: 'rgba(226,232,240,0.5)', fontSize: '0.8rem', lineHeight: 1.6 }}>
-              Upgrade to <strong style={{ color: 'rgba(201,162,39,0.9)' }}>Atlas Core</strong> for 500 chats/day with GPT-5.4 mini access, or <strong style={{ color: 'rgba(201,162,39,0.9)' }}>Atlas Sovereign</strong> for unlimited chats and full model access.
-            </p>
-            <div style={{ display: 'flex', gap: '10px', marginTop: '4px' }}>
-              <button
-                onClick={() => {
-                  setShowUpgradeModal(false);
-                  window.location.href = '/billing';
-                }}
-                style={{
-                  flex: 1,
-                  padding: '10px 16px',
-                  background: 'rgba(201,162,39,0.15)',
-                  border: '1px solid rgba(201,162,39,0.4)',
-                  borderRadius: '8px',
-                  color: 'rgba(201,162,39,0.9)',
-                  fontSize: '0.875rem',
-                  fontWeight: 600,
-                  cursor: 'pointer',
-                }}
-              >
-                Upgrade Now
-              </button>
-              <button
-                onClick={() => setShowUpgradeModal(false)}
-                style={{
-                  padding: '10px 16px',
-                  background: 'transparent',
-                  border: '1px solid rgba(226,232,240,0.15)',
-                  borderRadius: '8px',
-                  color: 'rgba(226,232,240,0.4)',
-                  fontSize: '0.875rem',
-                  cursor: 'pointer',
-                }}
-              >
-                Dismiss
-              </button>
-            </div>
-          </div>
-        </div>
+        <UpgradeModal onClose={() => setShowUpgradeModal(false)} />
       )}
     </div>
   );

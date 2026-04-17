@@ -234,12 +234,12 @@ export const OPENAI_MODEL_GPT4O_MINI  = 'gpt-4o-mini' as const;  // DEPRECATED
 const sqlitePath = path.resolve(process.cwd(), raw.SQLITE_PATH);
 const dataDir = path.dirname(sqlitePath);
 
+// AUDIT FIX: P2-18 — gate localhost origins behind NODE_ENV to prevent production CORS bypass
 const DEFAULT_CORS_ORIGINS = [
-  'http://localhost:5173',
-  'http://localhost:3000',
   'https://obsidianatlastech.com',
   'https://www.obsidianatlastech.com',
-] as const;
+  ...(process.env.NODE_ENV !== 'production' ? ['http://localhost:5173', 'http://localhost:3000'] : []),
+];
 
 function parseCorsOrigins(raw: string | undefined): string[] {
   if (!raw?.trim()) return [...DEFAULT_CORS_ORIGINS];

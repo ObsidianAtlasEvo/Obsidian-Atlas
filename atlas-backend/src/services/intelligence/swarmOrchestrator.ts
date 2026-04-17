@@ -391,8 +391,8 @@ async function applyPostGuards(input: PlanSwarmExecutionInput, guarded: Executio
         };
         plan = enforcePlanRegistryAndCredentials(plan);
       }
-    } catch {
-      // resonance_state table may not exist yet — safe to skip
+    } catch (err) {
+      console.warn('[swarm] Resonance coherence check failed (safe to skip):', err); // AUDIT FIX: P1-6 log silent failure
     }
   }
 
@@ -536,7 +536,8 @@ export async function planSwarmExecution(input: PlanSwarmExecutionInput): Promis
     guarded = enforceTierModelAccess(guarded, input.userTier);
 
     return applyPostGuards(input, guarded);
-  } catch {
+  } catch (err) {
+    console.warn('[swarm] Chief of Staff routing failed:', err); // AUDIT FIX: P1-6 log silent failure
     return { strategy: 'direct', model: DEFAULT_SWARM_MODEL_ID, reason: 'chief_exception' };
   } finally {
     clearTimeout(timeout);

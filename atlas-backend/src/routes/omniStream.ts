@@ -75,7 +75,7 @@ function sanitizeErrorMessage(msg: string): string {
 }
 
 const omniBodySchema = z.object({
-  userId: z.string().min(1),
+  userId: z.string().min(1).optional(), // AUDIT FIX: userId is now optional — session is authoritative
   requestId: z.string().uuid().optional(),
   /** 1–5: concise → deep synthesis (Section IX posture scale). Omitted → inferred from line of inquiry. */
   posture: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4), z.literal(5)]).optional(),
@@ -202,7 +202,8 @@ async function resolvePreferredModel(
     if (!tierMatch) return null;
 
     return preferred;
-  } catch {
+  } catch (err) {
+    console.warn('[omniStream] Failed to resolve preferred model:', err); // AUDIT FIX: P1-6 log silent failure
     return null; // non-fatal — fall back to auto-selection
   }
 }
@@ -231,7 +232,7 @@ export function registerOmniStreamRoutes(app: FastifyInstance): void {
     }
 
     const {
-      userId,
+      userId: bodyUserId,
       messages,
       requestId: bodyRequestId,
       mirrorforge,
@@ -244,18 +245,26 @@ export function registerOmniStreamRoutes(app: FastifyInstance): void {
     const traceId = randomUUID();
     const requestId = bodyRequestId ?? newGpuRequestId();
 
-    touchChronosActivity(userId);
-
-    // Attach session BEFORE hijacking — must complete before reply is taken over
-    // so that auth errors can still return proper HTTP status codes.
+    // AUDIT FIX: Auth gate — attach session BEFORE any processing.
+    // Reject unauthenticated requests with 401.
     await attachAtlasSession(request);
+    if (!request.atlasVerifiedEmail) {
+      return reply.code(401).send({ error: 'Unauthorized — Atlas session required' }); // AUDIT FIX: P0-1 auth gate
+    }
     const verifiedEmail = getVerifiedUserEmail(request);
+
+    // AUDIT FIX: P0-1 — Session-derived userId is authoritative for quota, tier, and evolution.
+    // Body userId is only used as a fallback for preference lookups (backward compat).
+    const userId = request.atlasAuthUser?.databaseUserId ?? request.atlasSession?.userId ?? bodyUserId ?? '';
+
+    touchChronosActivity(userId);
 
     let stripeTier: SubscriptionTier | undefined;
     try {
       const subStatus = await getSubscriptionStatus(userId, getDb(), verifiedEmail ?? undefined);
       stripeTier = subStatus?.tier ?? undefined;
-    } catch {
+    } catch (err) {
+      console.warn('[omniStream] Failed to resolve subscription tier:', err); // AUDIT FIX: P1-6 log silent failure
       // non-fatal — fall back to flat quota
     }
 
@@ -273,7 +282,7 @@ export function registerOmniStreamRoutes(app: FastifyInstance): void {
     // userPreferencesRoutes.ts writes.  Fall back to body userId if no session.
     const preferenceUserId = request.atlasSession?.userId ?? userId;
     const preferredModel = stripeTier
-      ? await resolvePreferredModel(preferenceUserId, stripeTier).catch(() => null)
+      ? await resolvePreferredModel(preferenceUserId, stripeTier).catch((err) => { console.warn('[omniStream] Failed to resolve preferred model:', err); return null; }) // AUDIT FIX: P1-6 log silent failure
       : null;
 
     reply.hijack();
@@ -581,7 +590,8 @@ export function registerOmniStreamRoutes(app: FastifyInstance): void {
           overseerPromise,
           new Promise<null>((resolve) => setTimeout(() => resolve(null), OVERSEER_SSE_TIMEOUT_MS)),
         ]);
-      } catch {
+      } catch (err) {
+        console.error('[omniStream] Overseer failed:', err); // AUDIT FIX: P1-6 log silent failure
         overseerResult = null;
       }
 
@@ -608,7 +618,7 @@ export function registerOmniStreamRoutes(app: FastifyInstance): void {
           requestMessages,
           verifiedEmail,
         });
-      }).catch(() => { /* non-fatal */ });
+      }).catch((err) => { console.warn('[omniStream] Evolution pipeline failed:', err); }); // AUDIT FIX: P1-6 log silent failure
     } catch (e) {
       const rawMessage = e instanceof Error ? e.message : String(e);
       request.log.error(e);
