@@ -134,11 +134,20 @@ export function onAuthStateChanged(_auth: Auth, nextOrObserver: AuthCb): () => v
   };
 }
 
+/**
+ * @deprecated UNSAFE — stores passwords in plaintext in IndexedDB.
+ * This method is dead code and must not be re-enabled without a proper
+ * hashing implementation. Google OAuth is the only supported auth path.
+ * @throws Always throws in production builds.
+ */
 export async function signInWithEmailAndPassword(
   _auth: Auth,
   email: string,
   password: string
 ): Promise<UserCredential> {
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('[AUTH] Email/password auth is disabled. Use Google OAuth.');
+  }
   const trimmed = email.trim();
   const uid = stableUidFromEmail(trimmed);
   let rec = await idbAuthGet(uid);
@@ -158,11 +167,20 @@ export async function signInWithEmailAndPassword(
   return { user };
 }
 
+/**
+ * @deprecated UNSAFE — stores passwords in plaintext in IndexedDB.
+ * This method is dead code and must not be re-enabled without a proper
+ * hashing implementation. Google OAuth is the only supported auth path.
+ * @throws Always throws in production builds.
+ */
 export async function createUserWithEmailAndPassword(
   _auth: Auth,
   email: string,
   password: string
 ): Promise<UserCredential> {
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('[AUTH] Email/password auth is disabled. Use Google OAuth.');
+  }
   const trimmed = email.trim();
   const uid = stableUidFromEmail(trimmed);
   const existing = await idbAuthGet(uid);

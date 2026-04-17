@@ -23,7 +23,7 @@ import { registerIntelligenceChambersRoutes } from './routes/intelligenceChamber
 import { registerMindMapRoutes } from './routes/mindMapRoutes.js';
 import { registerSovereigntyRoutes } from './routes/sovereigntyRoutes.js';
 import { registerAuthRoutes } from './routes/authRoutes.js';
-import { attachAtlasSession } from './services/auth/authProvider.js';
+import { attachAtlasSession, isGoogleAuthConfigured, jwtKeyMaterial } from './services/auth/authProvider.js';
 import { registerDiagnosticsReportRoutes } from './routes/diagnosticsReportRoutes.js';
 import { registerDegradedModeRoutes } from './routes/degradedModeRoutes.js';
 import { startPolling } from './services/governance/degraded/degradedModeOracle.js';
@@ -46,8 +46,15 @@ import { loadPersistedJobs } from './services/inference/queueManager.js';
 // Validate critical env vars BEFORE anything else touches secrets or DB.
 // ---------------------------------------------------------------------------
 function validateRequiredEnv(): void {
-  const required = ['AUTH_SECRET', 'SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY'];
+  const required = ['SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY'];
   const missing = required.filter((k) => !process.env[k]);
+
+  // AUTH_SECRET and NEXTAUTH_SECRET are interchangeable — env.authSecret
+  // resolves to NEXTAUTH_SECRET ?? AUTH_SECRET, so either being set is valid.
+  if (!process.env.AUTH_SECRET && !process.env.NEXTAUTH_SECRET) {
+    missing.push('AUTH_SECRET or NEXTAUTH_SECRET');
+  }
+
   if (missing.length > 0) {
     throw new Error(
       `[FATAL] Missing required environment variables: ${missing.join(', ')}. Server cannot start without them.`,
@@ -58,6 +65,19 @@ validateRequiredEnv();
 
 initSqlite();
 await initSemanticVectorIndex();
+
+// Validate auth secret is usable at boot, not lazily on first request.
+if (isGoogleAuthConfigured()) {
+  try {
+    jwtKeyMaterial(); // will throw if secret is missing/empty
+    // eslint-disable-next-line no-console -- logged before Fastify instance exists
+    console.log('[AUTH] JWT key material validated at boot');
+  } catch (err) {
+    // eslint-disable-next-line no-console -- logged before Fastify instance exists
+    console.error('[AUTH] FATAL: JWT key material is invalid:', (err as Error).message);
+    process.exit(1);
+  }
+}
 
 // Rehydrate inference queue — mark any stale pending/in_progress jobs from prior run.
 const recoveredJobs = await loadPersistedJobs().catch((err) => {
@@ -73,7 +93,7 @@ if (recoveredJobs > 0) {
 const app = Fastify({
   logger: {
     level: process.env.LOG_LEVEL ?? 'info',
-    transport: process.env.NODE_ENV === 'development'
+    transport: env.nodeEnv === 'development'
       ? { target: 'pino-pretty', options: { colorize: true } }
       : undefined,
     redact: ['req.headers.authorization', 'req.headers["x-api-key"]', 'req.body.password'],
@@ -105,7 +125,7 @@ app.setErrorHandler((err, request, reply) => {
   const status = e.statusCode ?? 500;
   reply.status(status >= 400 && status < 600 ? status : 500).send({
     error: 'internal_error',
-    message: process.env.NODE_ENV === 'production' ? 'Request failed' : String(e.message ?? err),
+    message: env.nodeEnv === 'production' ? 'Request failed' : String(e.message ?? err),
   });
 });
 

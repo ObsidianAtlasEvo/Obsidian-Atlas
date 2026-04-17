@@ -904,35 +904,43 @@ export function initSqlite(): Database.Database {
   if (_db) return _db;
 
   const file = env.sqlitePath;
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  const database = new Database(file);
-  database.pragma('journal_mode = WAL');
-  database.pragma('foreign_keys = ON');
-  database.exec(SCHEMA);
-  database.exec(SOVEREIGNTY_LAYER_V1);
-  database.exec(SOVEREIGNTY_LAYER_V2);
-  database.exec(SOVEREIGNTY_LAYER_V3);
-  database.exec(SOVEREIGNTY_LAYER_V4);
-  database.exec(SOVEREIGNTY_LAYER_V5);
-  database.exec(SOVEREIGNTY_LAYER_V6);
-  database.exec(RETENTION_TABLES);
-  database.exec(GAP_LEDGER_TABLES);
-  database.exec(CHANGE_CONTROL_TABLE);
-  database.exec(SUBSTRATE_UNIFICATION);
-  migrateBillingSubscriptionSchema(database);
-  runBillingMigration(database);
-  migratePolicyProfileColumns(database);
-  migrateSectionVIIIContinuity(database);
-  migrateArchivedAtIndexes(database);
-  _db = database;
-  return _db;
+  console.log(`[SQLite] Opening database at ${file}`);
+
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const database = new Database(file);
+    database.pragma('journal_mode = WAL');
+    database.pragma('foreign_keys = ON');
+    database.exec(SCHEMA);
+    database.exec(SOVEREIGNTY_LAYER_V1);
+    database.exec(SOVEREIGNTY_LAYER_V2);
+    database.exec(SOVEREIGNTY_LAYER_V3);
+    database.exec(SOVEREIGNTY_LAYER_V4);
+    database.exec(SOVEREIGNTY_LAYER_V5);
+    database.exec(SOVEREIGNTY_LAYER_V6);
+    database.exec(RETENTION_TABLES);
+    database.exec(GAP_LEDGER_TABLES);
+    database.exec(CHANGE_CONTROL_TABLE);
+    database.exec(SUBSTRATE_UNIFICATION);
+    migrateBillingSubscriptionSchema(database);
+    runBillingMigration(database);
+    migratePolicyProfileColumns(database);
+    migrateSectionVIIIContinuity(database);
+    migrateArchivedAtIndexes(database);
+    _db = database;
+    return _db;
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[FATAL] SQLite cannot open database at ${file}: ${msg}. Check that the directory exists and is writable.`);
+    throw err;
+  }
 }
 
 /**
  * Reconcile the user_subscriptions table from the old snake_case schema
  * (Phase 3 initial commit) to the canonical camelCase schema used by
- * subscriptionSchema.ts / stripeService.ts. Idempotent — skips if already
- * migrated or table does not exist yet.
+ * subscriptionSchema.ts / stripeService.ts. Idempotent — uses safe
+ * ALTER TABLE ADD COLUMN instead of DROP TABLE to preserve existing data.
  */
 function migrateBillingSubscriptionSchema(database: Database.Database): void {
   const tableExists = database
@@ -946,11 +954,26 @@ function migrateBillingSubscriptionSchema(database: Database.Database): void {
   // If the table already has camelCase columns, nothing to do
   if (colNames.has('userId')) return;
 
-  // Old schema detected (snake_case: user_id, stripe_customer_id, etc.)
-  // Drop and let runBillingMigration recreate with canonical camelCase schema.
-  // Safe because this table was only added in the Phase 3 groundwork commit
-  // and has no production data yet.
-  database.exec(`DROP TABLE IF EXISTS user_subscriptions`);
+  // Old schema detected (snake_case columns). Add any missing camelCase columns
+  // so downstream code works regardless of which schema the table was created with.
+  const additions: [string, string][] = [
+    ['userId',              'TEXT'],
+    ['stripeCustomerId',    'TEXT'],
+    ['stripeSubscriptionId','TEXT'],
+    ['tier',                "TEXT NOT NULL DEFAULT 'free'"],
+    ['status',              "TEXT NOT NULL DEFAULT 'inactive'"],
+    ['currentPeriodEnd',    'INTEGER'],
+    ['cancelAtPeriodEnd',   'INTEGER NOT NULL DEFAULT 0'],
+    ['gracePeriodEnd',      'INTEGER'],
+    ['createdAt',           'INTEGER'],
+    ['updatedAt',           'INTEGER'],
+  ];
+
+  for (const [col, typedef] of additions) {
+    if (!colNames.has(col)) {
+      database.exec(`ALTER TABLE user_subscriptions ADD COLUMN ${col} ${typedef}`);
+    }
+  }
 }
 
 /** Add Chrysalis telemetry columns on existing DBs (idempotent). */
