@@ -1,6 +1,9 @@
-import React, { useCallback } from 'react';
+import React, { useCallback, useEffect } from 'react';
 import { useAtlasStore } from '../../store/useAtlasStore';
 import { useIsMobile } from '../../hooks/useIsMobile';
+import { useAtlasAuth } from '../Auth/atlasAuthContext';
+import { SOVEREIGN_CREATOR_EMAIL } from '../../config/sovereignCreator';
+import { nowISO } from '../../lib/persistence';
 import { atlasAuthUrl } from '../../lib/atlasApi';
 import NavRail from './NavRail';
 import ChamberView from './ChamberView';
@@ -12,6 +15,29 @@ export default function AppShell() {
   const setSidebarCollapsed = useAtlasStore((s) => s.setSidebarCollapsed);
   const setSettingsOpen = useAtlasStore((s) => s.setSettingsOpen);
   const isMobile = useIsMobile();
+
+  // ── Bridge Google OAuth JWT session into Zustand store ──────────────
+  const atlasSession = useAtlasAuth();
+  const setCurrentUser = useAtlasStore((s) => s.setCurrentUser);
+  const hydrateUserData = useAtlasStore((s) => s.hydrateUserData);
+
+  useEffect(() => {
+    if (!atlasSession) return;
+    const role = atlasSession.email.toLowerCase() === SOVEREIGN_CREATOR_EMAIL.toLowerCase()
+      ? 'sovereign_creator' as const
+      : 'registered_user' as const;
+    const profile = {
+      uid: atlasSession.databaseUserId,
+      email: atlasSession.email,
+      emailVerified: true,
+      role,
+      createdAt: nowISO(),
+      securitySettings: { mfaEnabled: false, passkeyEnabled: false },
+      privacySettings: { dataMinimization: true, memorySovereignty: true },
+    };
+    setCurrentUser(profile);
+    void hydrateUserData(atlasSession.databaseUserId);
+  }, [atlasSession, setCurrentUser, hydrateUserData]);
 
   const handleSettingsClick = useCallback(() => {
     setSettingsOpen(true);

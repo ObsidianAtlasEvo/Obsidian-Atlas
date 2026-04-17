@@ -18,9 +18,7 @@ import { loadUserProfile, saveUserProfile, loadJournal, saveJournalEntry,
          deleteJournalEntry, loadDecisions, saveDecision, deleteDecision,
          loadDoctrine, saveDoctrine, deleteDoctrine, loadDirectives,
          saveDirective, deleteDirective, upsertUserProfile, generateId, nowISO } from '../lib/persistence';
-import { auth, onAuthStateChanged } from 'firebase/auth';
 import { syncToBackend, hydrateFromBackend, migrateLocalToBackend } from '../lib/sovereignSync';
-import { SOVEREIGN_CREATOR_EMAIL } from '../config/sovereignCreator';
 
 import type {
   AppState,
@@ -232,28 +230,9 @@ export const useAtlasStore = create<AtlasStore>()(
   // ── Auth ─────────────────────────────────────────────────────────────
 
   hydrateAuth: () => {
-    onAuthStateChanged(auth, async (firebaseUser) => {
-      if (!firebaseUser) {
-        set({ currentUser: undefined, isAuthReady: true, activeMode: 'auth' });
-        return;
-      }
-
-      // Build minimal profile from auth state first (instant)
-      const minimalProfile: UserProfile = {
-        uid: firebaseUser.uid,
-        email: firebaseUser.email ?? '',
-        emailVerified: firebaseUser.emailVerified,
-        role: firebaseUser.email === SOVEREIGN_CREATOR_EMAIL ? 'sovereign_creator' : 'registered_user',
-        createdAt: nowISO(),
-        securitySettings: { mfaEnabled: false, passkeyEnabled: false },
-        privacySettings: { dataMinimization: true, memorySovereignty: true },
-      };
-
-      set({ currentUser: minimalProfile, isAuthReady: true });
-
-      // Then hydrate full profile + data from IDB
-      await get().hydrateUserData(firebaseUser.uid);
-    });
+    // Auth hydration is now handled by AppShell via the Google OAuth JWT session.
+    // The Firebase shim's sessionStorage-based session is not used for OAuth flows.
+    set({ isAuthReady: true });
   },
 
   setCurrentUser: (profile) => set({ currentUser: profile ?? undefined }),
