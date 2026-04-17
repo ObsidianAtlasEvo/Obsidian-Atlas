@@ -46,8 +46,15 @@ import { loadPersistedJobs } from './services/inference/queueManager.js';
 // Validate critical env vars BEFORE anything else touches secrets or DB.
 // ---------------------------------------------------------------------------
 function validateRequiredEnv(): void {
-  const required = ['AUTH_SECRET', 'SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY'];
+  const required = ['SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY'];
   const missing = required.filter((k) => !process.env[k]);
+
+  // AUTH_SECRET and NEXTAUTH_SECRET are interchangeable — env.authSecret
+  // resolves to NEXTAUTH_SECRET ?? AUTH_SECRET, so either being set is valid.
+  if (!process.env.AUTH_SECRET && !process.env.NEXTAUTH_SECRET) {
+    missing.push('AUTH_SECRET or NEXTAUTH_SECRET');
+  }
+
   if (missing.length > 0) {
     throw new Error(
       `[FATAL] Missing required environment variables: ${missing.join(', ')}. Server cannot start without them.`,
@@ -86,7 +93,7 @@ if (recoveredJobs > 0) {
 const app = Fastify({
   logger: {
     level: process.env.LOG_LEVEL ?? 'info',
-    transport: process.env.NODE_ENV === 'development'
+    transport: env.nodeEnv === 'development'
       ? { target: 'pino-pretty', options: { colorize: true } }
       : undefined,
     redact: ['req.headers.authorization', 'req.headers["x-api-key"]', 'req.body.password'],
@@ -118,7 +125,7 @@ app.setErrorHandler((err, request, reply) => {
   const status = e.statusCode ?? 500;
   reply.status(status >= 400 && status < 600 ? status : 500).send({
     error: 'internal_error',
-    message: process.env.NODE_ENV === 'production' ? 'Request failed' : String(e.message ?? err),
+    message: env.nodeEnv === 'production' ? 'Request failed' : String(e.message ?? err),
   });
 });
 

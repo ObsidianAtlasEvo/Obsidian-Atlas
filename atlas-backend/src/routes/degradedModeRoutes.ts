@@ -12,7 +12,7 @@ import {
 } from '../services/governance/degraded/degradedModeOracle.js';
 
 export function registerDegradedModeRoutes(app: FastifyInstance): void {
-  app.get('/api/governance/mode', async (_request, reply) => {
+  app.get('/v1/governance/mode', async (_request, reply) => {
     const mode = getCurrentMode();
     const signals = getCurrentSignals();
     const since = getModeSince();

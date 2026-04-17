@@ -13,6 +13,7 @@ import {
   verifyAtlasSessionJwt,
 } from '../services/auth/authProvider.js';
 import { normalizeEmail } from '../services/intelligence/router.js';
+import { env } from '../config/env.js';
 
 const STATE_MAX_AGE_SEC = 600;
 
@@ -23,7 +24,7 @@ function sessionCookieOptions(): {
   sameSite: 'lax' | 'strict' | 'none';
   maxAge: number;
 } {
-  const secure = process.env.NODE_ENV === 'production';
+  const secure = env.nodeEnv === 'production';
   // 'strict' is safe here because the SPA and API share the same origin
   // (nginx proxies /api and /auth to the Fastify backend).
   // Use 'lax' only if the frontend moves to a different domain and
@@ -44,7 +45,7 @@ function stateCookieOptions(): {
   sameSite: 'lax' | 'strict' | 'none';
   maxAge: number;
 } {
-  const secure = process.env.NODE_ENV === 'production';
+  const secure = env.nodeEnv === 'production';
   return {
     path: '/',
     httpOnly: true,
@@ -55,7 +56,7 @@ function stateCookieOptions(): {
 }
 
 function clearCookie(reply: FastifyReply, name: string): void {
-  const secure = process.env.NODE_ENV === 'production';
+  const secure = env.nodeEnv === 'production';
   reply.setCookie(name, '', { path: '/', httpOnly: true, secure, sameSite: secure ? 'strict' : 'lax', maxAge: 0 });
 }
 

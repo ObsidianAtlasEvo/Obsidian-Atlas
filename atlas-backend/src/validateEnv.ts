@@ -44,7 +44,9 @@ const ALWAYS_REQUIRED: VarSpec[] = [
   {
     name: 'NEXTAUTH_SECRET',
     description:
-      'Session signing secret — generate with: openssl rand -base64 32',
+      'Session signing secret — generate with: openssl rand -base64 32. ' +
+      'AUTH_SECRET is accepted as an alias.',
+    requiredWhen: () => !process.env.AUTH_SECRET?.trim(),
   },
   {
     name: 'NEXTAUTH_URL',
@@ -154,6 +156,10 @@ function isSet(name: string): boolean {
 }
 
 export function validateEnv(): void {
+  // Read NODE_ENV directly from process.env here — this function runs before
+  // the Zod-parsed env.ts config is initialised (by design: we want human-
+  // friendly startup errors before Zod's generic parse failures).
+  // All other code should use `env.nodeEnv` from config/env.ts.
   const isProduction = process.env.NODE_ENV === 'production';
   const errors: string[] = [];
   const warnings: string[] = [];
@@ -225,6 +231,19 @@ export function validateEnv(): void {
         warnings.push(line);
       }
     }
+  }
+
+  // ── 6. GOOGLE_API_KEY warning when Gemini is the active provider ───────────
+  // GEMINI_API_KEY configures the Gemini SDK path (omni-router), but direct
+  // Google Generative Language REST calls (GoogleProvider) require GOOGLE_API_KEY.
+  // Warn early so operators don't discover this only when the first request fails.
+  if (isSet('GEMINI_API_KEY') && !isSet('GOOGLE_API_KEY')) {
+    warnings.push(
+      '  MISSING  GOOGLE_API_KEY\n' +
+      '           GEMINI_API_KEY is set but GOOGLE_API_KEY is not — Gemini provider\n' +
+      '           calls via the Google Generative Language REST API will fail at runtime.\n' +
+      '           Set GOOGLE_API_KEY if you intend to use the google/* model family.',
+    );
   }
 
   // ── Output ─────────────────────────────────────────────────────────────────
