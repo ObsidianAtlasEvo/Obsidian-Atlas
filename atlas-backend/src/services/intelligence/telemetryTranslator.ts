@@ -5,8 +5,10 @@ import type { PolicyProfile } from '../../types/atlas.js';
  * Strict telemetry from PolicyProfile (no Memory Vault). Defaults for new users.
  */
 export const userTelemetrySchema = z.object({
-  verbosity: z.enum(['low', 'medium', 'high']).default('medium'),
-  tone: z.enum(['direct', 'professional', 'warm', 'analytical']).default('analytical'),
+  // NOTE: No .default() on verbosity or tone — unlearned users must not receive
+  // asserted style defaults. Callers must check profile.isLearned before using these.
+  verbosity: z.enum(['low', 'medium', 'high']).optional(),
+  tone: z.enum(['direct', 'professional', 'warm', 'analytical']).optional(),
   structurePreference: z.enum(['minimal', 'balanced', 'structured']).default('balanced'),
   truthFirstStrictness: z.number().int().min(1).max(10).default(7),
   preferredComputeDepth: z.enum(['Light', 'Heavy']).default('Light'),
