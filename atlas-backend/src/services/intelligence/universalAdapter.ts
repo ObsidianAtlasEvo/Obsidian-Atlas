@@ -257,6 +257,10 @@ async function streamOpenAiCompatibleChat(params: {
   }
 }
 
+// Default timeout for Gemini streaming calls — prevents hung connections
+// when the @google/genai SDK does not respect the AbortSignal natively.
+const GEMINI_STREAM_TIMEOUT_MS = 45_000;
+
 async function streamGeminiChatRaw(params: {
   model: string;
   messages: UniversalMessage[];
@@ -279,12 +283,18 @@ async function streamGeminiChatRaw(params: {
     parts: [{ text: m.content }],
   }));
 
+  // Wire abort signal: merge caller signal + internal timeout into one controller.
+  // The @google/genai SDK does not natively accept AbortSignal, so we wrap the
+  // entire stream in a Promise.race to enforce the timeout externally.
+  const timeoutMs = params.timeoutMs ?? GEMINI_STREAM_TIMEOUT_MS;
   const controller = new AbortController();
-  const t = params.timeoutMs ? setTimeout(() => controller.abort(), params.timeoutMs) : undefined;
+  // Propagate caller abort into our controller
+  params.signal?.addEventListener('abort', () => controller.abort());
+  const t = setTimeout(() => controller.abort(), timeoutMs);
   let full = '';
 
   try {
-    const stream = await client.models.generateContentStream({
+    const streamPromise = client.models.generateContentStream({
       model: params.model?.trim() || env.geminiModel?.trim() || 'gemini-2.0-flash',
       contents,
       config: {
@@ -292,6 +302,16 @@ async function streamGeminiChatRaw(params: {
         temperature: params.temperature ?? 0.35,
       },
     });
+
+    // Race stream initiation against abort
+    const stream = await Promise.race([
+      streamPromise,
+      new Promise<never>((_, reject) =>
+        controller.signal.addEventListener('abort', () =>
+          reject(new Error('[GoogleGenerativeAI Error] Request aborted (timeout)'))
+        )
+      ),
+    ]);
 
     for await (const chunk of stream) {
       const piece = typeof chunk.text === 'string' ? chunk.text : '';
@@ -669,6 +689,9 @@ export async function completeGroqChat(params: {
 }
 
 /** Raw non-streaming Gemini completion (no retry/fallback). */
+// Default timeout for non-streaming Gemini calls
+const GEMINI_COMPLETE_TIMEOUT_MS = 30_000;
+
 async function completeGeminiChatRaw(params: {
   model: string;
   messages: UniversalMessage[];
@@ -690,10 +713,12 @@ async function completeGeminiChatRaw(params: {
     parts: [{ text: m.content }],
   }));
 
+  const timeoutMs = params.timeoutMs ?? GEMINI_COMPLETE_TIMEOUT_MS;
   const controller = new AbortController();
-  const t = params.timeoutMs ? setTimeout(() => controller.abort(), params.timeoutMs) : undefined;
+  params.signal?.addEventListener('abort', () => controller.abort());
+  const t = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await client.models.generateContent({
+    const responsePromise = client.models.generateContent({
       model: params.model?.trim() || env.geminiModel?.trim() || 'gemini-2.0-flash',
       contents,
       config: {
@@ -701,6 +726,15 @@ async function completeGeminiChatRaw(params: {
         temperature: params.temperature ?? 0.25,
       },
     });
+
+    const response = await Promise.race([
+      responsePromise,
+      new Promise<never>((_, reject) =>
+        controller.signal.addEventListener('abort', () =>
+          reject(new Error('[GoogleGenerativeAI Error] Request aborted (timeout)'))
+        )
+      ),
+    ]);
     const text = typeof response.text === 'string' ? response.text : '';
     return { text: text.trim(), model: params.model };
   } finally {

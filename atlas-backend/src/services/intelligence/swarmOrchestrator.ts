@@ -4,6 +4,7 @@ import type { PolicyProfile } from '../../types/atlas.js';
 import type { GroqRoutingDecision } from './routingTypes.js';
 import {
   DEFAULT_SWARM_MODEL_ID,
+  FALLBACK_SWARM_MODEL_ID,
   assertEntryUsable,
   getRegistryEntry,
   getLlmRegistryJsonForPrompt,
@@ -92,7 +93,7 @@ function normalizePlanModelField(model: string): RegistryModelId {
   return normalizeRegistryModelId(model);
 }
 
-/** Coerce invalid / unknown models → default Groq registry id (fail-safe). */
+/** Coerce invalid / unknown models → default registry id (fail-safe). */
 export function normalizeExecutionPlan(plan: ExecutionPlan): ExecutionPlan {
   if (plan.strategy === 'swarm') {
     return {
@@ -127,12 +128,12 @@ function canRunRegistryEntry(entry: LlmRegistryEntry): boolean {
 }
 
 /**
- * Downgrade unavailable specialists to {@link DEFAULT_SWARM_MODEL_ID} (server truth).
+ * Downgrade unavailable specialists to {@link FALLBACK_SWARM_MODEL_ID} (server truth).
  */
 export function enforcePlanRegistryAndCredentials(plan: ExecutionPlan): ExecutionPlan {
   const norm = normalizeExecutionPlan(plan);
 
-  const fallback = (): RegistryModelId => DEFAULT_SWARM_MODEL_ID;
+  const fallback = (): RegistryModelId => FALLBACK_SWARM_MODEL_ID;
 
   if (norm.strategy === 'swarm') {
     return {
@@ -179,7 +180,7 @@ export function enforceTierModelAccess(plan: ExecutionPlan, userTier?: Subscript
     allowedSet.add('gemini-3.1-flash-lite-preview');
   }
 
-  const freeTierDefault: RegistryModelId = DEFAULT_SWARM_MODEL_ID; // groq-llama3-70b
+  const freeTierDefault: RegistryModelId = FALLBACK_SWARM_MODEL_ID; // groq-llama3-70b — fast safe fallback
 
   if (plan.strategy === 'swarm') {
     return {
@@ -306,7 +307,8 @@ OPERATIONAL LAW:
 - When GROQ_ROUTING_DIRECTIVES.skip_premium_for_speed is true, avoid premium-tier models unless indispensable.
 - Use "swarm" when steps genuinely require different modalities (e.g. huge read → structured matrix). Keep steps ≤ 6 when possible.
 - For prompts requiring unified psychological analysis, philosophical depth, personal calibration, self-concept examination, or holistic identity work: ALWAYS use "direct" or "delegate" strategy, NEVER "swarm". These prompts need a single coherent voice — splitting them into sub-tasks produces fragmented, duplicated, generic output.
-- If you are unsure, {"strategy":"direct","model":"groq-llama3-70b","reason":"default safe path"}.
+- If you are unsure, {"strategy":"direct","model":"gemini-2.5-flash","reason":"default primary path"}.
+- If the task is very simple or speed is critical, {"strategy":"direct","model":"groq-llama3-70b","reason":"fast fallback"}.
 
 You will receive ROUTING_PAYLOAD_JSON with ROUTING_METADATA, UserTelemetry, MirrorforgeSignal, and GROQ_ROUTING_DIRECTIVES. Obey it.`;
 
@@ -362,7 +364,7 @@ async function applyPostGuards(input: PlanSwarmExecutionInput, guarded: Executio
         strategy: 'swarm',
         steps: [
           { step: 1, model: plan.model, task: 'Primary synthesis' },
-          { step: 2, model: DEFAULT_SWARM_MODEL_ID, task: 'Critical review and gap analysis' },
+          { step: 2, model: FALLBACK_SWARM_MODEL_ID, task: 'Critical review and gap analysis' },
         ],
         reason: `feature_flag:advanced_reasoning_mode(confidence=${armFlag.confidence.toFixed(2)})`,
       };
@@ -380,12 +382,12 @@ async function applyPostGuards(input: PlanSwarmExecutionInput, guarded: Executio
         .get(input.userId) as { confidence: number } | undefined;
       const coherence = coherenceRow?.confidence ?? 1.0;
       if (coherence < 0.4) {
-        const baseModel = plan.strategy === 'direct' ? plan.model : DEFAULT_SWARM_MODEL_ID;
+        const baseModel = plan.strategy === 'direct' ? plan.model : FALLBACK_SWARM_MODEL_ID;
         plan = {
           strategy: 'swarm',
           steps: [
             { step: 1, model: baseModel, task: 'Primary synthesis' },
-            { step: 2, model: DEFAULT_SWARM_MODEL_ID, task: 'Coherence stabilization — cross-check and reconcile' },
+            { step: 2, model: FALLBACK_SWARM_MODEL_ID, task: 'Coherence stabilization — cross-check and reconcile' },
           ],
           reason: `mind_coherence_low(${coherence.toFixed(3)})`,
         };
@@ -417,7 +419,7 @@ export async function planSwarmExecution(input: PlanSwarmExecutionInput): Promis
   });
 
   if (!cfg && input.userTier !== 'free') {
-    return { strategy: 'direct', model: DEFAULT_SWARM_MODEL_ID, reason: 'overseer_unconfigured' };
+    return { strategy: 'direct', model: FALLBACK_SWARM_MODEL_ID, reason: 'overseer_unconfigured' };
   }
 
   /** Swarm doctrine: non-sovereign tenants never touch on-prem models in plans. */
@@ -467,7 +469,7 @@ export async function planSwarmExecution(input: PlanSwarmExecutionInput): Promis
         // Fall through to standard OpenAI path below
         console.warn('[overseer] Gemini parse failure — degrading to gpt-5.4-nano');
       } else {
-        return { strategy: 'direct', model: DEFAULT_SWARM_MODEL_ID, reason: 'gemini_overseer_failed_no_fallback' };
+        return { strategy: 'direct', model: FALLBACK_SWARM_MODEL_ID, reason: 'gemini_overseer_failed_no_fallback' };
       }
     } else {
       // Gemini succeeded — apply guards and return
@@ -481,7 +483,7 @@ export async function planSwarmExecution(input: PlanSwarmExecutionInput): Promis
 
   // ── Core/Sovereign path (or free-tier Gemini fallback): OpenAI/Groq ──────
   if (!cfg) {
-    return { strategy: 'direct', model: DEFAULT_SWARM_MODEL_ID, reason: 'overseer_unconfigured' };
+    return { strategy: 'direct', model: FALLBACK_SWARM_MODEL_ID, reason: 'overseer_unconfigured' };
   }
 
   const controller = new AbortController();
@@ -512,22 +514,22 @@ export async function planSwarmExecution(input: PlanSwarmExecutionInput): Promis
     try {
       data = rawText ? JSON.parse(rawText) : null;
     } catch {
-      return { strategy: 'direct', model: DEFAULT_SWARM_MODEL_ID, reason: 'chief_non_json' };
+      return { strategy: 'direct', model: FALLBACK_SWARM_MODEL_ID, reason: 'chief_non_json' };
     }
     if (!res.ok) {
-      return { strategy: 'direct', model: DEFAULT_SWARM_MODEL_ID, reason: `chief_http_${res.status}` };
+      return { strategy: 'direct', model: FALLBACK_SWARM_MODEL_ID, reason: `chief_http_${res.status}` };
     }
 
     const obj = data as Record<string, unknown>;
     const choices = obj?.choices;
     if (!Array.isArray(choices) || !choices[0]) {
-      return { strategy: 'direct', model: DEFAULT_SWARM_MODEL_ID, reason: 'chief_missing_choices' };
+      return { strategy: 'direct', model: FALLBACK_SWARM_MODEL_ID, reason: 'chief_missing_choices' };
     }
     const msg = (choices[0] as Record<string, unknown>).message as Record<string, unknown> | undefined;
     const content = typeof msg?.content === 'string' ? msg.content : '';
     const parsed = parseExecutionPlan(content);
     if (!parsed) {
-      return { strategy: 'direct', model: DEFAULT_SWARM_MODEL_ID, reason: 'chief_parse_fail' };
+      return { strategy: 'direct', model: FALLBACK_SWARM_MODEL_ID, reason: 'chief_parse_fail' };
     }
 
     let guarded = await enforceSovereignLocalGpu(parsed, input.sovereignEligible, input.signal);
@@ -538,7 +540,7 @@ export async function planSwarmExecution(input: PlanSwarmExecutionInput): Promis
     return applyPostGuards(input, guarded);
   } catch (err) {
     console.warn('[swarm] Chief of Staff routing failed:', err); // AUDIT FIX: P1-6 log silent failure
-    return { strategy: 'direct', model: DEFAULT_SWARM_MODEL_ID, reason: 'chief_exception' };
+    return { strategy: 'direct', model: FALLBACK_SWARM_MODEL_ID, reason: 'chief_exception' };
   } finally {
     clearTimeout(timeout);
   }

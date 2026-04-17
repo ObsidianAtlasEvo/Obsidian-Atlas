@@ -214,8 +214,12 @@ const REGISTRY_BY_ID = new Map(LLM_REGISTRY.map((e) => [e.id, e] as const));
 
 export type RegistryModelId = (typeof LLM_REGISTRY)[number]['id'];
 
-/** Default when Groq hallucinates an unknown specialist. */
-export const DEFAULT_SWARM_MODEL_ID: RegistryModelId = 'groq-llama3-70b';
+/** Primary model for swarm dispatch — Gemini 2.5 Flash (2M context, free tier). */
+export const DEFAULT_SWARM_MODEL_ID: RegistryModelId = 'gemini-2.5-flash';
+
+/** Fallback model when Gemini is unavailable or rate-limited, and when the Overseer
+ *  downgrade-substitutes an unknown specialist. Fast, reliable, free tier. */
+export const FALLBACK_SWARM_MODEL_ID: RegistryModelId = 'groq-llama3-70b';
 
 const ALIASES: Record<string, RegistryModelId> = {
   groq: 'groq-llama3-70b',
