@@ -208,6 +208,7 @@ await app.register(async (protected_app) => {
   registerJournalRoutes(protected_app);
   registerDoctrineRoutes(protected_app);
   registerDiagnosticsReportRoutes(protected_app);
+  registerExplanationRoutes(protected_app);
 });
 // ── Billing routes — session-based billing + Stripe webhook (raw body) ──────
 // Billing routes expect request.atlasSession (userId + email). Bridge from
@@ -318,7 +319,6 @@ await app.register(async (userScope) => {
 }, { prefix: '/v1' });
 
 registerDegradedModeRoutes(app);
-registerExplanationRoutes(app);
 await app.register(embeddingsRoutes);
 await app.register(modelRoutes);
 
