@@ -23,7 +23,7 @@ import { registerIntelligenceChambersRoutes } from './routes/intelligenceChamber
 import { registerMindMapRoutes } from './routes/mindMapRoutes.js';
 import { registerSovereigntyRoutes } from './routes/sovereigntyRoutes.js';
 import { registerAuthRoutes } from './routes/authRoutes.js';
-import { attachAtlasSession } from './services/auth/authProvider.js';
+import { attachAtlasSession, isGoogleAuthConfigured, jwtKeyMaterial } from './services/auth/authProvider.js';
 import { registerDiagnosticsReportRoutes } from './routes/diagnosticsReportRoutes.js';
 import { registerDegradedModeRoutes } from './routes/degradedModeRoutes.js';
 import { startPolling } from './services/governance/degraded/degradedModeOracle.js';
@@ -58,6 +58,19 @@ validateRequiredEnv();
 
 initSqlite();
 await initSemanticVectorIndex();
+
+// Validate auth secret is usable at boot, not lazily on first request.
+if (isGoogleAuthConfigured()) {
+  try {
+    jwtKeyMaterial(); // will throw if secret is missing/empty
+    // eslint-disable-next-line no-console -- logged before Fastify instance exists
+    console.log('[AUTH] JWT key material validated at boot');
+  } catch (err) {
+    // eslint-disable-next-line no-console -- logged before Fastify instance exists
+    console.error('[AUTH] FATAL: JWT key material is invalid:', (err as Error).message);
+    process.exit(1);
+  }
+}
 
 // Rehydrate inference queue — mark any stale pending/in_progress jobs from prior run.
 const recoveredJobs = await loadPersistedJobs().catch((err) => {
