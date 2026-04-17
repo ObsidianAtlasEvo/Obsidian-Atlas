@@ -158,10 +158,30 @@ jobs:
           echo "[7/9] Running migrations..."
           MIGRATION_DIR="$DEPLOY_DIR/atlas-backend/migrations"
           DB_PATH="${SQLITE_PATH:-/var/data/atlas/atlas.db}"
+          # Source .env early so SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY are available for migration tracking
+          _ENV_FILE="$DEPLOY_DIR/atlas-backend/.env"
+          if [ -f "$_ENV_FILE" ]; then set -a && source "$_ENV_FILE" && set +a; fi
+          DEPLOY_SHA="$(git rev-parse --short HEAD)"
           if [ -d "$MIGRATION_DIR" ]; then
             for migration in $(ls "$MIGRATION_DIR"/*.sql 2>/dev/null | sort); do
-              echo "      Applying: $(basename $migration)"
+              MIG_BASE="$(basename "$migration")"
+              MIG_VER="$(echo "$MIG_BASE" | grep -oE '^[0-9]+' | sed 's/^0*//' || echo 0)"
+              MIG_VER="${MIG_VER:-0}"
+              MIG_FROM=$((MIG_VER > 0 ? MIG_VER - 1 : 0))
+              echo "      Applying: $MIG_BASE"
+              MIG_START_MS=$(($(date +%s%N)/1000000))
               sqlite3 "$DB_PATH" < "$migration" || true
+              MIG_END_MS=$(($(date +%s%N)/1000000))
+              MIG_DURATION=$((MIG_END_MS - MIG_START_MS))
+              # Record migration in Supabase atlas_schema_migrations (fire-and-forget)
+              if [ -n "${SUPABASE_URL:-}" ] && [ -n "${SUPABASE_SERVICE_ROLE_KEY:-}" ]; then
+                curl -sf -X POST "${SUPABASE_URL}/rest/v1/atlas_schema_migrations" \
+                  -H "apikey: ${SUPABASE_SERVICE_ROLE_KEY}" \
+                  -H "Authorization: Bearer ${SUPABASE_SERVICE_ROLE_KEY}" \
+                  -H "Content-Type: application/json" \
+                  -H "Prefer: resolution=ignore-duplicates" \
+                  -d "{\"id\":\"${MIG_BASE}\",\"store\":\"sqlite\",\"from_version\":${MIG_FROM},\"to_version\":${MIG_VER},\"duration_ms\":${MIG_DURATION},\"status\":\"applied\",\"notes\":\"${DEPLOY_SHA}\"}" || true
+              fi
             done
             echo "      ✓ Migrations applied"
           else
