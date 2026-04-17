@@ -2,11 +2,11 @@
  * Retention Routes — Phase 4 §5
  *
  * Backend API for the data retention & deletion subsystem:
- * - GET  /api/governance/retention/status          — last deletion report + next run
- * - GET  /api/governance/retention/holds            — active legal holds
- * - DELETE /api/governance/retention/holds/:holdId  — release hold (Sovereign Creator only)
- * - POST /api/governance/retention/erasure          — initiate erasure request
- * - GET  /api/governance/retention/erasure/:requestId — erasure status
+ * - GET  /v1/governance/retention/status          — last deletion report + next run
+ * - GET  /v1/governance/retention/holds            — active legal holds
+ * - DELETE /v1/governance/retention/holds/:holdId  — release hold (Sovereign Creator only)
+ * - POST /v1/governance/retention/erasure          — initiate erasure request
+ * - GET  /v1/governance/retention/erasure/:requestId — erasure status
  */
 
 import type { FastifyInstance } from 'fastify';
@@ -45,29 +45,29 @@ const releaseHoldBody = z.object({
 
 export function registerRetentionRoutes(app: FastifyInstance): void {
   /**
-   * GET /api/governance/retention/status
+   * GET /v1/governance/retention/status
    * Returns last deletion report and next scheduled run time.
    */
-  app.get('/api/governance/retention/status', async (_request, reply) => {
+  app.get('/v1/governance/retention/status', async (_request, reply) => {
     const status = getRetentionStatus();
     return reply.send(status);
   });
 
   /**
-   * GET /api/governance/retention/holds
+   * GET /v1/governance/retention/holds
    * Returns all active legal holds.
    */
-  app.get('/api/governance/retention/holds', async (_request, reply) => {
+  app.get('/v1/governance/retention/holds', async (_request, reply) => {
     const holds = await getActiveHolds();
     return reply.send({ holds });
   });
 
   /**
-   * DELETE /api/governance/retention/holds/:holdId
+   * DELETE /v1/governance/retention/holds/:holdId
    * Release a legal hold. Sovereign Creator only.
    */
   app.delete<{ Params: { holdId: string }; Body: { actorId: string } }>(
-    '/api/governance/retention/holds/:holdId',
+    '/v1/governance/retention/holds/:holdId',
     async (request, reply) => {
       const params = holdIdParams.safeParse(request.params);
       if (!params.success) {
@@ -93,10 +93,10 @@ export function registerRetentionRoutes(app: FastifyInstance): void {
   );
 
   /**
-   * POST /api/governance/retention/erasure
+   * POST /v1/governance/retention/erasure
    * Initiate a GDPR/CCPA erasure request.
    */
-  app.post('/api/governance/retention/erasure', async (request, reply) => {
+  app.post('/v1/governance/retention/erasure', async (request, reply) => {
     const parsed = erasureBody.safeParse(request.body);
     if (!parsed.success) {
       return reply.status(400).send({ error: 'validation_error', details: parsed.error.flatten() });
@@ -111,11 +111,11 @@ export function registerRetentionRoutes(app: FastifyInstance): void {
   });
 
   /**
-   * GET /api/governance/retention/erasure/:requestId
+   * GET /v1/governance/retention/erasure/:requestId
    * Get the status of an erasure request.
    */
   app.get<{ Params: { requestId: string } }>(
-    '/api/governance/retention/erasure/:requestId',
+    '/v1/governance/retention/erasure/:requestId',
     async (request, reply) => {
       const params = erasureIdParams.safeParse(request.params);
       if (!params.success) {
@@ -132,10 +132,10 @@ export function registerRetentionRoutes(app: FastifyInstance): void {
   );
 
   /**
-   * GET /api/governance/retention/audit
+   * GET /v1/governance/retention/audit
    * Returns the last 50 retention events.
    */
-  app.get('/api/governance/retention/audit', async (_request, reply) => {
+  app.get('/v1/governance/retention/audit', async (_request, reply) => {
     const events = await queryRetentionEvents({ limit: 50 });
     return reply.send({ events });
   });
