@@ -560,6 +560,19 @@ export async function streamRegistryModel(params: {
         timeoutMs,
       });
     }
+    case 'openai_chat': {
+      const oa = resolveOpenAiAuth();
+      if (!oa) throw new Error('OpenAI credentials not configured for openai_chat backend');
+      return streamOpenAiCompatibleChat({
+        baseUrl: oa.base,
+        apiKey: oa.apiKey,
+        model: entry.apiModel,
+        messages,
+        onDelta,
+        signal,
+        timeoutMs,
+      });
+    }
     case 'ollama': {
       return streamOllamaChat({
         model: entry.apiModel,
