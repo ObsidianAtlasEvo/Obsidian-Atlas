@@ -8,6 +8,8 @@
 
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
+import { attachAtlasSession } from '../services/auth/authProvider.js';
+import { resolveAuthenticatedRouteUserId } from './identityHardening.js';
 
 const entrySchema = z.object({
   id: z.string().optional(),
@@ -108,6 +110,15 @@ async function tryGroqSummary(entries: NLEntry[]): Promise<string | null> {
 
 export function registerExplanationRoutes(app: FastifyInstance): void {
   app.post('/api/governance/nlsummary', async (request, reply) => {
+    await attachAtlasSession(request);
+    const userId = resolveAuthenticatedRouteUserId(
+      request.atlasAuthUser?.databaseUserId,
+      undefined,
+    );
+    if (!userId) {
+      return reply.code(401).send({ error: 'Authentication required' });
+    }
+
     const parsed = bodySchema.safeParse(request.body);
     if (!parsed.success) {
       return reply

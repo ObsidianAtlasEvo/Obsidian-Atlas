@@ -1,5 +1,6 @@
-import { getPolicyProfile } from '../evolution/policyStore.js';
+import { DEFAULT_POLICY_PROFILE_VALUES, getPolicyProfile } from '../evolution/policyStore.js';
 import { listRecentMemories } from '../memory/memoryStore.js';
+import type { PolicyProfile } from '../../types/atlas.js';
 
 export const PRIME_DIRECTIVE_VERSION = '2026-04-05.iron-clad-v1';
 
@@ -15,19 +16,38 @@ PRIME_DIRECTIVE_VERSION: ${PRIME_DIRECTIVE_VERSION}`;
 
 const MEMORY_VAULT_LIMIT = 16;
 
-function formatPolicyBlock(userId: string): string {
-  const p = getPolicyProfile(userId);
+function isUntouchedDefaultPolicyProfile(profile: PolicyProfile): boolean {
+  return (
+    profile.verbosity === DEFAULT_POLICY_PROFILE_VALUES.verbosity &&
+    profile.tone === DEFAULT_POLICY_PROFILE_VALUES.tone &&
+    profile.structurePreference === DEFAULT_POLICY_PROFILE_VALUES.structurePreference &&
+    profile.truthFirstStrictness === DEFAULT_POLICY_PROFILE_VALUES.truthFirstStrictness &&
+    profile.writingStyleEnabled === DEFAULT_POLICY_PROFILE_VALUES.writingStyleEnabled &&
+    profile.preferredComputeDepth === DEFAULT_POLICY_PROFILE_VALUES.preferredComputeDepth &&
+    profile.latencyTolerance === DEFAULT_POLICY_PROFILE_VALUES.latencyTolerance
+  );
+}
+
+export function formatPolicyProfileBlock(profile: PolicyProfile): string {
+  if (isUntouchedDefaultPolicyProfile(profile)) {
+    return 'USER_POLICY_PROFILE: not yet learned — this user has no established preferences on record. Calibrate from live evidence in this conversation only. Do not assert stylistic preferences.';
+  }
+
   return [
     'USER_POLICY_PROFILE:',
-    `- verbosity: ${p.verbosity}`,
-    `- tone: ${p.tone}`,
-    `- structure_preference: ${p.structurePreference}`,
-    `- truth_first_strictness: ${p.truthFirstStrictness.toFixed(2)} (0–1 store; routing maps to 1–10)`,
-    `- preferred_compute_depth: ${p.preferredComputeDepth}`,
-    `- latency_tolerance: ${p.latencyTolerance}`,
-    `- writing_style_enabled: ${p.writingStyleEnabled}`,
-    `- profile_updated_at: ${p.updatedAt}`,
+    `- verbosity: ${profile.verbosity}`,
+    `- tone: ${profile.tone}`,
+    `- structure_preference: ${profile.structurePreference}`,
+    `- truth_first_strictness: ${profile.truthFirstStrictness.toFixed(2)} (0–1 store; routing maps to 1–10)`,
+    `- preferred_compute_depth: ${profile.preferredComputeDepth}`,
+    `- latency_tolerance: ${profile.latencyTolerance}`,
+    `- writing_style_enabled: ${profile.writingStyleEnabled}`,
+    `- profile_updated_at: ${profile.updatedAt}`,
   ].join('\n');
+}
+
+function formatPolicyBlock(userId: string): string {
+  return formatPolicyProfileBlock(getPolicyProfile(userId));
 }
 
 function formatMemoryVault(userId: string): string {

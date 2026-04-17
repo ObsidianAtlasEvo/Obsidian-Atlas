@@ -33,9 +33,9 @@ import {
 import { mirrorforgeStateSchema } from '../services/intelligence/telemetryTranslator.js';
 import { isSovereignOwnerEmail } from '../services/intelligence/router.js';
 import type { ChatRole } from '../types/atlas.js';
+import { resolveAuthenticatedRouteUserId } from './identityHardening.js';
 
-const omniBodySchema = z.object({
-  userId: z.string().min(1),
+export const omniBodySchema = z.object({
   requestId: z.string().uuid().optional(),
   /** 1–5: concise → deep synthesis (Section IX posture scale). Omitted → inferred from line of inquiry. */
   posture: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4), z.literal(5)]).optional(),
@@ -105,7 +105,6 @@ export function registerOmniStreamRoutes(app: FastifyInstance): void {
     }
 
     const {
-      userId,
       messages,
       requestId: bodyRequestId,
       mirrorforge,
@@ -117,6 +116,16 @@ export function registerOmniStreamRoutes(app: FastifyInstance): void {
     } = parsed.data;
     const traceId = randomUUID();
     const requestId = bodyRequestId ?? newGpuRequestId();
+
+    await attachAtlasSession(request);
+    const userId = resolveAuthenticatedRouteUserId(
+      request.atlasAuthUser?.databaseUserId,
+      undefined,
+    );
+
+    if (!userId) {
+      return reply.code(401).send({ error: 'Authentication required' });
+    }
 
     touchChronosActivity(userId);
 
@@ -140,7 +149,6 @@ export function registerOmniStreamRoutes(app: FastifyInstance): void {
     const raw = reply.raw;
 
     try {
-      await attachAtlasSession(request);
       const verifiedEmail = getVerifiedUserEmail(request);
       const lane = env.disableLocalOllama ? 'public_swarm' : resolveOmniComputeLane(verifiedEmail);
 

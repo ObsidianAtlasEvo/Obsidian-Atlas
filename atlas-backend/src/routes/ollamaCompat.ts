@@ -1,5 +1,8 @@
 import type { FastifyInstance } from 'fastify';
+import { attachAtlasSession } from '../services/auth/authProvider.js';
+import { messagesWithPrimeDirective } from '../services/intelligence/primeDirective.js';
 import { streamChat } from '../services/ollama.js';
+import { resolveAuthenticatedRouteUserId } from './identityHardening.js';
 
 /**
  * Ollama-compatible /api/chat endpoint.
@@ -8,6 +11,16 @@ import { streamChat } from '../services/ollama.js';
  */
 export async function registerOllamaCompatRoutes(app: FastifyInstance): Promise<void> {
   app.post('/api/chat', async (request, reply) => {
+    await attachAtlasSession(request);
+    const userId = resolveAuthenticatedRouteUserId(
+      request.atlasAuthUser?.databaseUserId,
+      undefined,
+    );
+
+    if (!userId) {
+      return reply.code(401).send({ error: 'Authentication required' });
+    }
+
     const body = request.body as {
       model?: string;
       messages: { role: string; content: string }[];
@@ -19,10 +32,7 @@ export async function registerOllamaCompatRoutes(app: FastifyInstance): Promise<
       return reply.code(400).send({ error: 'messages array required' });
     }
 
-    const messages = body.messages.map((m) => ({
-      role: m.role as 'system' | 'user' | 'assistant',
-      content: m.content,
-    }));
+    const messages = messagesWithPrimeDirective(userId, body.messages ?? []);
 
     const temperature = body.options?.temperature ?? 0.7;
 

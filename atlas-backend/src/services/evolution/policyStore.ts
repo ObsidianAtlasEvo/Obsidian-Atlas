@@ -1,7 +1,7 @@
 import { getDb } from '../../db/sqlite.js';
 import type { PolicyProfile } from '../../types/atlas.js';
 
-const DEFAULTS: Omit<PolicyProfile, 'userId' | 'updatedAt'> = {
+export const DEFAULT_POLICY_PROFILE_VALUES: Omit<PolicyProfile, 'userId' | 'updatedAt'> = {
   verbosity: 'medium',
   tone: 'analytical',
   structurePreference: 'balanced',
@@ -69,16 +69,16 @@ export function getPolicyProfile(userId: string): PolicyProfile {
        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       userId,
-      DEFAULTS.verbosity,
-      DEFAULTS.tone,
-      DEFAULTS.structurePreference,
-      DEFAULTS.truthFirstStrictness,
-      DEFAULTS.writingStyleEnabled ? 1 : 0,
-      DEFAULTS.preferredComputeDepth,
-      DEFAULTS.latencyTolerance,
+      DEFAULT_POLICY_PROFILE_VALUES.verbosity,
+      DEFAULT_POLICY_PROFILE_VALUES.tone,
+      DEFAULT_POLICY_PROFILE_VALUES.structurePreference,
+      DEFAULT_POLICY_PROFILE_VALUES.truthFirstStrictness,
+      DEFAULT_POLICY_PROFILE_VALUES.writingStyleEnabled ? 1 : 0,
+      DEFAULT_POLICY_PROFILE_VALUES.preferredComputeDepth,
+      DEFAULT_POLICY_PROFILE_VALUES.latencyTolerance,
       now
     );
-    return { userId, ...DEFAULTS, updatedAt: now };
+    return { userId, ...DEFAULT_POLICY_PROFILE_VALUES, updatedAt: now };
   }
 
   return rowToProfile(userId, row);
