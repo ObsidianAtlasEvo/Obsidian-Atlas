@@ -4,6 +4,7 @@ import type { PolicyProfile } from '../../types/atlas.js';
 import type { GroqRoutingDecision } from './routingTypes.js';
 import {
   DEFAULT_SWARM_MODEL_ID,
+  assertEntryUsable,
   getRegistryEntry,
   getLlmRegistryJsonForPrompt,
   normalizeRegistryModelId,
@@ -24,7 +25,7 @@ import {
   userTelemetryFromPolicyProfile,
 } from './telemetryTranslator.js';
 import { isLocalOllamaReachable } from './router.js';
-import type { SubscriptionTier } from './groundwork/v4/subscriptionSchema.js';
+import { TIER_MODEL_ACCESS, type SubscriptionTier } from './groundwork/v4/subscriptionSchema.js';
 import {
   completeGeminiChat,
   completeGeminiOverseerFree,
@@ -119,6 +120,7 @@ function canRunRegistryEntry(entry: LlmRegistryEntry): boolean {
   if (entry.tier === 'premium' && !premiumModelAvailable()) return false;
   if (entry.backend === 'gemini_sdk' && !env.geminiApiKey?.trim()) return false;
   if (entry.backend === 'groq' && !(env.groqApiKey?.trim() || env.cloudOpenAiApiKey?.trim())) return false;
+  if (entry.backend === 'openai_chat' && !env.openaiApiKey?.trim()) return false;
   if (entry.backend === 'openrouter' && !premiumModelAvailable()) return false;
   if (entry.backend === 'ollama' && env.disableLocalOllama) return false;
   return true;
@@ -152,6 +154,49 @@ export function enforcePlanRegistryAndCredentials(plan: ExecutionPlan): Executio
     return { ...norm, model: fallback() };
   }
   return { ...norm, model: id };
+}
+
+/**
+ * Fix 3: Enforce tier model access — downgrade any model the Chief of Staff assigned
+ * that is not in the user's tier allowlist. Prevents cost leaks from free-tier users
+ * being routed to claude-opus or gpt-5.4.
+ */
+export function enforceTierModelAccess(plan: ExecutionPlan, userTier?: SubscriptionTier): ExecutionPlan {
+  if (!userTier) return plan; // no tier info — skip enforcement
+
+  const tierAccess = TIER_MODEL_ACCESS[userTier];
+  if (!tierAccess) return plan;
+
+  const allowedSet = new Set(tierAccess.modelIds);
+  // Also allow the swarm-level IDs that map from the canonical TIER_MODEL_ACCESS IDs.
+  // TIER_MODEL_ACCESS uses bare IDs like 'groq/llama-3.3-70b-versatile' and 'gpt-5.4-nano'.
+  // The swarm uses IDs like 'groq-llama3-70b'. Map the Groq one explicitly.
+  if (allowedSet.has('groq/llama-3.3-70b-versatile')) {
+    allowedSet.add('groq-llama3-70b');
+  }
+  // gemini-3.1-flash-lite-preview is the free-tier Overseer — always allow it for free tier
+  if (userTier === 'free') {
+    allowedSet.add('gemini-3.1-flash-lite-preview');
+  }
+
+  const freeTierDefault: RegistryModelId = DEFAULT_SWARM_MODEL_ID; // groq-llama3-70b
+
+  if (plan.strategy === 'swarm') {
+    return {
+      ...plan,
+      steps: plan.steps.map((s) => {
+        if (allowedSet.has(s.model)) return s;
+        console.warn(`[swarm] Tier enforcement: downgrading ${s.model} → ${freeTierDefault} for tier '${userTier}'`);
+        return { ...s, model: freeTierDefault };
+      }),
+    };
+  }
+
+  if (!allowedSet.has(plan.model)) {
+    console.warn(`[swarm] Tier enforcement: downgrading ${plan.model} → ${freeTierDefault} for tier '${userTier}'`);
+    return { ...plan, model: freeTierDefault };
+  }
+  return plan;
 }
 
 export async function enforceSovereignLocalGpu(
@@ -429,6 +474,7 @@ export async function planSwarmExecution(input: PlanSwarmExecutionInput): Promis
       let guarded = await enforceSovereignLocalGpu(parsed, input.sovereignEligible, input.signal);
       guarded = stripLocalForPublic(guarded);
       guarded = enforcePlanRegistryAndCredentials(guarded);
+      guarded = enforceTierModelAccess(guarded, input.userTier);
       return applyPostGuards(input, guarded);
     }
   }
@@ -487,6 +533,7 @@ export async function planSwarmExecution(input: PlanSwarmExecutionInput): Promis
     let guarded = await enforceSovereignLocalGpu(parsed, input.sovereignEligible, input.signal);
     guarded = stripLocalForPublic(guarded);
     guarded = enforcePlanRegistryAndCredentials(guarded);
+    guarded = enforceTierModelAccess(guarded, input.userTier);
 
     return applyPostGuards(input, guarded);
   } catch {
@@ -556,6 +603,29 @@ export async function executeSwarmPipeline(input: {
     if (!entry) {
       throw new Error('Swarm: registry entry missing after normalization');
     }
+
+    // Fix 2: Validate entry is usable before dispatch (not DEPRECATED/REMOVED/gated)
+    try {
+      assertEntryUsable(entry);
+    } catch (usableErr) {
+      console.error(`[swarm] assertEntryUsable failed for ${entry.id}, falling back to default:`, usableErr);
+      const fallbackEntry = getRegistryEntry(DEFAULT_SWARM_MODEL_ID)!;
+      onSwarmTicker?.({
+        phase: 'step',
+        message: `Atlas fallback: ${entry.id} unavailable, routing to ${fallbackEntry.id}…`,
+        step: 1,
+        model: fallbackEntry.id,
+      });
+      const { fullText, model } = await streamRegistryModel({
+        entry: fallbackEntry,
+        messages: baseMessages,
+        onDelta,
+        signal,
+        timeoutMs,
+      });
+      return { fullText, surface: plan.strategy === 'delegate' ? 'delegate' : 'direct', model };
+    }
+
     onSwarmTicker?.({
       phase: 'step',
       message:
@@ -572,6 +642,12 @@ export async function executeSwarmPipeline(input: {
       signal,
       timeoutMs,
     });
+    // TODO: Wire Overseer synthesis here — currently direct/delegate paths bypass constitutional governance.
+    // The Overseer's 4-step pipeline (synthesis, completeness, user lens, constitutional check) only runs
+    // on multi-model swarm paths. To wire it here: collect fullText, then call applyOverseerLens() from
+    // overseerService.ts post-streaming, and emit a replacement event. This requires architectural changes
+    // to the streaming pipeline (the client expects a single stream, not a post-hoc replacement) and risks
+    // breaking the real-time delta flow, so it is deferred to a dedicated PR.
     return { fullText, surface: plan.strategy === 'delegate' ? 'delegate' : 'direct', model };
   }
 
@@ -597,6 +673,16 @@ export async function executeSwarmPipeline(input: {
   for (const s of plan.steps) {
     const entry = getRegistryEntry(s.model);
     if (!entry) continue;
+
+    // Fix 2: Validate entry is usable before dispatch (not DEPRECATED/REMOVED/gated)
+    try {
+      assertEntryUsable(entry);
+    } catch (usableErr) {
+      console.warn(`[swarm] Step ${s.step}: ${entry.id} is not usable, skipping:`, usableErr);
+      outputs.push(`Step ${s.step} (${entry.id}): [SKIPPED — model not usable: ${usableErr instanceof Error ? usableErr.message : String(usableErr)}]`);
+      continue;
+    }
+
     onSwarmTicker?.({
       phase: 'step',
       message: `Atlas swarm — ${entry.id}: ${s.task.slice(0, 120)}${s.task.length > 120 ? '…' : ''}`,
@@ -669,101 +755,118 @@ Synthesize the above into a single, coherent Atlas-identity response. Do not exp
   ];
 
   let synth = '';
-  // Use registry-based streaming if the Overseer model has a registry entry;
-  // otherwise fall back to direct OpenAI Chat Completions API.
-  if (overseerEntry) {
-    const { fullText: finalText, model: synthModel } = await streamRegistryModel({
-      entry: overseerEntry,
-      messages: overseerMessages,
-      onDelta: (t) => {
-        synth += t;
-        onDelta(t);
-      },
-      signal,
-      timeoutMs,
-    });
-    return {
-      fullText: finalText || synth,
-      surface: 'swarm',
-      model: `swarm→overseer:${synthModel}`,
-    };
-  }
 
-  // Fallback: direct OpenAI API call for gpt-5.4 family models not yet in the registry
-  const openaiKey = env.openaiApiKey?.trim();
-  if (!openaiKey) {
-    // Last resort: fall back to default swarm model if OpenAI is unavailable
-    const fallbackEntry = getRegistryEntry(DEFAULT_SWARM_MODEL_ID)!;
-    const { fullText: finalText, model: synthModel } = await streamRegistryModel({
-      entry: fallbackEntry,
-      messages: overseerMessages,
-      onDelta: (t) => {
-        synth += t;
-        onDelta(t);
-      },
-      signal,
-      timeoutMs,
-    });
-    return {
-      fullText: finalText || synth,
-      surface: 'swarm',
-      model: `swarm→fallback:${synthModel}`,
-    };
-  }
-
-  const openaiBase = (env.openaiBaseUrl?.trim() || 'https://api.openai.com/v1').replace(/\/$/, '');
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs ?? 120_000);
+  // Fix 1 (part 2): Wrap entire Overseer dispatch in try/catch so that if
+  // streamRegistryModel throws (e.g. "Unknown backend: undefined", temporary
+  // API outage), the pipeline degrades gracefully — return raw worker synthesis
+  // rather than crashing the entire response.
   try {
-    const res = await fetch(`${openaiBase}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${openaiKey}`,
-      },
-      body: JSON.stringify({
-        model: overseerModelId,
-        temperature: 0.25,
-        stream: true,
-        messages: overseerMessages.map((m) => ({ role: m.role, content: m.content })),
-      }),
-      signal: signal ?? controller.signal,
-    });
-
-    if (!res.ok || !res.body) {
-      throw new Error(`Overseer API error: ${res.status}`);
+    // Use registry-based streaming if the Overseer model has a registry entry;
+    // otherwise fall back to direct OpenAI Chat Completions API.
+    if (overseerEntry) {
+      const { fullText: finalText, model: synthModel } = await streamRegistryModel({
+        entry: overseerEntry,
+        messages: overseerMessages,
+        onDelta: (t) => {
+          synth += t;
+          onDelta(t);
+        },
+        signal,
+        timeoutMs,
+      });
+      return {
+        fullText: finalText || synth,
+        surface: 'swarm',
+        model: `swarm→overseer:${synthModel}`,
+      };
     }
 
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() ?? '';
-      for (const line of lines) {
-        if (!line.startsWith('data: ')) continue;
-        const payload = line.slice(6).trim();
-        if (payload === '[DONE]') continue;
-        try {
-          const chunk = JSON.parse(payload) as { choices?: { delta?: { content?: string } }[] };
-          const text = chunk.choices?.[0]?.delta?.content;
-          if (text) {
-            synth += text;
-            onDelta(text);
-          }
-        } catch { /* skip malformed chunk */ }
+    // Fallback: direct OpenAI API call for gpt-5.4 family models not yet in the registry
+    const openaiKey = env.openaiApiKey?.trim();
+    if (!openaiKey) {
+      // Last resort: fall back to default swarm model if OpenAI is unavailable
+      const fallbackEntry = getRegistryEntry(DEFAULT_SWARM_MODEL_ID)!;
+      const { fullText: finalText, model: synthModel } = await streamRegistryModel({
+        entry: fallbackEntry,
+        messages: overseerMessages,
+        onDelta: (t) => {
+          synth += t;
+          onDelta(t);
+        },
+        signal,
+        timeoutMs,
+      });
+      return {
+        fullText: finalText || synth,
+        surface: 'swarm',
+        model: `swarm→fallback:${synthModel}`,
+      };
+    }
+
+    const openaiBase = (env.openaiBaseUrl?.trim() || 'https://api.openai.com/v1').replace(/\/$/, '');
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs ?? 120_000);
+    try {
+      const res = await fetch(`${openaiBase}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${openaiKey}`,
+        },
+        body: JSON.stringify({
+          model: overseerModelId,
+          temperature: 0.25,
+          stream: true,
+          messages: overseerMessages.map((m) => ({ role: m.role, content: m.content })),
+        }),
+        signal: signal ?? controller.signal,
+      });
+
+      if (!res.ok || !res.body) {
+        throw new Error(`Overseer API error: ${res.status}`);
       }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const payload = line.slice(6).trim();
+          if (payload === '[DONE]') continue;
+          try {
+            const chunk = JSON.parse(payload) as { choices?: { delta?: { content?: string } }[] };
+            const text = chunk.choices?.[0]?.delta?.content;
+            if (text) {
+              synth += text;
+              onDelta(text);
+            }
+          } catch { /* skip malformed chunk */ }
+        }
+      }
+      return {
+        fullText: synth,
+        surface: 'swarm',
+        model: `swarm→overseer:${overseerModelId}`,
+      };
+    } finally {
+      clearTimeout(timeout);
     }
+  } catch (overseerErr) {
+    // Overseer synthesis failed — degrade gracefully by returning raw worker output
+    console.error(`[swarm] Overseer synthesis failed, returning raw worker output:`, overseerErr);
+    // Emit the combined worker output to the client since Overseer couldn't synthesize
+    onDelta(combined);
     return {
-      fullText: synth,
+      fullText: combined,
       surface: 'swarm',
-      model: `swarm→overseer:${overseerModelId}`,
+      model: `swarm→overseer-degraded:${overseerModelId}`,
     };
-  } finally {
-    clearTimeout(timeout);
   }
 }
 
