@@ -37,6 +37,10 @@ export interface PolicyProfile {
   /** Low = prefer fast responses; High = willing to wait for depth. */
   latencyTolerance: 'Low' | 'High';
   updatedAt: string;
+  /** True when at least one explicit user signal has updated this profile.
+   * False for new users on structural defaults — downstream systems must not
+   * present unlearned defaults to the LLM as user preferences. */
+  isLearned?: boolean;
 }
 
 export interface ConversationTrace {
