@@ -12,7 +12,6 @@ import { initSqlite, getDb } from './db/sqlite.js';
 import { runBootMigrations } from './services/governance/migration/bootMigrations.js';
 import registerHealthRoutes from './routes/health.js'
 import { registerRateLimit } from './plugins/rateLimit.js';
-import { createScopedRateLimiter } from './plugins/scopedRateLimit.js';
 import { registerOllamaCompatRoutes } from './routes/ollamaCompat.js';
 import { registerInferenceQueueRoutes } from './routes/inferenceQueue.js';
 import { registerOmniStreamRoutes } from './routes/omniStream.js';
@@ -324,20 +323,69 @@ await app.register(async (billingScope) => {
 
 // ── User preferences routes — model selection, etc. ──────────────────────
 await app.register(async (userScope) => {
-  // Scoped rate limit (CodeQL CWE-770): CodeQL can't trace the global
-  // @fastify/rate-limit registration through nested scopes, so we add a
-  // visible per-IP guard inside this scope's preHandler. Defence in depth
-  // with the global limiter registered above.
-  const userPrefsLimiter = createScopedRateLimiter({
+  // Scoped rate limit for user-preferences routes (CodeQL CWE-770).
+  // Same pattern as billing/legal scopes: register @fastify/rate-limit in
+  // the same scope as the handlers (syntactic guard for CodeQL) plus an
+  // inline per-IP token bucket enforced in preHandler (defence in depth).
+  await userScope.register((await import('@fastify/rate-limit')).default, {
     max: 30,
-    windowMs: 60_000,
-    scopeName: 'User preferences',
+    timeWindow: '1 minute',
+    keyGenerator: (req: FastifyRequest) => {
+      const forwarded = req.headers['x-forwarded-for'];
+      const ip = Array.isArray(forwarded) ? forwarded[0]
+        : typeof forwarded === 'string' ? forwarded.split(',')[0].trim()
+        : req.ip;
+      return ip ?? 'unknown';
+    },
+    errorResponseBuilder: (
+      _request: FastifyRequest,
+      context: { after: string },
+    ) => ({
+      statusCode: 429,
+      error: 'Too Many Requests',
+      message: `User preferences rate limit exceeded. Retry after ${context.after}.`,
+    }),
   });
+
+  const userPrefsRateBucket = new Map<string, { count: number; resetAt: number }>();
+  const USER_PREFS_RATE_MAX = 30;
+  const USER_PREFS_RATE_WINDOW_MS = 60_000;
+
+  const enforceUserPrefsRateLimit = async (
+    request: FastifyRequest,
+    reply: FastifyReply,
+  ): Promise<boolean> => {
+    const forwarded = request.headers['x-forwarded-for'];
+    const ip = Array.isArray(forwarded)
+      ? forwarded[0]
+      : (forwarded ?? request.ip ?? '0.0.0.0');
+
+    const now = Date.now();
+    const bucket = userPrefsRateBucket.get(ip);
+    if (!bucket || bucket.resetAt <= now) {
+      userPrefsRateBucket.set(ip, { count: 1, resetAt: now + USER_PREFS_RATE_WINDOW_MS });
+      return true;
+    }
+    bucket.count++;
+    if (bucket.count > USER_PREFS_RATE_MAX) {
+      const retryAfterSecs = Math.ceil((bucket.resetAt - now) / 1000);
+      reply.header('Retry-After', retryAfterSecs);
+      await reply.status(429).send({
+        statusCode: 429,
+        error: 'Too Many Requests',
+        message: `User preferences rate limit exceeded. Retry after ${retryAfterSecs}s.`,
+      });
+      return false;
+    }
+    return true;
+  };
+
   userScope.addHook('onRequest', async (request: FastifyRequest, reply: FastifyReply) => {
-    await userPrefsLimiter.enforce(request, reply);
+    await enforceUserPrefsRateLimit(request, reply);
   });
+
   userScope.addHook('preHandler', async (request: FastifyRequest, reply: FastifyReply) => {
-    const allowed = await userPrefsLimiter.enforce(request, reply);
+    const allowed = await enforceUserPrefsRateLimit(request, reply);
     if (!allowed) return;
     await attachAtlasSession(request);
     if (!request.atlasAuthUser) {
@@ -356,20 +404,71 @@ await app.register(async (userScope) => {
 // and GET /v1/legal/acceptance require a valid session — we reuse the same
 // OAuth session bridge used by billing/preferences.
 await app.register(async (legalScope) => {
-  // Scoped rate limit (CodeQL CWE-770). Legal endpoints hit SQLite on every
-  // call (version lookup, acceptance read/write). Same pattern as billing
-  // and user-preferences scopes: visible per-IP guard inside preHandler plus
-  // the global limiter for defence in depth.
-  const legalLimiter = createScopedRateLimiter({
+  // Scoped rate limit for legal routes (CodeQL CWE-770).
+  // Legal endpoints hit SQLite on every call (version lookup,
+  // acceptance read/write). Same pattern as billing/user-preferences
+  // scopes: register @fastify/rate-limit in the same scope for a
+  // syntactic guard CodeQL recognises, plus an inline per-IP token
+  // bucket enforced in preHandler for defence in depth.
+  await legalScope.register((await import('@fastify/rate-limit')).default, {
     max: 30,
-    windowMs: 60_000,
-    scopeName: 'Legal',
+    timeWindow: '1 minute',
+    keyGenerator: (req: FastifyRequest) => {
+      const forwarded = req.headers['x-forwarded-for'];
+      const ip = Array.isArray(forwarded) ? forwarded[0]
+        : typeof forwarded === 'string' ? forwarded.split(',')[0].trim()
+        : req.ip;
+      return ip ?? 'unknown';
+    },
+    errorResponseBuilder: (
+      _request: FastifyRequest,
+      context: { after: string },
+    ) => ({
+      statusCode: 429,
+      error: 'Too Many Requests',
+      message: `Legal rate limit exceeded. Retry after ${context.after}.`,
+    }),
   });
+
+  const legalRateBucket = new Map<string, { count: number; resetAt: number }>();
+  const LEGAL_RATE_MAX = 30;
+  const LEGAL_RATE_WINDOW_MS = 60_000;
+
+  const enforceLegalRateLimit = async (
+    request: FastifyRequest,
+    reply: FastifyReply,
+  ): Promise<boolean> => {
+    const forwarded = request.headers['x-forwarded-for'];
+    const ip = Array.isArray(forwarded)
+      ? forwarded[0]
+      : (forwarded ?? request.ip ?? '0.0.0.0');
+
+    const now = Date.now();
+    const bucket = legalRateBucket.get(ip);
+    if (!bucket || bucket.resetAt <= now) {
+      legalRateBucket.set(ip, { count: 1, resetAt: now + LEGAL_RATE_WINDOW_MS });
+      return true;
+    }
+    bucket.count++;
+    if (bucket.count > LEGAL_RATE_MAX) {
+      const retryAfterSecs = Math.ceil((bucket.resetAt - now) / 1000);
+      reply.header('Retry-After', retryAfterSecs);
+      await reply.status(429).send({
+        statusCode: 429,
+        error: 'Too Many Requests',
+        message: `Legal rate limit exceeded. Retry after ${retryAfterSecs}s.`,
+      });
+      return false;
+    }
+    return true;
+  };
+
   legalScope.addHook('onRequest', async (request: FastifyRequest, reply: FastifyReply) => {
-    await legalLimiter.enforce(request, reply);
+    await enforceLegalRateLimit(request, reply);
   });
+
   legalScope.addHook('preHandler', async (request: FastifyRequest, reply: FastifyReply) => {
-    const allowed = await legalLimiter.enforce(request, reply);
+    const allowed = await enforceLegalRateLimit(request, reply);
     if (!allowed) return;
     // Public endpoints under /v1/legal/ are enumerated here to skip auth.
     if (request.url.startsWith('/v1/legal/versions')) return;
