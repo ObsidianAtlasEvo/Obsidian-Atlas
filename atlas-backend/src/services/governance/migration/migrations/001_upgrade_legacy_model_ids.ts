@@ -3,10 +3,45 @@
  *
  * Migrates stale Claude (3.x) and GPT (3.5/4o) preferred_model values to
  * their current equivalents (Claude 4.6 family, GPT-5.4 family).
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * Absent-table guard (hotfix — see deploy runs 24609809442 + 24610590569):
+ * ─────────────────────────────────────────────────────────────────────────
+ * In the current Atlas deployment the `user_preferences` SQLite table does
+ * not exist — user model preferences live in Supabase on
+ * `atlas_evolution_profiles.preferred_model` (see
+ * routes/userPreferencesRoutes.ts). When PR #124 wired the boot migration
+ * runner into index.ts, this chain's `up()` started executing on every
+ * start; with no table to `UPDATE`, better-sqlite3 threw
+ * `SqliteError: no such table: user_preferences` → runMigrations returned
+ * { failed } → runBootMigrations threw → index.ts logged `[FATAL] Boot
+ * migrations failed` and called `process.exit(1)`. PM2 kept restarting the
+ * crashed process and the post-deploy health check hit ECONNREFUSED
+ * (curl exit 7) because port 3001 was never listening.
+ *
+ * Until the SQLite `user_preferences` table is introduced (or the Supabase
+ * preferences are back-filled through this runner), the migration detects
+ * the table's absence up front and short-circuits cleanly. That records a
+ * status='success' row against (user_preferences, 001) so the idempotency
+ * gate in migrationRunner skips it on subsequent boots. If/when the table
+ * lands, the same chain will run the UPDATEs exactly once on whatever rows
+ * exist at that moment, then short-circuit forever after via the gate.
  */
 
 import { getDb } from '../../../../db/sqlite.js';
 import type { MigrationChain } from '../migrationRunner.js';
+
+function userPreferencesTableExists(): boolean {
+  const db = getDb();
+  const row = db
+    .prepare(
+      `SELECT name FROM sqlite_master
+        WHERE type = 'table' AND name = 'user_preferences'
+        LIMIT 1`,
+    )
+    .get() as { name?: string } | undefined;
+  return Boolean(row?.name);
+}
 
 export const migration001UpgradeLegacyModelIds: MigrationChain = {
   id: '001-upgrade-legacy-model-ids',
@@ -14,6 +49,17 @@ export const migration001UpgradeLegacyModelIds: MigrationChain = {
   version: '001',
 
   async up() {
+    // Absent-table guard — see header comment. Preferences currently live in
+    // Supabase, not SQLite; without this guard the UPDATEs below throw
+    // "no such table" and bring the whole boot down.
+    if (!userPreferencesTableExists()) {
+      // eslint-disable-next-line no-console -- migrations run before Fastify logger
+      console.log(
+        '[migration 001] user_preferences SQLite table not present — skipping legacy model ID upgrade (prefs currently live in Supabase atlas_evolution_profiles).',
+      );
+      return;
+    }
+
     const db = getDb();
 
     // Upgrade legacy Claude model IDs → Claude Sonnet 4.6
