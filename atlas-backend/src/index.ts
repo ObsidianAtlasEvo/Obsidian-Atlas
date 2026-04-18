@@ -9,6 +9,7 @@ import { env } from './config/env.js';
 import { startChronosScheduler } from './services/autonomy/chronos.js';
 import { initSemanticVectorIndex } from './db/vectorStore.js';
 import { initSqlite, getDb } from './db/sqlite.js';
+import { runBootMigrations } from './services/governance/migration/bootMigrations.js';
 import registerHealthRoutes from './routes/health.js'
 import { registerRateLimit } from './plugins/rateLimit.js';
 import { registerOllamaCompatRoutes } from './routes/ollamaCompat.js';
@@ -67,6 +68,22 @@ try {
   initSqlite();
 } catch (err) {
   console.error('[FATAL] SQLite initialization failed. Check SQLITE_PATH and disk permissions.', err);
+  process.exit(1);
+}
+
+// Run registered schema migrations in topological order. `initSqlite()` has
+// already created the authoritative `atlas_schema_migrations` table and
+// rebuilt any legacy-shape DBs in place, so the runner's lock + audit writes
+// are guaranteed to land on the canonical shape. Idempotent per
+// (domain, version); set ATLAS_SKIP_BOOT_MIGRATIONS=true to short-circuit
+// for ad-hoc scripts, CI, or test harnesses.
+try {
+  await runBootMigrations();
+} catch (err) {
+  console.error(
+    '[FATAL] Boot migrations failed. Atlas cannot start with an inconsistent schema.',
+    err,
+  );
   process.exit(1);
 }
 

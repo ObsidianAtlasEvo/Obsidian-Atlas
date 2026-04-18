@@ -5,6 +5,9 @@
 export { runMigrations, getMigrationStatus } from './migrationRunner.js';
 export type { MigrationChain, MigrationReport, MigrationStatus } from './migrationRunner.js';
 
+export { runBootMigrations } from './bootMigrations.js';
+export { BOOT_MIGRATION_CHAINS } from './registry.js';
+
 export { runCanary, validateCanary } from './canaryMigration.js';
 export type { CanaryResult } from './canaryMigration.js';
 
