@@ -9,7 +9,7 @@ import { messagesWithPrimeDirective } from '../services/intelligence/primeDirect
  * but routes through Groq when DISABLE_LOCAL_OLLAMA=true.
  */
 export async function registerOllamaCompatRoutes(app: FastifyInstance): Promise<void> {
-  app.post('/v1/ollama/chat', async (request, reply) => {
+  app.post('/v1/ollama/chat', { config: { rateLimit: { max: 5, timeWindow: '1 minute' } } }, async (request, reply) => {
     // Auth gate: userId must come from verified session (route is inside protectedApp scope)
     const userId = request.atlasAuthUser?.databaseUserId ?? request.atlasSession?.userId;
     if (!userId) {
