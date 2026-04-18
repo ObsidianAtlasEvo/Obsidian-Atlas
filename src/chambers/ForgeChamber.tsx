@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { useAtlasStore } from '../store/useAtlasStore';
 import { generateId, nowISO } from '../lib/persistence';
+import { useIsMobile } from '../hooks/useIsMobile';
+import MobileBackButton from '../components/shell/MobileBackButton';
 
 // TODO: Add store actions: addArtifact, removeArtifact, updateArtifact to useAtlasStore
 
@@ -95,7 +97,10 @@ export default function ForgeChamber() {
   const [artifacts, setArtifacts] = useState<BuildArtifact[]>(
     storeData?.artifacts?.length ? storeData.artifacts : SEED_ARTIFACTS
   );
-  const [selectedId, setSelectedId] = useState<string | null>(artifacts[0]?.id ?? null);
+  const isMobile = useIsMobile();
+  const [selectedId, setSelectedId] = useState<string | null>(() =>
+    typeof window !== 'undefined' && window.innerWidth < 640 ? null : (artifacts[0]?.id ?? null),
+  );
   const [view, setView] = useState<'grid' | 'list'>('list');
   const [showTypeGrid, setShowTypeGrid] = useState(false);
   const [newType, setNewType] = useState<ArtifactType>('essay');
@@ -128,10 +133,19 @@ export default function ForgeChamber() {
 
   const typeInfo = (t: ArtifactType) => ARTIFACT_TYPES.find((x) => x.type === t);
 
+  const isDetailActive = !!selected;
+  const showListPane = !isMobile || !isDetailActive;
+  const showDetailPane = !isMobile || isDetailActive;
+  const goBackToList = () => {
+    setSelectedId(null);
+    setShowTypeGrid(false);
+  };
+
   return (
-    <div style={{ display: 'flex', height: '100%', background: C.body, color: C.text, fontFamily: 'inherit', animation: 'atlas-fade-in 300ms ease both', minHeight: 0 }}>
+    <div style={{ display: 'flex', height: '100%', background: C.body, color: C.text, fontFamily: 'inherit', animation: 'atlas-fade-in 300ms ease both', minHeight: 0, minWidth: 0 }}>
       {/* Left panel */}
-      <div style={{ width: 260, flexShrink: 0, background: C.panel, borderRight: `1px solid ${C.border}`, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      {showListPane && (
+      <div style={{ width: isMobile ? '100%' : 260, flexShrink: 0, background: C.panel, borderRight: isMobile ? 'none' : `1px solid ${C.border}`, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         <div style={{ padding: '16px 14px 12px', borderBottom: `1px solid ${C.borderSubtle}` }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
             <span style={label}>Forge</span>
@@ -222,8 +236,16 @@ export default function ForgeChamber() {
         </div>
       </div>
 
+      )}
+
       {/* Editor panel */}
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      {showDetailPane && (
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
+        {isMobile && (
+          <div style={{ padding: '10px 14px 0' }}>
+            <MobileBackButton onClick={goBackToList} label="Artifacts" />
+          </div>
+        )}
         {!selected ? (
           <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: C.muted, fontSize: '0.9rem', flexDirection: 'column', gap: 12 }}>
             <div style={{ fontSize: '2rem', opacity: 0.4 }}>📝</div>
@@ -238,7 +260,7 @@ export default function ForgeChamber() {
         ) : (
           <>
             {/* Toolbar */}
-            <div style={{ padding: '12px 20px', borderBottom: `1px solid ${C.border}`, background: C.panel, display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0 }}>
+            <div style={{ padding: isMobile ? '10px 14px' : '12px 20px', borderBottom: `1px solid ${C.border}`, background: C.panel, display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, flexWrap: 'wrap' }}>
               {/* Type badge */}
               <span style={{ fontSize: '1.1rem' }}>{typeInfo(selected.type)?.icon}</span>
 
@@ -288,7 +310,7 @@ export default function ForgeChamber() {
             </div>
 
             {/* Editor area */}
-            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: 20, overflow: 'hidden' }}>
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: isMobile ? 14 : 20, overflow: 'hidden', minWidth: 0 }}>
               <textarea
                 value={selected.content}
                 onChange={(e) => updateSelected({ content: e.target.value })}
@@ -328,6 +350,7 @@ export default function ForgeChamber() {
           </>
         )}
       </div>
+      )}
     </div>
   );
 }

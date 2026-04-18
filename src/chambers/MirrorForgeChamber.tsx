@@ -275,7 +275,7 @@ function CurrentReadSection({ read, onUpdate }: CurrentReadSectionProps) {
       </div>
 
       {/* Surface + Deeper driver row */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
+      <div className="mf-row-2col" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
         <div style={{ ...panelStyle, padding: '16px 18px' }}>
           <div style={{ ...labelStyle, color: T.teal, marginBottom: 8 }}>Surface Driver</div>
           <div style={{ color: T.body, fontSize: '0.9rem', lineHeight: 1.55 }}>
@@ -1096,7 +1096,7 @@ function DecisionDivergenceSection({ divergence, onUpdate }: DecisionDivergenceS
       </div>
 
       {/* Side-by-side path comparison */}
-      <div style={{ display: 'flex', gap: 14, alignItems: 'stretch' }}>
+      <div className="mf-path-row" style={{ display: 'flex', gap: 14, alignItems: 'stretch' }}>
         <PathCard
           title="Most Likely Path"
           accentColor={T.teal}
@@ -1106,7 +1106,7 @@ function DecisionDivergenceSection({ divergence, onUpdate }: DecisionDivergenceS
         />
 
         {/* Center divider with arrow */}
-        <div style={{
+        <div className="mf-path-divider" style={{
           flexShrink: 0,
           width: 32,
           display: 'flex',
@@ -1156,6 +1156,7 @@ export default function MirrorForgeChamber() {
 
   return (
     <div
+      className="mf-chamber"
       style={{
         minHeight: '100%',
         padding: '28px 28px 60px',
@@ -1166,8 +1167,26 @@ export default function MirrorForgeChamber() {
         boxSizing: 'border-box',
       }}
     >
+      {/*
+        Mobile overrides. We keep the desktop layout intact and only tighten
+        padding, collapse 2-col grids to 1-col, and wrap the Most Likely /
+        Highest Order row when the viewport is narrow. Using a media query
+        avoids threading isMobile into five nested subcomponents.
+      */}
+      <style>{`
+        @media (max-width: 640px) {
+          .mf-chamber { padding: 16px 14px 56px !important; }
+          .mf-chamber .mf-section { padding: 16px 14px !important; }
+          .mf-chamber .mf-row-2col { grid-template-columns: 1fr !important; }
+          .mf-chamber .mf-path-row { flex-direction: column !important; gap: 12px !important; }
+          .mf-chamber .mf-path-row .mf-path-divider { display: none !important; }
+          .mf-chamber .mf-header { gap: 12px !important; margin-bottom: 20px !important; }
+          .mf-chamber .mf-header h1 { font-size: 1.2rem !important; }
+          .mf-chamber .mf-header p { font-size: 0.78rem !important; }
+        }
+      `}</style>
       {/* Chamber header */}
-      <div style={{
+      <div className="mf-header" style={{
         display: 'flex',
         alignItems: 'flex-start',
         gap: 16,
@@ -1214,7 +1233,7 @@ export default function MirrorForgeChamber() {
       {/* Sections */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 28 }}>
         {/* Section 1: Current Read */}
-        <div style={{ ...panelStyle, padding: '22px 24px' }}>
+        <div className="mf-section" style={{ ...panelStyle, padding: '22px 24px' }}>
           <CurrentReadSection
             read={mirrorforge.currentRead}
             onUpdate={handleUpdateRead}
@@ -1222,7 +1241,7 @@ export default function MirrorForgeChamber() {
         </div>
 
         {/* Section 2: Active Modes */}
-        <div style={{ ...panelStyle, padding: '22px 24px' }}>
+        <div className="mf-section" style={{ ...panelStyle, padding: '22px 24px' }}>
           <ActiveModesSection
             modes={mirrorforge.activeModes}
             onUpdate={updateMirrorforge}
@@ -1230,7 +1249,7 @@ export default function MirrorForgeChamber() {
         </div>
 
         {/* Section 3: Pattern Ledger */}
-        <div style={{ ...panelStyle, padding: '22px 24px' }}>
+        <div className="mf-section" style={{ ...panelStyle, padding: '22px 24px' }}>
           <PatternLedgerSection
             patterns={mirrorforge.patternLedger}
             onAdd={addMirrorforgePattern}
@@ -1239,7 +1258,7 @@ export default function MirrorForgeChamber() {
         </div>
 
         {/* Section 4: Decision Divergence */}
-        <div style={{ ...panelStyle, padding: '22px 24px' }}>
+        <div className="mf-section" style={{ ...panelStyle, padding: '22px 24px' }}>
           <DecisionDivergenceSection
             divergence={mirrorforge.decisionDivergence}
             onUpdate={updateMirrorforge}

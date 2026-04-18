@@ -2,6 +2,8 @@ import React, { useState, useCallback } from 'react';
 import { useAtlasStore } from '../store/useAtlasStore';
 import { generateId, nowISO } from '../lib/persistence';
 import { SyncStatusIndicator } from '../components/SyncStatusIndicator';
+import { useIsMobile } from '../hooks/useIsMobile';
+import MobileBackButton from '../components/shell/MobileBackButton';
 import type { SyncStatus } from '../lib/sovereignSync';
 import type { Decision } from '@/types';
 
@@ -612,10 +614,11 @@ function DecisionDetail({
   onDelete: () => void;
 }) {
   const createdAt = (decision as Decision & { createdAt?: string }).createdAt;
+  const isMobile = useIsMobile();
 
   return (
     <div
-      style={{ flex: 1, overflowY: 'auto', padding: '28px 36px', animation: 'atlas-fade-in 300ms ease both' }}
+      style={{ flex: 1, overflowY: 'auto', padding: isMobile ? '16px 16px' : '28px 36px', animation: 'atlas-fade-in 300ms ease both', minWidth: 0 }}
     >
       <div style={{ maxWidth: 760, margin: '0 auto' }}>
         {/* Header */}
@@ -665,7 +668,8 @@ function DecisionDetail({
           <div
             style={{
               display: 'grid',
-              gridTemplateColumns: decision.context && decision.dossier ? '1fr 1fr' : '1fr',
+              gridTemplateColumns:
+                isMobile ? '1fr' : (decision.context && decision.dossier ? '1fr 1fr' : '1fr'),
               gap: 14,
               marginBottom: 22,
             }}
@@ -898,6 +902,8 @@ function DecisionForm({
   mode: 'create' | 'edit';
 }) {
   const [form, setForm] = useState<FormState>(initial);
+  const isMobile = useIsMobile();
+  const gridTwo = isMobile ? '1fr' : '1fr 1fr';
 
   const set = useCallback(<K extends keyof FormState>(key: K, val: FormState[K]) => {
     setForm((prev) => ({ ...prev, [key]: val }));
@@ -928,8 +934,9 @@ function DecisionForm({
       style={{
         flex: 1,
         overflowY: 'auto',
-        padding: '24px 32px',
+        padding: isMobile ? '14px 16px' : '24px 32px',
         animation: 'atlas-fade-in 300ms ease both',
+        minWidth: 0,
       }}
     >
       <div style={{ maxWidth: 680, margin: '0 auto' }}>
@@ -993,7 +1000,7 @@ function DecisionForm({
         </div>
 
         {/* Context + Dossier */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 16 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: gridTwo, gap: 14, marginBottom: 16 }}>
           <div>
             <div style={{ ...labelStyle, marginBottom: 6 }}>Context</div>
             <textarea
@@ -1053,7 +1060,7 @@ function DecisionForm({
         </div>
 
         {/* Tag fields */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 16 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: gridTwo, gap: 14, marginBottom: 16 }}>
           <TagInput
             label="Stakeholders"
             tags={form.stakeholders}
@@ -1084,7 +1091,7 @@ function DecisionForm({
         {/* Status selector */}
         <div style={{ marginBottom: 16 }}>
           <div style={{ ...labelStyle, marginBottom: 8 }}>Status</div>
-          <div style={{ display: 'flex', gap: 7 }}>
+          <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap' }}>
             {STATUS_OPTIONS.map((s) => (
               <SmallBtn
                 key={s}
@@ -1123,7 +1130,10 @@ export default function DecisionsChamber() {
 
   const doctrineTitles = doctrine.map((d) => d.title);
 
-  const [selectedId, setSelectedId] = useState<string | null>(decisions[0]?.id ?? null);
+  const isMobile = useIsMobile();
+  const [selectedId, setSelectedId] = useState<string | null>(() =>
+    typeof window !== 'undefined' && window.innerWidth < 640 ? null : (decisions[0]?.id ?? null),
+  );
   const [mode, setMode] = useState<'view' | 'create' | 'edit'>('view');
   const [formState, setFormState] = useState<FormState>(makeBlankForm());
   const [syncStatus] = useState<SyncStatus>('idle');
@@ -1183,15 +1193,26 @@ export default function DecisionsChamber() {
   const postMortem = decisions.filter((d) => d.status === 'post-mortem');
   const sorted = [...pending, ...resolved, ...postMortem];
 
+  // On mobile we fold list + detail into a single pane. The detail side is
+  // visible when the user is creating/editing or has selected an entry.
+  const isDetailActive = mode === 'create' || mode === 'edit' || !!selected;
+  const showListPane = !isMobile || !isDetailActive;
+  const showDetailPane = !isMobile || isDetailActive;
+  const goBackToList = () => {
+    setMode('view');
+    setSelectedId(null);
+  };
+
   return (
-    <div style={{ flex: 1, display: 'flex', height: '100%', overflow: 'hidden', fontFamily: 'Inter, sans-serif' }}>
+    <div style={{ flex: 1, display: 'flex', height: '100%', overflow: 'hidden', fontFamily: 'Inter, sans-serif', minWidth: 0 }}>
 
       {/* ── Left panel: decision list ── */}
+      {showListPane && (
       <div
         style={{
-          width: 280,
-          minWidth: 280,
-          borderRight: '1px solid var(--border-structural, rgba(88,28,135,0.14))',
+          width: isMobile ? '100%' : 280,
+          minWidth: isMobile ? 0 : 280,
+          borderRight: isMobile ? 'none' : '1px solid var(--border-structural, rgba(88,28,135,0.14))',
           display: 'flex',
           flexDirection: 'column',
           overflow: 'hidden',
@@ -1278,8 +1299,16 @@ export default function DecisionsChamber() {
         </div>
       </div>
 
+      )}
+
       {/* ── Right panel ── */}
+      {showDetailPane && (
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
+        {isMobile && (
+          <div style={{ padding: '10px 14px 0' }}>
+            <MobileBackButton onClick={goBackToList} label="Decisions" />
+          </div>
+        )}
         {mode === 'create' || mode === 'edit' ? (
           <DecisionForm
             initial={formState}
@@ -1351,6 +1380,7 @@ export default function DecisionsChamber() {
           </div>
         )}
       </div>
+      )}
     </div>
   );
 }
