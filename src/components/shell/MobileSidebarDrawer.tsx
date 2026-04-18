@@ -1,28 +1,39 @@
 /**
- * Mobile Sidebar Drawer
+ * Mobile Sidebar Drawer — left-side accordion sheet opened by the "Menu" item
+ * in the bottom nav (or the top-bar hamburger).
  *
- * Opens from the left via a hamburger button in the mobile top bar and renders
- * the full desktop NavRail chamber list (grouped, with creator-only sections
- * when applicable) so mobile users have parity with desktop navigation.
+ * Structure (Refine.txt §4, §7):
+ *   - Pinned section (always expanded when non-empty, empty state otherwise)
+ *   - Accordion: Strategy, Identity, Intelligence, Evolution, Memory, Control
+ *     Center — only one expanded at a time.
+ *   - Labs inside Strategy: inline nested expand area (not a second accordion).
+ *   - Selecting a destination closes the drawer.
+ *   - Re-opening the drawer preserves the last-open section for that session.
  *
- * Desktop keeps the permanent left NavRail; the bottom tab bar keeps its
- * five-item shortcut for primary chambers. The drawer is additive: it gives
- * mobile users the full surface without forcing them to stop using the bottom
- * nav.
+ * Primary surfaces (Home, Atlas, Journal) and Search are intentionally NOT
+ * listed in the drawer — they live in the bottom nav only, per the spec.
  *
  * Accessibility:
  *   - role="dialog", aria-modal, aria-labelledby on the drawer panel
- *   - Escape key closes
- *   - Focus is returned to the trigger (hamburger) on close
- *   - Body scroll is locked while the drawer is open
- *   - Tapping the backdrop closes
+ *   - Escape closes; focus is returned to the trigger
+ *   - Body scroll is locked while open
+ *   - Tap backdrop to close
  */
 
 import React, { useCallback, useEffect, useRef } from 'react';
 import { useAtlasStore } from '../../store/useAtlasStore';
+import { useNavStore, PIN_VISIBLE_MOBILE } from '../../store/useNavStore';
 import { ModelSelector } from '../ModelSelector';
-import { CHAMBERS, ICONS, Icon } from './chamberCatalog';
-import type { ChamberDef } from './chamberCatalog';
+import {
+  SECTIONS,
+  ICONS,
+  Icon,
+  getChamber,
+  getDirectSectionChildren,
+  getSubgroupsInSection,
+  getChambersInSubgroup,
+} from './chamberCatalog';
+import type { ChamberDef, ChamberId, SectionId } from './chamberCatalog';
 
 // ── Props ─────────────────────────────────────────────────────────────────
 
@@ -31,15 +42,10 @@ interface MobileSidebarDrawerProps {
   onClose: () => void;
   onSettingsClick?: () => void;
   onSignOutClick?: () => void;
-  /**
-   * Ref to the element that triggered open (the hamburger button). When the
-   * drawer closes it refocuses this element so keyboard/screen-reader users
-   * don't lose their place.
-   */
   returnFocusRef?: React.RefObject<HTMLElement | null>;
 }
 
-// ── Hamburger icon (exported so AppShell can render it without re-importing) ─
+// ── Hamburger icon (exported for the top bar) ─────────────────────────────
 
 export function HamburgerIcon({ size = 22 }: { size?: number }) {
   return (
@@ -75,13 +81,17 @@ export default function MobileSidebarDrawer({
   const currentUser = useAtlasStore((s) => s.currentUser);
   const isCreator = currentUser?.role === 'sovereign_creator';
 
-  const visibleChambers = CHAMBERS.filter((c) => !c.creatorOnly || isCreator);
-  const groups = Array.from(new Set(visibleChambers.map((c) => c.group)));
+  const pinnedIds = useNavStore((s) => s.pinnedChambers);
+  const togglePinChamber = useNavStore((s) => s.togglePinChamber);
+  const openSection = useNavStore((s) => s.openDrawerSection);
+  const setOpenSection = useNavStore((s) => s.setOpenDrawerSection);
+  const labsExpanded = useNavStore((s) => s.labsExpanded);
+  const setLabsExpanded = useNavStore((s) => s.setLabsExpanded);
 
   const panelRef = useRef<HTMLDivElement | null>(null);
   const firstFocusableRef = useRef<HTMLButtonElement | null>(null);
 
-  // Escape to close
+  // Escape closes
   useEffect(() => {
     if (!open) return;
     const handleKey = (e: KeyboardEvent) => {
@@ -94,7 +104,7 @@ export default function MobileSidebarDrawer({
     return () => window.removeEventListener('keydown', handleKey);
   }, [open, onClose]);
 
-  // Lock body scroll while open so the page underneath doesn't rubber-band
+  // Lock body scroll while open
   useEffect(() => {
     if (!open) return;
     const prev = document.body.style.overflow;
@@ -104,30 +114,39 @@ export default function MobileSidebarDrawer({
     };
   }, [open]);
 
-  // Move focus into the drawer on open; return focus to the trigger on close
+  // Focus management
   useEffect(() => {
     if (open) {
       firstFocusableRef.current?.focus();
     } else {
-      // Defer so React commits the "drawer removed" state before we refocus
       const el = returnFocusRef?.current;
-      if (el) {
-        requestAnimationFrame(() => el.focus());
-      }
+      if (el) requestAnimationFrame(() => el.focus());
     }
   }, [open, returnFocusRef]);
 
   const handleSelect = useCallback(
-    (chamber: ChamberDef) => {
-      setActiveMode(chamber.id);
+    (id: ChamberId) => {
+      setActiveMode(id);
       onClose();
     },
     [setActiveMode, onClose],
   );
 
+  const toggleSection = useCallback(
+    (id: SectionId) => {
+      setOpenSection(openSection === id ? null : id);
+    },
+    [openSection, setOpenSection],
+  );
+
+  const pinnedChambers = pinnedIds
+    .slice(0, PIN_VISIBLE_MOBILE)
+    .map((id) => getChamber(id))
+    .filter((c): c is ChamberDef => !!c && (!c.creatorOnly || isCreator));
+
   return (
     <>
-      {/* Backdrop — always rendered so we can animate opacity */}
+      {/* Backdrop */}
       <div
         aria-hidden="true"
         onClick={onClose}
@@ -139,7 +158,7 @@ export default function MobileSidebarDrawer({
           WebkitBackdropFilter: 'blur(2px)',
           opacity: open ? 1 : 0,
           pointerEvents: open ? 'auto' : 'none',
-          transition: 'opacity var(--atlas-motion-standard) var(--atlas-ease-out)',
+          transition: 'opacity 180ms ease-out',
           zIndex: 90,
         }}
       />
@@ -156,17 +175,16 @@ export default function MobileSidebarDrawer({
           top: 0,
           bottom: 0,
           left: 0,
-          width: 'min(84vw, 320px)',
+          width: 'min(84vw, 360px)',
           maxWidth: '100%',
           background: 'var(--atlas-surface-rail)',
           borderRight: '1px solid var(--border-structural)',
           display: 'flex',
           flexDirection: 'column',
           transform: open ? 'translateX(0)' : 'translateX(-100%)',
-          transition: `transform var(--atlas-motion-slow) var(--atlas-ease-out)`,
+          transition: 'transform 220ms cubic-bezier(0.22, 1, 0.36, 1)',
           zIndex: 100,
           boxShadow: open ? '0 0 30px rgba(0,0,0,0.5)' : 'none',
-          // Respect iOS safe areas so content isn't hidden behind the notch / home bar
           paddingTop: 'env(safe-area-inset-top, 0px)',
           paddingBottom: 'env(safe-area-inset-bottom, 0px)',
         }}
@@ -212,7 +230,7 @@ export default function MobileSidebarDrawer({
                 whiteSpace: 'nowrap',
               }}
             >
-              Obsidian Atlas
+              Navigation
             </span>
           </div>
 
@@ -220,30 +238,12 @@ export default function MobileSidebarDrawer({
             ref={firstFocusableRef}
             onClick={onClose}
             aria-label="Close navigation"
-            style={{
-              background: 'transparent',
-              border: '1px solid rgba(88,28,135,0.25)',
-              borderRadius: 4,
-              width: 32,
-              height: 32,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              color: 'rgba(226,232,240,0.7)',
-              cursor: 'pointer',
-              padding: 0,
-            }}
+            style={closeBtnStyle}
           >
             <svg
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.75"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
+              width="16" height="16" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" strokeWidth="1.75" strokeLinecap="round"
+              strokeLinejoin="round" aria-hidden="true"
             >
               <line x1="6" y1="6" x2="18" y2="18" />
               <line x1="18" y1="6" x2="6" y2="18" />
@@ -251,94 +251,203 @@ export default function MobileSidebarDrawer({
           </button>
         </div>
 
-        {/* Chamber list (same grouped structure as desktop NavRail) */}
+        {/* Body */}
         <div
           style={{
             flex: 1,
             overflowY: 'auto',
             overflowX: 'hidden',
-            padding: '8px 0',
+            padding: '12px 0 8px',
             WebkitOverflowScrolling: 'touch',
           }}
         >
-          {groups.map((group, gi) => {
-            const groupChambers = visibleChambers.filter((c) => c.group === group);
+          {/* Pinned */}
+          <div style={{ padding: '0 4px 8px' }}>
+            <div
+              style={{
+                padding: '4px 12px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+              }}
+            >
+              <span
+                style={{
+                  fontSize: '0.625rem',
+                  fontWeight: 600,
+                  letterSpacing: '0.12em',
+                  color: 'rgba(226,232,240,0.35)',
+                  textTransform: 'uppercase',
+                }}
+              >
+                Pinned
+              </span>
+              <span
+                style={{
+                  fontSize: '0.625rem',
+                  color: 'rgba(226,232,240,0.3)',
+                  letterSpacing: '0.05em',
+                }}
+              >
+                {pinnedChambers.length}/{PIN_VISIBLE_MOBILE}
+              </span>
+            </div>
+            {pinnedChambers.length === 0 ? (
+              <div
+                style={{
+                  margin: '4px 12px',
+                  padding: '14px 12px',
+                  borderRadius: 6,
+                  border: '1px dashed rgba(88,28,135,0.25)',
+                  color: 'rgba(226,232,240,0.42)',
+                  fontSize: '0.75rem',
+                  lineHeight: 1.5,
+                }}
+              >
+                Pin chambers for faster access. Long-press or use the pin icon on any chamber.
+              </div>
+            ) : (
+              pinnedChambers.map((chamber) => (
+                <DrawerItem
+                  key={`pin-${chamber.id}`}
+                  chamber={chamber}
+                  activeMode={activeMode}
+                  onSelect={handleSelect}
+                  onTogglePin={togglePinChamber}
+                  pinned
+                />
+              ))
+            )}
+          </div>
+
+          {/* Sections accordion */}
+          {SECTIONS.map((section) => {
+            const direct = getDirectSectionChildren(section.id).filter(
+              (c) => !c.creatorOnly || isCreator,
+            );
+            const subgroups = getSubgroupsInSection(section.id);
+            const hasSubChildren = subgroups.some((g) =>
+              getChambersInSubgroup(section.id, g.id).some(
+                (c) => !c.creatorOnly || isCreator,
+              ),
+            );
+            if (direct.length === 0 && !hasSubChildren) return null;
+
+            const expanded = openSection === section.id;
+
             return (
-              <div key={group} style={{ marginBottom: 4 }}>
-                <div
+              <div key={section.id} style={{ padding: '0 4px', marginBottom: 2 }}>
+                <button
+                  type="button"
+                  onClick={() => toggleSection(section.id)}
+                  aria-expanded={expanded}
                   style={{
-                    padding: gi === 0 ? '12px 16px 4px' : '16px 16px 4px',
-                    fontSize: '0.625rem',
-                    fontWeight: 600,
-                    letterSpacing: '0.12em',
-                    color: 'rgba(226,232,240,0.3)',
-                    textTransform: 'uppercase',
-                    whiteSpace: 'nowrap',
+                    width: '100%',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 12,
+                    padding: '12px 12px',
+                    background: expanded ? 'rgba(88,28,135,0.1)' : 'transparent',
+                    border: 'none',
+                    borderRadius: 6,
+                    cursor: 'pointer',
+                    color: expanded ? 'rgba(226,232,240,0.95)' : 'rgba(226,232,240,0.72)',
+                    fontSize: '0.875rem',
+                    fontWeight: expanded ? 500 : 400,
+                    fontFamily: 'inherit',
+                    textAlign: 'left',
+                    letterSpacing: '0.01em',
+                    minHeight: 48,
+                    transition: 'background 160ms ease, color 160ms ease',
                   }}
                 >
-                  {group}
-                </div>
-                {groupChambers.map((chamber) => {
-                  const isActive = activeMode === chamber.id;
-                  return (
-                    <button
-                      key={chamber.id}
-                      onClick={() => handleSelect(chamber)}
-                      aria-current={isActive ? 'page' : undefined}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 12,
-                        width: '100%',
-                        padding: '11px 16px',
-                        justifyContent: 'flex-start',
-                        background: isActive
-                          ? 'rgba(88, 28, 135, 0.18)'
-                          : 'transparent',
-                        border: 'none',
-                        cursor: 'pointer',
-                        color: isActive
-                          ? 'rgba(226, 232, 240, 0.95)'
-                          : 'rgba(226, 232, 240, 0.62)',
-                        fontSize: '0.875rem',
-                        fontWeight: isActive ? 500 : 400,
-                        letterSpacing: '0.01em',
-                        transition: `background var(--atlas-motion-fast) var(--atlas-ease-out), color var(--atlas-motion-fast) var(--atlas-ease-out)`,
-                        position: 'relative',
-                        whiteSpace: 'nowrap',
-                        textAlign: 'left',
-                        fontFamily: 'inherit',
-                        // Bigger touch targets on mobile (≥44px recommended)
-                        minHeight: 44,
-                      }}
-                    >
-                      {isActive && (
-                        <div
-                          style={{
-                            position: 'absolute',
-                            left: 0,
-                            top: '20%',
-                            bottom: '20%',
-                            width: 2,
-                            background: 'rgba(201, 162, 39, 0.8)',
-                            borderRadius: '0 2px 2px 0',
-                          }}
-                        />
-                      )}
+                  <span style={{ flexShrink: 0, lineHeight: 0, color: expanded ? 'rgba(201,162,39,0.9)' : 'inherit' }}>
+                    <Icon path={ICONS[section.icon] ?? ICONS.atlas} size={18} />
+                  </span>
+                  <span style={{ flex: 1 }}>{section.label}</span>
+                  <Chevron rotated={expanded} />
+                </button>
 
-                      <span style={{ flexShrink: 0, lineHeight: 0 }}>
-                        <Icon path={ICONS[chamber.icon] ?? ICONS.atlas} size={18} />
-                      </span>
-                      <span>{chamber.label}</span>
-                    </button>
-                  );
-                })}
+                {expanded && (
+                  <div
+                    style={{
+                      paddingBottom: 8,
+                      animation: 'atlas-accordion-in 180ms ease-out',
+                    }}
+                  >
+                    {direct.map((chamber) => (
+                      <DrawerItem
+                        key={chamber.id}
+                        chamber={chamber}
+                        activeMode={activeMode}
+                        onSelect={handleSelect}
+                        onTogglePin={togglePinChamber}
+                        pinned={pinnedIds.includes(chamber.id)}
+                        indent
+                      />
+                    ))}
+                    {subgroups.map((sub) => {
+                      const subChildren = getChambersInSubgroup(section.id, sub.id).filter(
+                        (c) => !c.creatorOnly || isCreator,
+                      );
+                      if (subChildren.length === 0) return null;
+                      const isLabsOpen = sub.id === 'labs' ? labsExpanded : true;
+                      return (
+                        <div key={sub.id}>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (sub.id === 'labs') setLabsExpanded(!labsExpanded);
+                            }}
+                            aria-expanded={isLabsOpen}
+                            style={{
+                              width: 'calc(100% - 8px)',
+                              margin: '2px 4px',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 12,
+                              padding: '10px 12px 10px 32px',
+                              background: 'transparent',
+                              border: 'none',
+                              borderRadius: 6,
+                              cursor: 'pointer',
+                              color: 'rgba(226,232,240,0.65)',
+                              fontSize: '0.8125rem',
+                              fontFamily: 'inherit',
+                              textAlign: 'left',
+                              minHeight: 44,
+                            }}
+                          >
+                            <span style={{ flexShrink: 0, lineHeight: 0 }}>
+                              <Icon path={ICONS[sub.icon] ?? ICONS.atlas} size={16} />
+                            </span>
+                            <span style={{ flex: 1 }}>{sub.label}</span>
+                            <Chevron rotated={isLabsOpen} size={10} />
+                          </button>
+                          {isLabsOpen &&
+                            subChildren.map((chamber) => (
+                              <DrawerItem
+                                key={chamber.id}
+                                chamber={chamber}
+                                activeMode={activeMode}
+                                onSelect={handleSelect}
+                                onTogglePin={togglePinChamber}
+                                pinned={pinnedIds.includes(chamber.id)}
+                                indent
+                                deeper
+                              />
+                            ))}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             );
           })}
         </div>
 
-        {/* Model selector (matches desktop NavRail footer block) */}
+        {/* Model selector */}
         <div
           style={{
             borderTop: '1px solid var(--border-structural)',
@@ -352,7 +461,7 @@ export default function MobileSidebarDrawer({
           <ModelSelector onUpgradeClick={() => {}} compact={false} />
         </div>
 
-        {/* Bottom user area — mirrors desktop NavRail */}
+        {/* User area */}
         <div
           style={{
             borderTop: '1px solid var(--border-structural)',
@@ -363,13 +472,7 @@ export default function MobileSidebarDrawer({
             flexShrink: 0,
           }}
         >
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 10,
-            }}
-          >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <div
               style={{
                 width: 28,
@@ -414,35 +517,13 @@ export default function MobileSidebarDrawer({
             </div>
           </div>
 
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 6,
-            }}
-          >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             <button
               onClick={() => {
                 onSettingsClick?.();
                 onClose();
               }}
-              style={{
-                flex: 1,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: 6,
-                padding: '8px 10px',
-                background: 'transparent',
-                border: '1px solid rgba(88,28,135,0.25)',
-                borderRadius: 4,
-                cursor: 'pointer',
-                color: 'rgba(226,232,240,0.75)',
-                fontSize: '0.75rem',
-                fontFamily: 'inherit',
-                letterSpacing: '0.04em',
-                minHeight: 38,
-              }}
+              style={footerBtnStyle(false)}
             >
               <Icon path={ICONS.settings} size={14} />
               <span>Settings</span>
@@ -453,34 +534,12 @@ export default function MobileSidebarDrawer({
                 onSignOutClick?.();
                 onClose();
               }}
-              style={{
-                flex: 1,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: 6,
-                padding: '8px 10px',
-                background: 'transparent',
-                border: '1px solid rgba(220,38,38,0.2)',
-                borderRadius: 4,
-                cursor: 'pointer',
-                color: 'rgba(248,113,113,0.75)',
-                fontSize: '0.75rem',
-                fontFamily: 'inherit',
-                letterSpacing: '0.04em',
-                minHeight: 38,
-              }}
+              style={footerBtnStyle(true)}
             >
               <svg
-                width="14"
-                height="14"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden="true"
+                width="14" height="14" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"
+                strokeLinejoin="round" aria-hidden="true"
               >
                 <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4" />
                 <polyline points="16 17 21 12 16 7" />
@@ -493,4 +552,154 @@ export default function MobileSidebarDrawer({
       </aside>
     </>
   );
+}
+
+// ── Internals ─────────────────────────────────────────────────────────────
+
+interface DrawerItemProps {
+  chamber: ChamberDef;
+  activeMode: ChamberId;
+  onSelect: (id: ChamberId) => void;
+  onTogglePin: (id: ChamberId) => void;
+  pinned: boolean;
+  indent?: boolean;
+  deeper?: boolean;
+}
+
+function DrawerItem({ chamber, activeMode, onSelect, onTogglePin, pinned, indent, deeper }: DrawerItemProps) {
+  const isActive = activeMode === chamber.id;
+  return (
+    <div style={{ position: 'relative', display: 'flex', alignItems: 'stretch' }}>
+      <button
+        onClick={() => onSelect(chamber.id)}
+        aria-current={isActive ? 'page' : undefined}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 12,
+          flex: 1,
+          margin: '1px 4px',
+          padding: `11px 36px 11px ${deeper ? 56 : indent ? 44 : 16}px`,
+          justifyContent: 'flex-start',
+          background: isActive ? 'rgba(88, 28, 135, 0.18)' : 'transparent',
+          border: 'none',
+          borderRadius: 6,
+          cursor: 'pointer',
+          color: isActive
+            ? 'rgba(226, 232, 240, 0.95)'
+            : 'rgba(226, 232, 240, 0.65)',
+          fontSize: '0.8125rem',
+          fontWeight: isActive ? 500 : 400,
+          letterSpacing: '0.01em',
+          transition: 'background 160ms ease, color 160ms ease',
+          position: 'relative',
+          whiteSpace: 'nowrap',
+          textAlign: 'left',
+          fontFamily: 'inherit',
+          minHeight: 44,
+        }}
+      >
+        {isActive && (
+          <span
+            aria-hidden="true"
+            style={{
+              position: 'absolute',
+              left: 0,
+              top: '22%',
+              bottom: '22%',
+              width: 2,
+              background: 'rgba(201, 162, 39, 0.85)',
+              borderRadius: '0 2px 2px 0',
+            }}
+          />
+        )}
+        <span style={{ flexShrink: 0, lineHeight: 0 }}>
+          <Icon path={ICONS[chamber.icon] ?? ICONS.atlas} size={16} />
+        </span>
+        <span>{chamber.label}</span>
+      </button>
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          onTogglePin(chamber.id);
+        }}
+        aria-label={pinned ? `Unpin ${chamber.label}` : `Pin ${chamber.label}`}
+        style={{
+          position: 'absolute',
+          right: 10,
+          top: '50%',
+          transform: 'translateY(-50%)',
+          background: 'transparent',
+          border: 'none',
+          cursor: 'pointer',
+          color: pinned ? 'rgba(201, 162, 39, 0.9)' : 'rgba(226, 232, 240, 0.28)',
+          padding: 6,
+          borderRadius: 3,
+          display: 'flex',
+          alignItems: 'center',
+        }}
+      >
+        <Icon path={ICONS.pin} size={13} />
+      </button>
+    </div>
+  );
+}
+
+function Chevron({ rotated, size = 12 }: { rotated: boolean; size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      style={{
+        transform: rotated ? 'rotate(90deg)' : 'rotate(0deg)',
+        transition: 'transform 180ms ease',
+        opacity: 0.55,
+        flexShrink: 0,
+      }}
+    >
+      <polyline points="9 18 15 12 9 6" />
+    </svg>
+  );
+}
+
+const closeBtnStyle: React.CSSProperties = {
+  background: 'transparent',
+  border: '1px solid rgba(88,28,135,0.25)',
+  borderRadius: 4,
+  width: 32,
+  height: 32,
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  color: 'rgba(226,232,240,0.7)',
+  cursor: 'pointer',
+  padding: 0,
+};
+
+function footerBtnStyle(danger: boolean): React.CSSProperties {
+  return {
+    flex: 1,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    padding: '8px 10px',
+    background: 'transparent',
+    border: `1px solid ${danger ? 'rgba(220,38,38,0.2)' : 'rgba(88,28,135,0.25)'}`,
+    borderRadius: 4,
+    cursor: 'pointer',
+    color: danger ? 'rgba(248,113,113,0.75)' : 'rgba(226,232,240,0.75)',
+    fontSize: '0.75rem',
+    fontFamily: 'inherit',
+    letterSpacing: '0.04em',
+    minHeight: 38,
+  };
 }

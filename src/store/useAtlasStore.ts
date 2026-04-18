@@ -19,6 +19,7 @@ import { loadUserProfile, saveUserProfile, loadJournal, saveJournalEntry,
          loadDoctrine, saveDoctrine, deleteDoctrine, loadDirectives,
          saveDirective, deleteDirective, upsertUserProfile, generateId, nowISO } from '../lib/persistence';
 import { syncToBackend, hydrateFromBackend, migrateLocalToBackend } from '../lib/sovereignSync';
+import { useNavStore } from './useNavStore';
 
 import type {
   AppState,
@@ -223,7 +224,17 @@ export const useAtlasStore = create<AtlasStore>()(
 
   // ── Navigation ───────────────────────────────────────────────────────
 
-  setActiveMode: (mode) => set({ activeMode: mode }),
+  setActiveMode: (mode) => {
+    set({ activeMode: mode });
+    // Record recent navigation for the Home surface's "Resume" / Recents widget.
+    // Guarded so unit tests and SSR paths that haven't initialized the nav
+    // store can't throw.
+    try {
+      useNavStore.getState().recordRecent(mode);
+    } catch {
+      /* nav store not mounted — ignore */
+    }
+  },
 
   setSessionIntent: (intent) => set({ sessionIntent: intent }),
 
