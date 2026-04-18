@@ -207,22 +207,20 @@ export default function MobileSidebarDrawer({
           }}
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <div
+            <img
+              src="/brand/atlas-logo.png"
+              alt="Obsidian Atlas"
+              width={32}
+              height={32}
               style={{
-                width: 28,
-                height: 28,
-                borderRadius: '50%',
-                border: '1.5px solid rgba(201, 162, 39, 0.5)',
-                background: 'radial-gradient(circle, rgba(88,28,135,0.4) 0%, transparent 70%)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
+                width: 32,
+                height: 32,
+                borderRadius: 6,
                 flexShrink: 0,
-                color: 'rgba(201, 162, 39, 0.9)',
+                objectFit: 'cover',
+                display: 'block',
               }}
-            >
-              <Icon path={ICONS.atlas} size={14} />
-            </div>
+            />
             <span
               id="atlas-mobile-drawer-title"
               style={{
