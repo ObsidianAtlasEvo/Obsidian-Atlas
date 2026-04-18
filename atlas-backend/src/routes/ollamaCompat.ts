@@ -11,7 +11,6 @@ import { messagesWithPrimeDirective } from '../services/intelligence/primeDirect
 export async function registerOllamaCompatRoutes(app: FastifyInstance): Promise<void> {
   app.post('/v1/ollama/chat', { config: { rateLimit: { max: 5, timeWindow: '1 minute' } } }, async (request, reply) => {
     const userId = request.atlasAuthUser!.databaseUserId;
-
     if (
       env.disableLocalOllama &&
       !env.groqApiKey &&
