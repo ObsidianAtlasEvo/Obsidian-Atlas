@@ -2,6 +2,7 @@
 // Atlas-Audit: [IX] Verified
 import { randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
+import { RateLimiterMemory } from 'rate-limiter-flexible';
 import { z } from 'zod';
 import { env } from '../config/env.js';
 import { touchChronosActivity } from '../services/autonomy/chronos.js';
@@ -13,11 +14,6 @@ import { CognitiveQuotaError, assertChatQuotaAllows, recordChatTokenUsage } from
 import { applyOverseerLens } from '../services/governance/overseerService.js';
 import { enqueueGpuTask, newGpuRequestId } from '../services/inference/queueManager.js';
 import { runMaximumClarityTrack } from '../services/intelligence/maximumClarityPipeline.js';
-import {
-  omniStreamRouteLimiter,
-  requestRateLimitKey,
-  sendRateLimitExceeded,
-} from '../services/security/requestRateLimiter.js';
 import {
   executeLocalOllama,
   injectAtlasRoutingIntoMessages,
@@ -39,6 +35,12 @@ import { mirrorforgeStateSchema } from '../services/intelligence/telemetryTransl
 import { isSovereignOwnerEmail } from '../services/intelligence/router.js';
 import type { ChatRole } from '../types/atlas.js';
 import { resolveAuthenticatedRouteUserId } from './identityHardening.js';
+
+const omniStreamRouteLimiter = new RateLimiterMemory({
+  keyPrefix: 'atlas:omni-stream',
+  points: 5,
+  duration: 60,
+});
 
 export const omniBodySchema = z.object({
   requestId: z.string().uuid().optional(),
@@ -104,10 +106,34 @@ function sseWrite(raw: { write: (s: string) => boolean }, event: string, data: u
  */
 export function registerOmniStreamRoutes(app: FastifyInstance): void {
   app.post('/v1/chat/omni-stream', { config: { rateLimit: { max: 5, timeWindow: '1 minute' } } }, async (request, reply) => {
+    const forwarded = request.headers['x-forwarded-for'];
+    const rateLimitKey = Array.isArray(forwarded)
+      ? (forwarded[0]?.split(',')[0]?.trim() || request.ip)
+      : typeof forwarded === 'string'
+        ? (forwarded.split(',')[0]?.trim() || request.ip)
+        : request.ip;
+
     try {
-      await omniStreamRouteLimiter.consume(requestRateLimitKey(request, 'omni-stream'));
+      await omniStreamRouteLimiter.consume(rateLimitKey);
     } catch (err) {
-      return sendRateLimitExceeded(reply, err);
+      const retryAfterSeconds = Math.max(
+        1,
+        Math.ceil(
+          typeof err === 'object' &&
+          err !== null &&
+          'msBeforeNext' in err &&
+          typeof (err as { msBeforeNext?: unknown }).msBeforeNext === 'number'
+            ? ((err as { msBeforeNext: number }).msBeforeNext / 1000)
+            : 60
+        )
+      );
+      return reply
+        .code(429)
+        .header('retry-after', String(retryAfterSeconds))
+        .send({
+          error: 'rate_limit_exceeded',
+          message: 'Too many requests. Please retry later.',
+        });
     }
 
     const parsed = omniBodySchema.safeParse(request.body);

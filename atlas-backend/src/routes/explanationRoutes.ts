@@ -7,13 +7,9 @@
  */
 
 import type { FastifyInstance } from 'fastify';
+import { RateLimiterMemory } from 'rate-limiter-flexible';
 import { z } from 'zod';
 import { attachAtlasSession } from '../services/auth/authProvider.js';
-import {
-  explanationRouteLimiter,
-  requestRateLimitKey,
-  sendRateLimitExceeded,
-} from '../services/security/requestRateLimiter.js';
 import { resolveAuthenticatedRouteUserId } from './identityHardening.js';
 
 const entrySchema = z.object({
@@ -40,6 +36,12 @@ interface NLSummary {
   entryCount: number;
   method: 'llm' | 'rule-based';
 }
+
+const explanationRouteLimiter = new RateLimiterMemory({
+  keyPrefix: 'atlas:explanation',
+  points: 10,
+  duration: 60,
+});
 
 function buildRuleBasedSummary(entries: NLEntry[]): string {
   if (entries.length === 0) {
@@ -115,10 +117,34 @@ async function tryGroqSummary(entries: NLEntry[]): Promise<string | null> {
 
 export function registerExplanationRoutes(app: FastifyInstance): void {
   app.post('/api/governance/nlsummary', { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (request, reply) => {
+    const forwarded = request.headers['x-forwarded-for'];
+    const rateLimitKey = Array.isArray(forwarded)
+      ? (forwarded[0]?.split(',')[0]?.trim() || request.ip)
+      : typeof forwarded === 'string'
+        ? (forwarded.split(',')[0]?.trim() || request.ip)
+        : request.ip;
+
     try {
-      await explanationRouteLimiter.consume(requestRateLimitKey(request, 'nlsummary'));
+      await explanationRouteLimiter.consume(rateLimitKey);
     } catch (err) {
-      return sendRateLimitExceeded(reply, err);
+      const retryAfterSeconds = Math.max(
+        1,
+        Math.ceil(
+          typeof err === 'object' &&
+          err !== null &&
+          'msBeforeNext' in err &&
+          typeof (err as { msBeforeNext?: unknown }).msBeforeNext === 'number'
+            ? ((err as { msBeforeNext: number }).msBeforeNext / 1000)
+            : 60
+        )
+      );
+      return reply
+        .code(429)
+        .header('retry-after', String(retryAfterSeconds))
+        .send({
+          error: 'rate_limit_exceeded',
+          message: 'Too many requests. Please retry later.',
+        });
     }
 
     await attachAtlasSession(request);
