@@ -2,12 +2,10 @@
 // Atlas-Audit: [IX] Verified
 import { randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
-import { RateLimiterMemory } from 'rate-limiter-flexible';
 import { z } from 'zod';
 import { env } from '../config/env.js';
 import { touchChronosActivity } from '../services/autonomy/chronos.js';
 import { triggerEvolutionAfterOmniResponse } from '../services/autonomy/evolutionTrigger.js';
-import { attachAtlasSession } from '../services/auth/authProvider.js';
 import { getVerifiedUserEmail } from '../services/auth/requestAuth.js';
 import { getPolicyProfile } from '../services/evolution/policyStore.js';
 import { CognitiveQuotaError, assertChatQuotaAllows, recordChatTokenUsage } from '../services/governance/quotaStore.js';
@@ -34,42 +32,6 @@ import {
 import { mirrorforgeStateSchema } from '../services/intelligence/telemetryTranslator.js';
 import { isSovereignOwnerEmail } from '../services/intelligence/router.js';
 import type { ChatRole } from '../types/atlas.js';
-import { resolveAuthenticatedRouteUserId } from './identityHardening.js';
-
-const omniStreamRouteLimiter = new RateLimiterMemory({
-  keyPrefix: 'atlas:omni-stream',
-  points: 5,
-  duration: 60,
-});
-
-async function omniStreamRateLimitMiddleware(
-  request: { ip: string },
-  reply: { code: (statusCode: number) => { header: (name: string, value: string) => { send: (body: { error: string; message: string }) => unknown } } }
-): Promise<void> {
-  try {
-    await omniStreamRouteLimiter.consume(request.ip);
-  } catch (err) {
-    const retryAfterSeconds = Math.max(
-      1,
-      Math.ceil(
-        typeof err === 'object' &&
-        err !== null &&
-        'msBeforeNext' in err &&
-        typeof (err as { msBeforeNext?: unknown }).msBeforeNext === 'number'
-          ? ((err as { msBeforeNext: number }).msBeforeNext / 1000)
-          : 60
-      )
-    );
-
-    reply
-      .code(429)
-      .header('retry-after', String(retryAfterSeconds))
-      .send({
-        error: 'rate_limit_exceeded',
-        message: 'Too many requests. Please retry later.',
-      });
-  }
-}
 
 export const omniBodySchema = z.object({
   requestId: z.string().uuid().optional(),
@@ -134,7 +96,7 @@ function sseWrite(raw: { write: (s: string) => boolean }, event: string, data: u
  * Resonance Chamber: SSE stream with routing status → token deltas → done (+ evolution scheduled).
  */
 export function registerOmniStreamRoutes(app: FastifyInstance): void {
-  app.post('/v1/chat/omni-stream', { preHandler: omniStreamRateLimitMiddleware }, async (request, reply) => {
+  app.post('/v1/chat/omni-stream', { config: { rateLimit: { max: 5, timeWindow: '1 minute' } } }, async (request, reply) => {
     const parsed = omniBodySchema.safeParse(request.body);
     if (!parsed.success) {
       return reply.status(400).send({ error: 'validation_error', details: parsed.error.flatten() });
@@ -152,16 +114,7 @@ export function registerOmniStreamRoutes(app: FastifyInstance): void {
     } = parsed.data;
     const traceId = randomUUID();
     const requestId = bodyRequestId ?? newGpuRequestId();
-
-    await attachAtlasSession(request);
-    const userId = resolveAuthenticatedRouteUserId(
-      request.atlasAuthUser?.databaseUserId,
-      undefined,
-    );
-
-    if (!userId) {
-      return reply.code(401).send({ error: 'Authentication required' });
-    }
+    const userId = request.atlasAuthUser!.databaseUserId;
 
     touchChronosActivity(userId);
 

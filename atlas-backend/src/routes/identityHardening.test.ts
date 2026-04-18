@@ -1,12 +1,31 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import Fastify from 'fastify';
+import Fastify, { type FastifyInstance } from 'fastify';
 
+import { registerRateLimit } from '../plugins/rateLimit.js';
+import { attachAtlasSession } from '../services/auth/authProvider.js';
 import { registerExplanationRoutes } from './explanationRoutes.js';
 import { resolveAuthenticatedRouteUserId } from './identityHardening.js';
 import { registerOllamaCompatRoutes } from './ollamaCompat.js';
 import { omniBodySchema, registerOmniStreamRoutes } from './omniStream.js';
+
+async function buildProtectedApp(
+  registerRoutes: (app: FastifyInstance) => Promise<void> | void,
+): Promise<FastifyInstance> {
+  const app = Fastify();
+  await registerRateLimit(app);
+  await app.register(async (protectedApp) => {
+    protectedApp.addHook('preHandler', async (request, reply) => {
+      await attachAtlasSession(request);
+      if (!request.atlasAuthUser || !request.atlasVerifiedEmail) {
+        return reply.code(401).send({ error: 'Unauthorized — Atlas session required' });
+      }
+    });
+    await registerRoutes(protectedApp);
+  });
+  return app;
+}
 
 test('resolveAuthenticatedRouteUserId rejects requests without an authenticated user id', () => {
   assert.equal(resolveAuthenticatedRouteUserId(undefined, undefined), null);
@@ -25,8 +44,7 @@ test('omniBodySchema accepts chat requests without a body userId field', () => {
 });
 
 test('registerOllamaCompatRoutes rejects unauthenticated requests', async () => {
-  const app = Fastify();
-  await registerOllamaCompatRoutes(app);
+  const app = await buildProtectedApp(registerOllamaCompatRoutes);
 
   const response = await app.inject({
     method: 'POST',
@@ -42,8 +60,7 @@ test('registerOllamaCompatRoutes rejects unauthenticated requests', async () => 
 });
 
 test('registerExplanationRoutes rejects unauthenticated requests', async () => {
-  const app = Fastify();
-  registerExplanationRoutes(app);
+  const app = await buildProtectedApp(registerExplanationRoutes);
 
   const response = await app.inject({
     method: 'POST',
@@ -59,8 +76,7 @@ test('registerExplanationRoutes rejects unauthenticated requests', async () => {
 });
 
 test('registerExplanationRoutes returns 429 after repeated requests from the same client', async () => {
-  const app = Fastify();
-  registerExplanationRoutes(app);
+  const app = await buildProtectedApp(registerExplanationRoutes);
 
   for (let i = 0; i < 10; i += 1) {
     const response = await app.inject({
@@ -84,8 +100,7 @@ test('registerExplanationRoutes returns 429 after repeated requests from the sam
 });
 
 test('registerOllamaCompatRoutes returns 429 after repeated requests from the same client', async () => {
-  const app = Fastify();
-  await registerOllamaCompatRoutes(app);
+  const app = await buildProtectedApp(registerOllamaCompatRoutes);
 
   for (let i = 0; i < 5; i += 1) {
     const response = await app.inject({
@@ -109,8 +124,7 @@ test('registerOllamaCompatRoutes returns 429 after repeated requests from the sa
 });
 
 test('registerOmniStreamRoutes returns 429 after repeated requests from the same client', async () => {
-  const app = Fastify();
-  registerOmniStreamRoutes(app);
+  const app = await buildProtectedApp(registerOmniStreamRoutes);
 
   for (let i = 0; i < 5; i += 1) {
     const response = await app.inject({
