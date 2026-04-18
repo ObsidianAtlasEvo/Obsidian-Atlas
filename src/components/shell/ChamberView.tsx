@@ -10,6 +10,7 @@ const AuthChamber        = lazy(() => import('../../chambers/AuthChamber'));
 const JournalChamber     = lazy(() => import('../../chambers/JournalChamber'));
 const DoctrineChamber    = lazy(() => import('../../chambers/DoctrineChamber'));
 const PulseChamber       = lazy(() => import('../../chambers/PulseChamber'));
+const HomeChamber        = lazy(() => import('../../chambers/HomeChamber'));
 const PlaceholderChamber = lazy(() => import('../../chambers/PlaceholderChamber'));
 
 // Phase 2 — Functional Depth
@@ -95,7 +96,8 @@ export default function ChamberView() {
       // ── Phase 1: Core ───────────────────────────────────────────────────
       case 'atlas':                                   return chamber(AtlasChamber);
       case 'journal':                                 return chamber(JournalChamber);
-      case 'pulse': case 'today-in-atlas':            return chamber(PulseChamber);
+      case 'today-in-atlas':                          return chamber(HomeChamber);
+      case 'pulse':                                   return chamber(PulseChamber);
       case 'doctrine':                                return chamber(DoctrineChamber);
 
       // ── Phase 2: Functional Depth ───────────────────────────────────────

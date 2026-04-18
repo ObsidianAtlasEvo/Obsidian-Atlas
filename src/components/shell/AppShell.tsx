@@ -1,5 +1,6 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { useAtlasStore } from '../../store/useAtlasStore';
+import { useNavStore } from '../../store/useNavStore';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { useAtlasAuth } from '../Auth/atlasAuthContext';
 import { SOVEREIGN_CREATOR_EMAIL } from '../../config/sovereignCreator';
@@ -11,6 +12,11 @@ import MobileSidebarDrawer from './MobileSidebarDrawer';
 import MobileTopBar from './MobileTopBar';
 import { SettingsMenu } from '../SettingsMenu';
 import type { AppState } from '../../types';
+
+// Command palette — lazy so it doesn't block initial shell render. Only one
+// mount point exists; it's toggled via useNavStore.commandPaletteOpen and
+// the global ⌘K / Ctrl+K shortcut installed below.
+const CommandPalette = lazy(() => import('./CommandPalette'));
 
 export default function AppShell() {
   const sidebarCollapsed = useAtlasStore((s) => s.uiConfig.sidebarCollapsed);
@@ -98,6 +104,28 @@ export default function AppShell() {
   const openDrawer = useCallback(() => setDrawerOpen(true), []);
   const closeDrawer = useCallback(() => setDrawerOpen(false), []);
 
+  // ── Command palette global shortcut (⌘K / Ctrl+K) ──
+  // Installed at the shell level so it works regardless of which chamber is
+  // active. Matches the Refine.txt §6 "universal search" spec.
+  const toggleCommandPalette = useNavStore((s) => s.toggleCommandPalette);
+  const commandPaletteOpen = useNavStore((s) => s.commandPaletteOpen);
+  const setCommandPaletteOpen = useNavStore((s) => s.setCommandPaletteOpen);
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const isSearchKey =
+        (e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K');
+      if (isSearchKey) {
+        e.preventDefault();
+        toggleCommandPalette();
+      } else if (e.key === 'Escape' && useNavStore.getState().commandPaletteOpen) {
+        setCommandPaletteOpen(false);
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [toggleCommandPalette, setCommandPaletteOpen]);
+
   if (isMobile) {
     return (
       <div
@@ -133,6 +161,7 @@ export default function AppShell() {
           isMobile
           onSettingsClick={handleSettingsClick}
           onSignOutClick={handleSignOut}
+          onOpenDrawer={openDrawer}
         />
 
         <MobileSidebarDrawer
@@ -144,6 +173,12 @@ export default function AppShell() {
         />
 
         <SettingsMenu state={settingsState} setState={settingsSetState} />
+
+        {commandPaletteOpen && (
+          <Suspense fallback={null}>
+            <CommandPalette />
+          </Suspense>
+        )}
       </div>
     );
   }
@@ -178,6 +213,12 @@ export default function AppShell() {
         <ChamberView />
       </main>
       <SettingsMenu state={settingsState} setState={settingsSetState} />
+
+      {commandPaletteOpen && (
+        <Suspense fallback={null}>
+          <CommandPalette />
+        </Suspense>
+      )}
     </div>
   );
 }
