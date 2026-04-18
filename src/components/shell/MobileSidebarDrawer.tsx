@@ -2,7 +2,9 @@
  * Mobile Sidebar Drawer — left-side accordion sheet opened by the "Menu" item
  * in the bottom nav (or the top-bar hamburger).
  *
- * Structure (Refine.txt §4, §7):
+ * Structure:
+ *   - Primary group (Home, Atlas, Journal) — mirrors the bottom nav so every
+ *     destination is reachable from the drawer as well.
  *   - Pinned section (always expanded when non-empty, empty state otherwise)
  *   - Accordion: Strategy, Identity, Intelligence, Evolution, Memory, Control
  *     Center — only one expanded at a time.
@@ -10,8 +12,9 @@
  *   - Selecting a destination closes the drawer.
  *   - Re-opening the drawer preserves the last-open section for that session.
  *
- * Primary surfaces (Home, Atlas, Journal) and Search are intentionally NOT
- * listed in the drawer — they live in the bottom nav only, per the spec.
+ * Search and Menu from the bottom nav are overlays, not destinations, so they
+ * are intentionally NOT listed in the drawer (⌘K opens the palette; the drawer
+ * itself is what "Menu" opens).
  *
  * Accessibility:
  *   - role="dialog", aria-modal, aria-labelledby on the drawer panel
@@ -26,6 +29,7 @@ import { useNavStore, PIN_VISIBLE_MOBILE } from '../../store/useNavStore';
 import { ModelSelector } from '../ModelSelector';
 import {
   SECTIONS,
+  PRIMARY_CHAMBERS,
   ICONS,
   Icon,
   getChamber,
@@ -261,6 +265,50 @@ export default function MobileSidebarDrawer({
             WebkitOverflowScrolling: 'touch',
           }}
         >
+          {/* Primary (mirrors bottom nav destinations) */}
+          <div style={{ padding: '0 4px 4px' }}>
+            <div
+              style={{
+                padding: '4px 12px',
+                display: 'flex',
+                alignItems: 'center',
+              }}
+            >
+              <span
+                style={{
+                  fontSize: '0.625rem',
+                  fontWeight: 600,
+                  letterSpacing: '0.12em',
+                  color: 'rgba(226,232,240,0.35)',
+                  textTransform: 'uppercase',
+                }}
+              >
+                Primary
+              </span>
+            </div>
+            {PRIMARY_CHAMBERS.map((chamber) => (
+              <DrawerItem
+                key={`primary-${chamber.id}`}
+                chamber={chamber}
+                activeMode={activeMode}
+                onSelect={handleSelect}
+                onTogglePin={togglePinChamber}
+                pinned={pinnedIds.includes(chamber.id)}
+              />
+            ))}
+          </div>
+
+          {/* Divider */}
+          <div
+            aria-hidden="true"
+            style={{
+              height: 1,
+              margin: '8px 16px',
+              background: 'var(--border-structural)',
+              opacity: 0.6,
+            }}
+          />
+
           {/* Pinned */}
           <div style={{ padding: '0 4px 8px' }}>
             <div
