@@ -98,7 +98,7 @@ function sseWrite(raw: { write: (s: string) => boolean }, event: string, data: u
  * Resonance Chamber: SSE stream with routing status → token deltas → done (+ evolution scheduled).
  */
 export function registerOmniStreamRoutes(app: FastifyInstance): void {
-  app.post('/v1/chat/omni-stream', async (request, reply) => {
+  app.post('/v1/chat/omni-stream', { config: { rateLimit: { max: 5, timeWindow: '1 minute' } } }, async (request, reply) => {
     const parsed = omniBodySchema.safeParse(request.body);
     if (!parsed.success) {
       return reply.status(400).send({ error: 'validation_error', details: parsed.error.flatten() });

@@ -10,7 +10,7 @@ import { resolveAuthenticatedRouteUserId } from './identityHardening.js';
  * but routes through Groq when DISABLE_LOCAL_OLLAMA=true.
  */
 export async function registerOllamaCompatRoutes(app: FastifyInstance): Promise<void> {
-  app.post('/api/chat', async (request, reply) => {
+  app.post('/api/chat', { config: { rateLimit: { max: 5, timeWindow: '1 minute' } } }, async (request, reply) => {
     await attachAtlasSession(request);
     const userId = resolveAuthenticatedRouteUserId(
       request.atlasAuthUser?.databaseUserId,

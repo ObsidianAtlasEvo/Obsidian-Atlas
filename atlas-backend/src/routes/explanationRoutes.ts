@@ -109,7 +109,7 @@ async function tryGroqSummary(entries: NLEntry[]): Promise<string | null> {
 }
 
 export function registerExplanationRoutes(app: FastifyInstance): void {
-  app.post('/api/governance/nlsummary', async (request, reply) => {
+  app.post('/api/governance/nlsummary', { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (request, reply) => {
     await attachAtlasSession(request);
     const userId = resolveAuthenticatedRouteUserId(
       request.atlasAuthUser?.databaseUserId,
