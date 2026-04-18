@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { useAtlasStore } from '../store/useAtlasStore';
 import { generateId, nowISO } from '../lib/persistence';
+import { useIsMobile } from '../hooks/useIsMobile';
+import MobileBackButton from '../components/shell/MobileBackButton';
 
 // TODO: Add store actions: addScenario, removeScenario, updateScenario to useAtlasStore
 
@@ -88,7 +90,10 @@ export default function ScenariosChamber() {
   const [scenarios, setScenarios] = useState<Scenario[]>(
     storeScenarios?.length ? storeScenarios : SEED_SCENARIOS
   );
-  const [selectedId, setSelectedId] = useState<string>(scenarios[0]?.id ?? '');
+  const isMobile = useIsMobile();
+  const [selectedId, setSelectedId] = useState<string>(() =>
+    typeof window !== 'undefined' && window.innerWidth < 640 ? '' : (scenarios[0]?.id ?? ''),
+  );
   const [expandedBranch, setExpandedBranch] = useState<string | null>(null);
   const [showAddScenario, setShowAddScenario] = useState(false);
   const [newTitle, setNewTitle] = useState('');
@@ -156,10 +161,16 @@ export default function ScenariosChamber() {
     setNewSpeculation('');
   };
 
+  const isDetailActive = !!selected;
+  const showListPane = !isMobile || !isDetailActive;
+  const showDetailPane = !isMobile || isDetailActive;
+  const goBackToList = () => setSelectedId('');
+
   return (
-    <div style={{ display: 'flex', height: '100%', background: C.body, color: C.text, fontFamily: 'inherit', animation: 'atlas-fade-in 300ms ease both', minHeight: 0 }}>
+    <div style={{ display: 'flex', height: '100%', background: C.body, color: C.text, fontFamily: 'inherit', animation: 'atlas-fade-in 300ms ease both', minHeight: 0, minWidth: 0 }}>
       {/* Left sidebar */}
-      <div style={{ width: 250, flexShrink: 0, background: C.panel, borderRight: `1px solid ${C.border}`, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      {showListPane && (
+      <div style={{ width: isMobile ? '100%' : 250, flexShrink: 0, background: C.panel, borderRight: isMobile ? 'none' : `1px solid ${C.border}`, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         <div style={{ padding: '16px 16px 12px', borderBottom: `1px solid ${C.borderSubtle}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <span style={label}>Scenarios</span>
           <button
@@ -206,8 +217,16 @@ export default function ScenariosChamber() {
         </div>
       </div>
 
+      )}
+
       {/* Main content */}
-      <div style={{ flex: 1, overflowY: 'auto', padding: 24 }}>
+      {showDetailPane && (
+      <div style={{ flex: 1, overflowY: 'auto', padding: isMobile ? 14 : 24, minWidth: 0 }}>
+        {isMobile && (
+          <div style={{ marginBottom: 10 }}>
+            <MobileBackButton onClick={goBackToList} label="Scenarios" />
+          </div>
+        )}
         {!selected ? (
           <div style={{ color: C.muted, textAlign: 'center', marginTop: 60, fontSize: '0.9rem' }}>Select or create a scenario</div>
         ) : (
@@ -389,6 +408,7 @@ export default function ScenariosChamber() {
           </>
         )}
       </div>
+      )}
     </div>
   );
 }

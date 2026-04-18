@@ -4,6 +4,8 @@ import { backendComplete } from '../lib/backendInference';
 import { buildAnalysisPrompt } from '../lib/atlasPrompt';
 import { nowISO } from '../lib/persistence';
 import { SyncStatusIndicator } from '../components/SyncStatusIndicator';
+import { useIsMobile } from '../hooks/useIsMobile';
+import MobileBackButton from '../components/shell/MobileBackButton';
 import type { SyncStatus } from '../lib/sovereignSync';
 import type { JournalEntry, JournalAssistanceMode } from '@/types';
 
@@ -173,7 +175,13 @@ export default function JournalChamber() {
   const removeJournalEntry = useAtlasStore((s) => s.removeJournalEntry);
   const pinJournalEntry = useAtlasStore((s) => s.pinJournalEntry);
 
-  const [selectedId, setSelectedId] = useState<string | null>(journal[0]?.id ?? null);
+  const isMobile = useIsMobile();
+  // On mobile we default to the list view (no selection) so the user lands on
+  // an overview rather than dropping straight into a detail pane they can't
+  // navigate away from without a back button.
+  const [selectedId, setSelectedId] = useState<string | null>(() =>
+    typeof window !== 'undefined' && window.innerWidth < 640 ? null : (journal[0]?.id ?? null),
+  );
   const [isEditing, setIsEditing] = useState(false);
   const [editContent, setEditContent] = useState('');
   const [editTitle, setEditTitle] = useState('');
@@ -290,14 +298,25 @@ Return ONLY valid JSON. No commentary.`);
     }
   }
 
+  // On mobile we collapse to a single pane at a time. The detail pane is
+  // visible when a user is editing or has an entry selected; otherwise the
+  // list takes the full width.
+  const showDetailPane = !isMobile || isEditing || !!selected;
+  const showListPane = !isMobile || (!isEditing && !selected);
+  const goBackToList = () => {
+    setIsEditing(false);
+    setSelectedId(null);
+  };
+
   return (
-    <div style={{ flex: 1, display: 'flex', height: '100%', overflow: 'hidden' }}>
+    <div style={{ flex: 1, display: 'flex', height: '100%', overflow: 'hidden', minWidth: 0 }}>
       {/* Sidebar */}
+      {showListPane && (
       <div
         style={{
-          width: 280,
-          minWidth: 280,
-          borderRight: '1px solid var(--border-structural)',
+          width: isMobile ? '100%' : 280,
+          minWidth: isMobile ? 0 : 280,
+          borderRight: isMobile ? 'none' : '1px solid var(--border-structural)',
           display: 'flex',
           flexDirection: 'column',
           overflow: 'hidden',
@@ -365,12 +384,19 @@ Return ONLY valid JSON. No commentary.`);
           )}
         </div>
       </div>
+      )}
 
       {/* Main view */}
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      {showDetailPane && (
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
+        {isMobile && (
+          <div style={{ padding: '10px 14px 0' }}>
+            <MobileBackButton onClick={goBackToList} label="Entries" />
+          </div>
+        )}
         {isEditing ? (
           // Editor
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: '24px 32px', overflow: 'hidden' }}>
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: isMobile ? '12px 16px' : '24px 32px', overflow: 'hidden', minWidth: 0 }}>
             <div style={{ marginBottom: 12 }}>
               <input
                 type="text"
@@ -448,7 +474,7 @@ Return ONLY valid JSON. No commentary.`);
           </div>
         ) : selected ? (
           // Selected entry view
-          <div style={{ flex: 1, overflowY: 'auto', padding: '28px 36px' }}>
+          <div style={{ flex: 1, overflowY: 'auto', padding: isMobile ? '16px 18px' : '28px 36px', minWidth: 0 }}>
             <div style={{ maxWidth: 680, margin: '0 auto' }}>
               {/* Header */}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
@@ -618,6 +644,7 @@ Return ONLY valid JSON. No commentary.`);
           </div>
         )}
       </div>
+      )}
     </div>
   );
 }

@@ -697,7 +697,19 @@ const RealityEngineChamber: React.FC = () => {
   // ─── Render ──────────────────────────────────────────────────────────────────
 
   return (
-    <div style={styles.container}>
+    <div className="re-chamber" style={styles.container}>
+      {/*
+        Mobile overrides. On <=640px we stack the graph on top and the inspector
+        below, each getting ~50% of the vertical space. Without this the graph
+        clings to 65% of a narrow viewport and the right panel is unusable.
+      */}
+      <style>{`
+        @media (max-width: 640px) {
+          .re-chamber .re-body { flex-direction: column !important; }
+          .re-chamber .re-graph { flex: 0 0 42vh !important; border-right: none !important; border-bottom: 1px solid rgba(88,28,135,0.14) !important; }
+          .re-chamber .re-right { flex: 1 1 auto !important; }
+        }
+      `}</style>
       {/* Top Bar */}
       <div style={styles.topBar}>
         <span style={styles.topBarLabel}>Reality Engine</span>
@@ -719,14 +731,14 @@ const RealityEngineChamber: React.FC = () => {
       </div>
 
       {/* Body */}
-      <div style={styles.body}>
+      <div className="re-body" style={styles.body}>
         {/* Left: D3 Graph */}
-        <div ref={containerRef} style={styles.graphPanel}>
+        <div ref={containerRef} className="re-graph" style={styles.graphPanel}>
           <svg ref={svgRef} style={styles.svg} />
         </div>
 
         {/* Right: Detail Panel */}
-        <div style={styles.rightPanel}>
+        <div className="re-right" style={styles.rightPanel}>
           <div style={styles.rightScroll}>
 
             {/* Node Panel — Add or Edit */}
