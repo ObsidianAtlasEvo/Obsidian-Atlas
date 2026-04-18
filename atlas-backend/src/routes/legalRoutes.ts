@@ -19,6 +19,7 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import type { Database } from 'better-sqlite3';
 import { currentVersionFor, type LegalKind, CURRENT_TERMS_VERSION, CURRENT_PRIVACY_VERSION } from '../config/legalVersions.js';
+import { RATE_LIMITS } from '../plugins/rateLimit.js';
 
 interface AcceptRequestBody {
   kind?: unknown;
@@ -55,6 +56,30 @@ function readAcceptance(db: Database, userId: string): TenantLegalRow | null {
   return row ?? null;
 }
 
+function recordAcceptance(
+  db: Database,
+  userId: string,
+  email: string,
+  kind: LegalKind,
+  version: string,
+  acceptedAt: string,
+): void {
+  const versionCol = kind === 'terms' ? 'terms_version_accepted' : 'privacy_version_accepted';
+  const timestampCol = kind === 'terms' ? 'terms_accepted_at' : 'privacy_accepted_at';
+
+  const existing = db.prepare(`SELECT id FROM tenant_users WHERE id = ?`).get(userId);
+  if (!existing) {
+    db.prepare(
+      `INSERT INTO tenant_users (id, email, created_at, plan_tier, ${versionCol}, ${timestampCol})
+       VALUES (?, ?, ?, 'free', ?, ?)`,
+    ).run(userId, email, acceptedAt, version, acceptedAt);
+  } else {
+    db.prepare(
+      `UPDATE tenant_users SET ${versionCol} = ?, ${timestampCol} = ? WHERE id = ?`,
+    ).run(version, acceptedAt, userId);
+  }
+}
+
 function isValidKind(v: unknown): v is LegalKind {
   return v === 'terms' || v === 'privacy';
 }
@@ -69,7 +94,7 @@ export function registerLegalRoutes(fastify: FastifyInstance, db: Database): voi
   // staleness before or during the auth flow).
   fastify.get(
     '/v1/legal/versions',
-    { config: { rateLimit: { max: 60, timeWindow: '1 minute' } } },
+    { config: { rateLimit: RATE_LIMITS.readUser } },
     async (_request, reply) => {
       return reply.send({
         terms: CURRENT_TERMS_VERSION,
@@ -80,7 +105,7 @@ export function registerLegalRoutes(fastify: FastifyInstance, db: Database): voi
 
   // Protected — current user's acceptance state.
   fastify.get('/v1/legal/acceptance', {
-    config: { rateLimit: { max: 60, timeWindow: '1 minute' } },
+    config: { rateLimit: RATE_LIMITS.readUser },
   }, async (request: FastifyRequest, reply: FastifyReply) => {
     const session = requireSession(request, reply);
     if (!session) return;
@@ -109,22 +134,9 @@ export function registerLegalRoutes(fastify: FastifyInstance, db: Database): voi
   });
 
   // Protected — record acceptance. Idempotent: re-POSTing same version is a no-op.
-  fastify.post<{ Body: AcceptRequestBody }>(
-    '/v1/legal/accept',
-    {
-      config: { rateLimit: { max: 20, timeWindow: '1 minute' } },
-      schema: {
-        body: {
-          type: 'object',
-          required: ['kind', 'version'],
-          properties: {
-            kind: { type: 'string', enum: ['terms', 'privacy'] },
-            version: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
-          },
-        },
-      },
-    },
-    async (request: FastifyRequest, reply: FastifyReply) => {
+  fastify.post('/v1/legal/accept', {
+    config: { rateLimit: RATE_LIMITS.writeUser },
+  }, async (request, reply) => {
     const session = requireSession(request, reply);
     if (!session) return;
 
@@ -146,24 +158,7 @@ export function registerLegalRoutes(fastify: FastifyInstance, db: Database): voi
     }
 
     const now = new Date().toISOString();
-    const versionCol = body.kind === 'terms' ? 'terms_version_accepted' : 'privacy_version_accepted';
-    const timestampCol = body.kind === 'terms' ? 'terms_accepted_at' : 'privacy_accepted_at';
-
-    // Upsert: if the user row doesn't exist yet (edge case — auth should have
-    // created it), insert with minimal fields.
-    const existing = db.prepare(`SELECT id FROM tenant_users WHERE id = ?`).get(session.userId);
-    if (!existing) {
-      db.prepare(
-        `INSERT INTO tenant_users (id, email, created_at, plan_tier, ${versionCol}, ${timestampCol})
-         VALUES (?, ?, ?, 'free', ?, ?)`,
-      ).run(session.userId, session.email, now, body.version, now);
-    } else {
-      db.prepare(
-        `UPDATE tenant_users SET ${versionCol} = ?, ${timestampCol} = ? WHERE id = ?`,
-      ).run(body.version, now, session.userId);
-    }
-
+    recordAcceptance(db, session.userId, session.email, body.kind, body.version, now);
     return reply.send({ ok: true, kind: body.kind, version: body.version, acceptedAt: now });
-    },
-  );
+  });
 }
