@@ -944,6 +944,7 @@ export function initSqlite(): Database.Database {
     migrateBillingSubscriptionSchema(database);
     runBillingMigration(database);
     migratePolicyProfileColumns(database);
+    migrateTenantUsersLegalAcceptance(database);
     migrateAtlasSchemaMigrationsTable(database);
     migrateSectionVIIIContinuity(database);
     migrateArchivedAtIndexes(database);
@@ -993,6 +994,29 @@ function migrateBillingSubscriptionSchema(database: Database.Database): void {
     if (!colNames.has(col)) {
       database.exec(`ALTER TABLE user_subscriptions ADD COLUMN ${col} ${typedef}`);
     }
+  }
+}
+
+/**
+ * Add legal-acceptance columns to tenant_users (idempotent).
+ *
+ * Tracks which version of Terms / Privacy each user has accepted so the
+ * acceptance gate can re-prompt only when a document version changes.
+ */
+function migrateTenantUsersLegalAcceptance(database: Database.Database): void {
+  const cols = database.prepare(`PRAGMA table_info(tenant_users)`).all() as { name: string }[];
+  const names = new Set(cols.map((c) => c.name));
+  if (!names.has('terms_version_accepted')) {
+    database.exec(`ALTER TABLE tenant_users ADD COLUMN terms_version_accepted TEXT`);
+  }
+  if (!names.has('terms_accepted_at')) {
+    database.exec(`ALTER TABLE tenant_users ADD COLUMN terms_accepted_at TEXT`);
+  }
+  if (!names.has('privacy_version_accepted')) {
+    database.exec(`ALTER TABLE tenant_users ADD COLUMN privacy_version_accepted TEXT`);
+  }
+  if (!names.has('privacy_accepted_at')) {
+    database.exec(`ALTER TABLE tenant_users ADD COLUMN privacy_accepted_at TEXT`);
   }
 }
 

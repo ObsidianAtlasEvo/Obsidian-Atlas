@@ -70,7 +70,9 @@ export async function registerUserPreferencesRoutes(
   db: Database,
 ): Promise<void> {
   // GET /user/preferences
-  fastify.get('/user/preferences', async (request: FastifyRequest, reply: FastifyReply) => {
+  fastify.get('/user/preferences', {
+    config: { rateLimit: { max: 60, timeWindow: '1 minute' } },
+  }, async (request: FastifyRequest, reply: FastifyReply) => {
     const session = requireSession(request, reply);
     if (!session) return;
 
@@ -88,7 +90,9 @@ export async function registerUserPreferencesRoutes(
   });
 
   // PATCH /user/preferences
-  fastify.patch('/user/preferences', async (request: FastifyRequest, reply: FastifyReply) => {
+  fastify.patch('/user/preferences', {
+    config: { rateLimit: { max: 20, timeWindow: '1 minute' } },
+  }, async (request: FastifyRequest, reply: FastifyReply) => {
     const session = requireSession(request, reply);
     if (!session) return;
 
