@@ -43,6 +43,35 @@ const explanationRouteLimiter = new RateLimiterMemory({
   duration: 60,
 });
 
+async function explanationRateLimitMiddleware(
+  request: { ip: string },
+  reply: { code: (statusCode: number) => { header: (name: string, value: string) => { send: (body: { error: string; message: string }) => unknown } } }
+): Promise<void> {
+  try {
+    await explanationRouteLimiter.consume(request.ip);
+  } catch (err) {
+    const retryAfterSeconds = Math.max(
+      1,
+      Math.ceil(
+        typeof err === 'object' &&
+        err !== null &&
+        'msBeforeNext' in err &&
+        typeof (err as { msBeforeNext?: unknown }).msBeforeNext === 'number'
+          ? ((err as { msBeforeNext: number }).msBeforeNext / 1000)
+          : 60
+      )
+    );
+
+    reply
+      .code(429)
+      .header('retry-after', String(retryAfterSeconds))
+      .send({
+        error: 'rate_limit_exceeded',
+        message: 'Too many requests. Please retry later.',
+      });
+  }
+}
+
 function buildRuleBasedSummary(entries: NLEntry[]): string {
   if (entries.length === 0) {
     return 'No policy violations or critical events detected in the provided entries.';
@@ -116,37 +145,7 @@ async function tryGroqSummary(entries: NLEntry[]): Promise<string | null> {
 }
 
 export function registerExplanationRoutes(app: FastifyInstance): void {
-  app.post('/api/governance/nlsummary', { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (request, reply) => {
-    const forwarded = request.headers['x-forwarded-for'];
-    const rateLimitKey = Array.isArray(forwarded)
-      ? (forwarded[0]?.split(',')[0]?.trim() || request.ip)
-      : typeof forwarded === 'string'
-        ? (forwarded.split(',')[0]?.trim() || request.ip)
-        : request.ip;
-
-    try {
-      await explanationRouteLimiter.consume(rateLimitKey);
-    } catch (err) {
-      const retryAfterSeconds = Math.max(
-        1,
-        Math.ceil(
-          typeof err === 'object' &&
-          err !== null &&
-          'msBeforeNext' in err &&
-          typeof (err as { msBeforeNext?: unknown }).msBeforeNext === 'number'
-            ? ((err as { msBeforeNext: number }).msBeforeNext / 1000)
-            : 60
-        )
-      );
-      return reply
-        .code(429)
-        .header('retry-after', String(retryAfterSeconds))
-        .send({
-          error: 'rate_limit_exceeded',
-          message: 'Too many requests. Please retry later.',
-        });
-    }
-
+  app.post('/api/governance/nlsummary', { preHandler: explanationRateLimitMiddleware }, async (request, reply) => {
     await attachAtlasSession(request);
     const userId = resolveAuthenticatedRouteUserId(
       request.atlasAuthUser?.databaseUserId,

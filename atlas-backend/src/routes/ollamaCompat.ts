@@ -11,43 +11,42 @@ const ollamaCompatRouteLimiter = new RateLimiterMemory({
   duration: 60,
 });
 
+async function ollamaCompatRateLimitMiddleware(
+  request: { ip: string },
+  reply: { code: (statusCode: number) => { header: (name: string, value: string) => { send: (body: { error: string; message: string }) => unknown } } }
+): Promise<void> {
+  try {
+    await ollamaCompatRouteLimiter.consume(request.ip);
+  } catch (err) {
+    const retryAfterSeconds = Math.max(
+      1,
+      Math.ceil(
+        typeof err === 'object' &&
+        err !== null &&
+        'msBeforeNext' in err &&
+        typeof (err as { msBeforeNext?: unknown }).msBeforeNext === 'number'
+          ? ((err as { msBeforeNext: number }).msBeforeNext / 1000)
+          : 60
+      )
+    );
+
+    reply
+      .code(429)
+      .header('retry-after', String(retryAfterSeconds))
+      .send({
+        error: 'rate_limit_exceeded',
+        message: 'Too many requests. Please retry later.',
+      });
+  }
+}
+
 /**
  * Ollama-compatible /api/chat endpoint.
  * Accepts the same JSON format the frontend expects (Ollama NDJSON streaming)
  * but routes through Groq when DISABLE_LOCAL_OLLAMA=true.
  */
 export async function registerOllamaCompatRoutes(app: FastifyInstance): Promise<void> {
-  app.post('/api/chat', { config: { rateLimit: { max: 5, timeWindow: '1 minute' } } }, async (request, reply) => {
-    const forwarded = request.headers['x-forwarded-for'];
-    const rateLimitKey = Array.isArray(forwarded)
-      ? (forwarded[0]?.split(',')[0]?.trim() || request.ip)
-      : typeof forwarded === 'string'
-        ? (forwarded.split(',')[0]?.trim() || request.ip)
-        : request.ip;
-
-    try {
-      await ollamaCompatRouteLimiter.consume(rateLimitKey);
-    } catch (err) {
-      const retryAfterSeconds = Math.max(
-        1,
-        Math.ceil(
-          typeof err === 'object' &&
-          err !== null &&
-          'msBeforeNext' in err &&
-          typeof (err as { msBeforeNext?: unknown }).msBeforeNext === 'number'
-            ? ((err as { msBeforeNext: number }).msBeforeNext / 1000)
-            : 60
-        )
-      );
-      return reply
-        .code(429)
-        .header('retry-after', String(retryAfterSeconds))
-        .send({
-          error: 'rate_limit_exceeded',
-          message: 'Too many requests. Please retry later.',
-        });
-    }
-
+  app.post('/api/chat', { preHandler: ollamaCompatRateLimitMiddleware }, async (request, reply) => {
     await attachAtlasSession(request);
     const userId = resolveAuthenticatedRouteUserId(
       request.atlasAuthUser?.databaseUserId,

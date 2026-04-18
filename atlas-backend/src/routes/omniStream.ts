@@ -42,6 +42,35 @@ const omniStreamRouteLimiter = new RateLimiterMemory({
   duration: 60,
 });
 
+async function omniStreamRateLimitMiddleware(
+  request: { ip: string },
+  reply: { code: (statusCode: number) => { header: (name: string, value: string) => { send: (body: { error: string; message: string }) => unknown } } }
+): Promise<void> {
+  try {
+    await omniStreamRouteLimiter.consume(request.ip);
+  } catch (err) {
+    const retryAfterSeconds = Math.max(
+      1,
+      Math.ceil(
+        typeof err === 'object' &&
+        err !== null &&
+        'msBeforeNext' in err &&
+        typeof (err as { msBeforeNext?: unknown }).msBeforeNext === 'number'
+          ? ((err as { msBeforeNext: number }).msBeforeNext / 1000)
+          : 60
+      )
+    );
+
+    reply
+      .code(429)
+      .header('retry-after', String(retryAfterSeconds))
+      .send({
+        error: 'rate_limit_exceeded',
+        message: 'Too many requests. Please retry later.',
+      });
+  }
+}
+
 export const omniBodySchema = z.object({
   requestId: z.string().uuid().optional(),
   /** 1–5: concise → deep synthesis (Section IX posture scale). Omitted → inferred from line of inquiry. */
@@ -105,37 +134,7 @@ function sseWrite(raw: { write: (s: string) => boolean }, event: string, data: u
  * Resonance Chamber: SSE stream with routing status → token deltas → done (+ evolution scheduled).
  */
 export function registerOmniStreamRoutes(app: FastifyInstance): void {
-  app.post('/v1/chat/omni-stream', { config: { rateLimit: { max: 5, timeWindow: '1 minute' } } }, async (request, reply) => {
-    const forwarded = request.headers['x-forwarded-for'];
-    const rateLimitKey = Array.isArray(forwarded)
-      ? (forwarded[0]?.split(',')[0]?.trim() || request.ip)
-      : typeof forwarded === 'string'
-        ? (forwarded.split(',')[0]?.trim() || request.ip)
-        : request.ip;
-
-    try {
-      await omniStreamRouteLimiter.consume(rateLimitKey);
-    } catch (err) {
-      const retryAfterSeconds = Math.max(
-        1,
-        Math.ceil(
-          typeof err === 'object' &&
-          err !== null &&
-          'msBeforeNext' in err &&
-          typeof (err as { msBeforeNext?: unknown }).msBeforeNext === 'number'
-            ? ((err as { msBeforeNext: number }).msBeforeNext / 1000)
-            : 60
-        )
-      );
-      return reply
-        .code(429)
-        .header('retry-after', String(retryAfterSeconds))
-        .send({
-          error: 'rate_limit_exceeded',
-          message: 'Too many requests. Please retry later.',
-        });
-    }
-
+  app.post('/v1/chat/omni-stream', { preHandler: omniStreamRateLimitMiddleware }, async (request, reply) => {
     const parsed = omniBodySchema.safeParse(request.body);
     if (!parsed.success) {
       return reply.status(400).send({ error: 'validation_error', details: parsed.error.flatten() });

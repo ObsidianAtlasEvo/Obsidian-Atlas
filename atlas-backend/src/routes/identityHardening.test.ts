@@ -31,6 +31,7 @@ test('registerOllamaCompatRoutes rejects unauthenticated requests', async () => 
   const response = await app.inject({
     method: 'POST',
     url: '/api/chat',
+    remoteAddress: '198.51.100.1',
     payload: {
       messages: [{ role: 'user', content: 'hello' }],
     },
@@ -47,6 +48,7 @@ test('registerExplanationRoutes rejects unauthenticated requests', async () => {
   const response = await app.inject({
     method: 'POST',
     url: '/api/governance/nlsummary',
+    remoteAddress: '198.51.100.2',
     payload: {
       entries: [],
     },
@@ -64,7 +66,7 @@ test('registerExplanationRoutes returns 429 after repeated requests from the sam
     const response = await app.inject({
       method: 'POST',
       url: '/api/governance/nlsummary',
-      headers: { 'x-forwarded-for': '198.51.100.10' },
+      remoteAddress: '198.51.100.10',
       payload: { entries: [] },
     });
     assert.equal(response.statusCode, 401);
@@ -73,7 +75,7 @@ test('registerExplanationRoutes returns 429 after repeated requests from the sam
   const blocked = await app.inject({
     method: 'POST',
     url: '/api/governance/nlsummary',
-    headers: { 'x-forwarded-for': '198.51.100.10' },
+    remoteAddress: '198.51.100.10',
     payload: { entries: [] },
   });
 
@@ -89,7 +91,7 @@ test('registerOllamaCompatRoutes returns 429 after repeated requests from the sa
     const response = await app.inject({
       method: 'POST',
       url: '/api/chat',
-      headers: { 'x-forwarded-for': '198.51.100.20' },
+      remoteAddress: '198.51.100.20',
       payload: { messages: [{ role: 'user', content: 'hello' }] },
     });
     assert.equal(response.statusCode, 401);
@@ -98,7 +100,7 @@ test('registerOllamaCompatRoutes returns 429 after repeated requests from the sa
   const blocked = await app.inject({
     method: 'POST',
     url: '/api/chat',
-    headers: { 'x-forwarded-for': '198.51.100.20' },
+    remoteAddress: '198.51.100.20',
     payload: { messages: [{ role: 'user', content: 'hello' }] },
   });
 
@@ -114,7 +116,7 @@ test('registerOmniStreamRoutes returns 429 after repeated requests from the same
     const response = await app.inject({
       method: 'POST',
       url: '/v1/chat/omni-stream',
-      headers: { 'x-forwarded-for': '198.51.100.30' },
+      remoteAddress: '198.51.100.30',
       payload: { messages: [{ role: 'user', content: 'hello' }] },
     });
     assert.equal(response.statusCode, 401);
@@ -123,7 +125,7 @@ test('registerOmniStreamRoutes returns 429 after repeated requests from the same
   const blocked = await app.inject({
     method: 'POST',
     url: '/v1/chat/omni-stream',
-    headers: { 'x-forwarded-for': '198.51.100.30' },
+    remoteAddress: '198.51.100.30',
     payload: { messages: [{ role: 'user', content: 'hello' }] },
   });
 
