@@ -16,7 +16,6 @@ import {
   type SubscriptionTier,
 } from '../services/intelligence/groundwork/v4/subscriptionSchema.js';
 import { supabaseRest } from '../db/supabase.js';
-import { RATE_LIMITS } from '../plugins/rateLimit.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -72,7 +71,7 @@ export async function registerUserPreferencesRoutes(
 ): Promise<void> {
   // GET /user/preferences
   fastify.get('/user/preferences', {
-    config: { rateLimit: RATE_LIMITS.readUser },
+    config: { rateLimit: { max: 60, timeWindow: '1 minute' } },
   }, async (request: FastifyRequest, reply: FastifyReply) => {
     const session = requireSession(request, reply);
     if (!session) return;
@@ -92,7 +91,7 @@ export async function registerUserPreferencesRoutes(
 
   // PATCH /user/preferences
   fastify.patch('/user/preferences', {
-    config: { rateLimit: RATE_LIMITS.writeUser },
+    config: { rateLimit: { max: 20, timeWindow: '1 minute' } },
   }, async (request: FastifyRequest, reply: FastifyReply) => {
     const session = requireSession(request, reply);
     if (!session) return;
