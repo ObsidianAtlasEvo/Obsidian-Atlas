@@ -40,28 +40,12 @@ export interface MigrationStatus {
   checkpointId: string | null;
 }
 
-/* ───────── Table bootstrap ───────── */
-
-function ensureTable(): void {
-  const db = getDb();
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS atlas_schema_migrations (
-      id TEXT PRIMARY KEY NOT NULL,
-      domain TEXT NOT NULL,
-      version TEXT NOT NULL,
-      status TEXT NOT NULL,
-      started_at TEXT,
-      completed_at TEXT,
-      error TEXT,
-      checkpoint_id TEXT,
-      lock_id TEXT,
-      lock_acquired_at TEXT,
-      lock_expires_at TEXT
-    )
-  `);
-}
-
 /* ───────── Topological sort (DFS) ───────── */
+// atlas_schema_migrations is created authoritatively by initSqlite() — see
+// atlas-backend/src/db/sqlite.ts (CREATE TABLE + migrateAtlasSchemaMigrationsTable).
+// Do NOT redeclare it here; the canonical schema is a superset of what this
+// module writes and the runner must not mask schema drift with a local
+// CREATE TABLE IF NOT EXISTS.
 
 function topoSort(chains: MigrationChain[]): MigrationChain[] {
   const byDomain = new Map<string, MigrationChain>();
@@ -109,8 +93,6 @@ function nowIso(): string {
  * On failure: records checkpoint, marks the failed migration, and stops.
  */
 export async function runMigrations(chains: MigrationChain[]): Promise<MigrationReport> {
-  ensureTable();
-
   // Filter to only chains whose domain is requested
   const sorted = topoSort(chains);
 
@@ -198,7 +180,6 @@ export async function runMigrations(chains: MigrationChain[]): Promise<Migration
  * Read migration status from the `atlas_schema_migrations` table.
  */
 export async function getMigrationStatus(): Promise<MigrationStatus[]> {
-  ensureTable();
   const db = getDb();
 
   const rows = db.prepare(

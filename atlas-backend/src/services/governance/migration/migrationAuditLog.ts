@@ -18,34 +18,14 @@ export interface MigrationLogEntry {
   checkpointId?: string;
 }
 
-/* ───────── Table bootstrap ───────── */
-
-function ensureTable(): void {
-  const db = getDb();
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS atlas_schema_migrations (
-      id TEXT PRIMARY KEY NOT NULL,
-      domain TEXT NOT NULL,
-      version TEXT NOT NULL,
-      status TEXT NOT NULL,
-      started_at TEXT,
-      completed_at TEXT,
-      error TEXT,
-      checkpoint_id TEXT,
-      lock_id TEXT,
-      lock_acquired_at TEXT,
-      lock_expires_at TEXT
-    )
-  `);
-}
-
 /* ───────── Public API ───────── */
+// atlas_schema_migrations is created authoritatively by initSqlite() — see
+// atlas-backend/src/db/sqlite.ts. Do not redeclare here.
 
 /**
  * Write a migration lifecycle entry to the `atlas_schema_migrations` table.
  */
 export async function logMigration(entry: MigrationLogEntry): Promise<void> {
-  ensureTable();
   const db = getDb();
   const id = randomUUID();
   db.prepare(
