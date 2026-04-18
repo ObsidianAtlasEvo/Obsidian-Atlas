@@ -22,11 +22,40 @@ permissions:
   contents: read
 
 jobs:
+  # ── 0. Stale-commit guard ────────────────────────────────────────────────────
+  # Prevents re-runs of old failed deploys from redeploying stale commits.
+  # If the run's SHA is not the current tip of main, skip the entire pipeline.
+  # This does NOT affect fresh pushes — only manual re-runs of historical runs.
+  guard:
+    name: Stale-commit guard
+    runs-on: ubuntu-latest
+    outputs:
+      is_current: ${{ steps.check.outputs.is_current }}
+    steps:
+      - name: Check if run SHA is current tip of main
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_SHA: ${{ github.sha }}
+        run: |
+          MAIN_SHA=$(gh api /repos/${{ github.repository }}/branches/main --jq '.commit.sha')
+          echo "Run SHA:  $RUN_SHA"
+          echo "Main tip: $MAIN_SHA"
+          if [ "$RUN_SHA" = "$MAIN_SHA" ]; then
+            echo "is_current=true" >> "$GITHUB_OUTPUT"
+            echo "✅ SHA is current — proceeding with deploy"
+          else
+            echo "is_current=false" >> "$GITHUB_OUTPUT"
+            echo "⏭️  SHA is stale (not tip of main) — skipping deploy to prevent regression"
+            echo "   This is expected if you re-ran an old failed deploy from the Actions UI."
+          fi
+
   # ── 1. CI gate ──────────────────────────────────────────────────────────────
   ci:
     name: CI gate
     runs-on: ubuntu-latest
-    if: ${{ github.event.inputs.skip_tests != 'true' }}
+    needs: [guard]
+    if: ${{ needs.guard.outputs.is_current == 'true' && github.event.inputs.skip_tests != 'true' }}
     steps:
       - uses: actions/checkout@v4.2.2
 
@@ -62,11 +91,12 @@ jobs:
   deploy:
     name: Deploy to obsidianatlastech.com
     runs-on: ubuntu-latest
-    needs: [ci]
+    needs: [guard, ci]
     permissions:
       contents: read
     if: |
       always() &&
+      needs.guard.outputs.is_current == 'true' &&
       (needs.ci.result == 'success' || needs.ci.result == 'skipped')
     environment:
       name: production
