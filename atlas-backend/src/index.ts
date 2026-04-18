@@ -40,6 +40,7 @@ import { registerGapLedgerRoutes } from './routes/gapLedgerRoutes.js';
 import { registerChangeControlRoutes } from './routes/changeControlRoutes.js';
 import { registerBillingRoutes } from './routes/billingRoutes.js';
 import { registerUserPreferencesRoutes } from './routes/userPreferencesRoutes.js';
+import { registerLegalRoutes } from './routes/legalRoutes.js';
 import { loadPersistedJobs } from './services/inference/queueManager.js';
 
 // ---------------------------------------------------------------------------
@@ -334,6 +335,26 @@ await app.register(async (userScope) => {
   });
   await registerUserPreferencesRoutes(userScope, getDb());
 }, { prefix: '/v1' });
+
+// ── Legal acceptance routes ──────────────────────────────────────────────
+// GET /v1/legal/versions is public (no preHandler). POST /v1/legal/accept
+// and GET /v1/legal/acceptance require a valid session — we reuse the same
+// OAuth session bridge used by billing/preferences.
+await app.register(async (legalScope) => {
+  legalScope.addHook('preHandler', async (request: FastifyRequest, reply: FastifyReply) => {
+    // Public endpoints under /v1/legal/ are enumerated here to skip auth.
+    if (request.url.startsWith('/v1/legal/versions')) return;
+    await attachAtlasSession(request);
+    if (!request.atlasAuthUser) {
+      return reply.code(401).send({ error: 'Unauthorized — Atlas session required' });
+    }
+    request.atlasSession = {
+      userId: request.atlasAuthUser.databaseUserId,
+      email: request.atlasAuthUser.email,
+    };
+  });
+  registerLegalRoutes(legalScope, getDb());
+});
 
 registerDegradedModeRoutes(app);
 await app.register(embeddingsRoutes);

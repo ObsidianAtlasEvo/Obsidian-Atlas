@@ -1,7 +1,7 @@
 // Atlas-Audit: [EXEC-MODE] Verified — Advanced shortcuts open creator-console / audit-logs via coerceActiveMode(..., prev.activeMode).
 import React from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, Shield, Lock, Activity, Zap, Cpu, Eye, Bell, Monitor, Key, HardDrive, Trash2, LogOut } from 'lucide-react';
+import { X, Shield, Lock, Activity, Zap, Cpu, Eye, Bell, Monitor, Key, HardDrive, Trash2, LogOut, FileText, ExternalLink } from 'lucide-react';
 import { AppState } from '../types';
 import { coerceActiveMode } from '../lib/atlasWayfinding';
 import { atlasAuthUrl } from '../lib/atlasApi';
@@ -9,6 +9,8 @@ import { cn } from '../lib/utils';
 
 import { useSettingsStore, UITheme, AnimationSpeed, LanguageLevel } from '../services/state/settingsStore';
 import { ModelSelectorSettings } from './ModelSelectorSettings';
+import { LegalViewerModal } from './legal/LegalViewerModal';
+import type { LegalDocumentKind } from '../lib/legal/documents';
 
 interface SettingsMenuProps {
   state: AppState;
@@ -70,6 +72,7 @@ const SettingSelect = ({ label, value, options, onChange }: { label: string, val
 
 export function SettingsMenu({ state, setState }: SettingsMenuProps) {
   const settings = useSettingsStore();
+  const [legalViewer, setLegalViewer] = React.useState<LegalDocumentKind | null>(null);
   if (!state.isSettingsOpen) return null;
 
   const closeSettings = () => setState(prev => ({ ...prev, isSettingsOpen: false }));
@@ -191,6 +194,34 @@ export function SettingsMenu({ state, setState }: SettingsMenuProps) {
                     <button className="w-full p-3 flex items-center justify-center gap-2 text-xs text-red-400 border border-red-500/20 bg-red-500/5 hover:bg-red-500/10 transition-colors rounded-sm">
                       <Trash2 size={14} /> Clear Local Cache
                     </button>
+
+                    {/* Legal policies — read-only viewers. Acceptance is captured
+                        once at first login via LegalGate; these links are for
+                        reference only and never re-prompt. */}
+                    <div className="pt-3 mt-1 border-t border-titanium/5 space-y-1">
+                      <button
+                        type="button"
+                        onClick={() => setLegalViewer('terms')}
+                        className="w-full flex items-center justify-between p-2 text-[11px] text-stone/70 hover:text-ivory hover:bg-titanium/5 transition-colors rounded-sm group"
+                      >
+                        <span className="flex items-center gap-2">
+                          <FileText size={12} className="text-stone/50 group-hover:text-gold transition-colors" />
+                          Terms and Conditions
+                        </span>
+                        <ExternalLink size={11} className="text-stone/30 group-hover:text-stone/60" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setLegalViewer('privacy')}
+                        className="w-full flex items-center justify-between p-2 text-[11px] text-stone/70 hover:text-ivory hover:bg-titanium/5 transition-colors rounded-sm group"
+                      >
+                        <span className="flex items-center gap-2">
+                          <FileText size={12} className="text-stone/50 group-hover:text-gold transition-colors" />
+                          Privacy Policy
+                        </span>
+                        <ExternalLink size={11} className="text-stone/30 group-hover:text-stone/60" />
+                      </button>
+                    </div>
                   </div>
                 </div>
 
@@ -302,6 +333,7 @@ export function SettingsMenu({ state, setState }: SettingsMenuProps) {
               </button>
             </div>
           </motion.div>
+          <LegalViewerModal kind={legalViewer} onClose={() => setLegalViewer(null)} />
         </>
       )}
     </AnimatePresence>
