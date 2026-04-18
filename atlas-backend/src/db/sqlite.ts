@@ -825,15 +825,33 @@ CREATE TABLE IF NOT EXISTS atlas_sovereign_audit (
 CREATE INDEX IF NOT EXISTS idx_sovereign_audit_time ON atlas_sovereign_audit(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_sovereign_audit_type ON atlas_sovereign_audit(event_type, created_at DESC);
 
+-- atlas_schema_migrations: authoritative schema (superset of governance/migration/* usage).
+-- Owns migration lifecycle records, canary shadow rows, and advisory lock rows.
+-- The domain/started_at/error/checkpoint_id/lock_* columns are used by
+-- the governance/migration runner, audit log, lock manager, and canary executor.
+-- The description and applied_at columns are legacy (pre-runner), kept nullable
+-- so retention/garbage-collection filters that predate the runner still parse.
+-- Do not rely on them in new code — the runner writes status='success' and
+-- populates completed_at.
 CREATE TABLE IF NOT EXISTS atlas_schema_migrations (
   id TEXT PRIMARY KEY NOT NULL,
+  domain TEXT,                         -- governance/migration: per-domain tracking (NULL for legacy rows)
   version TEXT NOT NULL,
-  description TEXT NOT NULL,
+  description TEXT,                    -- legacy (pre-runner); nullable, never written by governance/migration
   status TEXT NOT NULL DEFAULT 'completed',
-  applied_at TEXT NOT NULL,
-  completed_at TEXT
+  applied_at TEXT,                     -- legacy finalization timestamp (nullable)
+  started_at TEXT,                     -- governance/migration: when chain.up() began
+  completed_at TEXT,                   -- governance/migration: when chain.up() finished
+  error TEXT,                          -- governance/migration: failure message
+  checkpoint_id TEXT,                  -- governance/migration: rollback checkpoint reference
+  lock_id TEXT,                        -- migrationLock: advisory lock id
+  lock_acquired_at TEXT,               -- migrationLock: lock acquisition time
+  lock_expires_at TEXT                 -- migrationLock: lock TTL cutoff
 );
-CREATE INDEX IF NOT EXISTS idx_schema_mig_status ON atlas_schema_migrations(status, applied_at DESC);
+-- Indexes for atlas_schema_migrations are created by
+-- migrateAtlasSchemaMigrationsTable() after any legacy-shape rebuild, since
+-- legacy DBs created before this reconciliation don't have domain / completed_at /
+-- lock_expires_at yet and CREATE INDEX would fail if declared here.
 
 CREATE TABLE IF NOT EXISTS atlas_evolution_signals (
   id TEXT PRIMARY KEY NOT NULL,
@@ -926,6 +944,7 @@ export function initSqlite(): Database.Database {
     migrateBillingSubscriptionSchema(database);
     runBillingMigration(database);
     migratePolicyProfileColumns(database);
+    migrateAtlasSchemaMigrationsTable(database);
     migrateSectionVIIIContinuity(database);
     migrateArchivedAtIndexes(database);
     _db = database;
@@ -1009,6 +1028,140 @@ function migratePolicyProfileColumns(database: Database.Database): void {
       `ALTER TABLE policy_profiles ADD COLUMN is_learned INTEGER NOT NULL DEFAULT 0`
     );
   }
+}
+
+/**
+ * Reconcile atlas_schema_migrations to the superset schema required by
+ * governance/migration/* (runner, audit log, lock manager, canary executor).
+ *
+ * Pre-reconciliation the table shipped as:
+ *   (id, version, description NOT NULL, status, applied_at NOT NULL, completed_at)
+ * The governance/migration writers never populate description or applied_at,
+ * and need additional columns (domain, started_at, error, checkpoint_id, lock_*).
+ * SQLite cannot drop NOT NULL via ALTER, so legacy DBs are rebuilt via the
+ * 12-step table-swap pattern. Fresh DBs already have the superset schema from
+ * the authoritative CREATE TABLE and this function no-ops.
+ *
+ * Idempotent: uses PRAGMA table_info to detect the legacy shape and skips the
+ * rebuild otherwise.
+ */
+function migrateAtlasSchemaMigrationsTable(database: Database.Database): void {
+  const tableExists = database
+    .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='atlas_schema_migrations'`)
+    .get() as { name: string } | undefined;
+  if (!tableExists) return;
+
+  const cols = database.prepare(`PRAGMA table_info(atlas_schema_migrations)`).all() as Array<{
+    name: string;
+    notnull: number;
+  }>;
+  const byName = new Map(cols.map((c) => [c.name, c]));
+
+  const hasAllSupersetCols =
+    byName.has('domain') &&
+    byName.has('started_at') &&
+    byName.has('error') &&
+    byName.has('checkpoint_id') &&
+    byName.has('lock_id') &&
+    byName.has('lock_acquired_at') &&
+    byName.has('lock_expires_at');
+
+  const legacyNotNullPresent =
+    (byName.get('description')?.notnull === 1) ||
+    (byName.get('applied_at')?.notnull === 1);
+
+  // Fresh DB — already correct shape from the canonical CREATE TABLE. Skip the
+  // rebuild but still fall through so CREATE INDEX IF NOT EXISTS runs once per
+  // boot (needed because legacy DBs can't declare these indexes in the static
+  // SCHEMA block without referencing columns that don't exist yet).
+  if (hasAllSupersetCols && !legacyNotNullPresent) {
+    ensureAtlasSchemaMigrationIndexes(database);
+    return;
+  }
+
+  // Legacy DB: rebuild the table with the canonical superset shape.
+  // 1. Rename legacy table out of the way.
+  // 2. Recreate atlas_schema_migrations with the canonical columns.
+  // 3. Copy overlapping legacy rows over (mapping applied_at → completed_at as the
+  //    best available timestamp so retention queries on completed_at still work).
+  // 4. Drop the legacy rename.
+  // 5. Recreate indexes (CREATE INDEX IF NOT EXISTS handles the fresh case).
+  database.exec('BEGIN IMMEDIATE');
+  try {
+    database.exec(`ALTER TABLE atlas_schema_migrations RENAME TO atlas_schema_migrations__legacy`);
+    database.exec(`
+      CREATE TABLE atlas_schema_migrations (
+        id TEXT PRIMARY KEY NOT NULL,
+        domain TEXT,
+        version TEXT NOT NULL,
+        description TEXT,
+        status TEXT NOT NULL DEFAULT 'completed',
+        applied_at TEXT,
+        started_at TEXT,
+        completed_at TEXT,
+        error TEXT,
+        checkpoint_id TEXT,
+        lock_id TEXT,
+        lock_acquired_at TEXT,
+        lock_expires_at TEXT
+      )
+    `);
+
+    // Only carry columns the legacy table actually had. PRAGMA already told us
+    // the legacy column set; build the SELECT list dynamically so this works
+    // whether the legacy shape was (id, version, description, status, applied_at, completed_at)
+    // or any intermediate partial-migration state.
+    const legacyCols = database.prepare(`PRAGMA table_info(atlas_schema_migrations__legacy)`).all() as { name: string }[];
+    const legacyNames = new Set(legacyCols.map((c) => c.name));
+    const pick = (col: string, fallback: string = 'NULL'): string =>
+      legacyNames.has(col) ? col : fallback;
+    // For completed_at, prefer the existing completed_at value if non-null, else
+    // fall back to applied_at (legacy finalization timestamp) so retention
+    // queries on completed_at still match pre-runner rows. If neither column
+    // existed, the expression collapses to NULL.
+    const completedAtExpr = (() => {
+      const hasCompleted = legacyNames.has('completed_at');
+      const hasApplied = legacyNames.has('applied_at');
+      if (hasCompleted && hasApplied) return 'COALESCE(completed_at, applied_at)';
+      if (hasCompleted) return 'completed_at';
+      if (hasApplied) return 'applied_at';
+      return 'NULL';
+    })();
+
+    database.exec(`
+      INSERT INTO atlas_schema_migrations
+        (id, domain, version, description, status, applied_at, started_at, completed_at,
+         error, checkpoint_id, lock_id, lock_acquired_at, lock_expires_at)
+      SELECT
+        ${pick('id')},
+        ${pick('domain')},
+        ${pick('version', "'unknown'")},
+        ${pick('description')},
+        ${pick('status', "'completed'")},
+        ${pick('applied_at')},
+        ${pick('started_at')},
+        ${completedAtExpr},
+        ${pick('error')},
+        ${pick('checkpoint_id')},
+        ${pick('lock_id')},
+        ${pick('lock_acquired_at')},
+        ${pick('lock_expires_at')}
+      FROM atlas_schema_migrations__legacy
+    `);
+    database.exec(`DROP TABLE atlas_schema_migrations__legacy`);
+    database.exec('COMMIT');
+  } catch (err) {
+    database.exec('ROLLBACK');
+    throw err;
+  }
+
+  ensureAtlasSchemaMigrationIndexes(database);
+}
+
+function ensureAtlasSchemaMigrationIndexes(database: Database.Database): void {
+  database.exec(`CREATE INDEX IF NOT EXISTS idx_schema_mig_status ON atlas_schema_migrations(status, completed_at DESC)`);
+  database.exec(`CREATE INDEX IF NOT EXISTS idx_schema_mig_domain_status ON atlas_schema_migrations(domain, status, started_at DESC)`);
+  database.exec(`CREATE INDEX IF NOT EXISTS idx_schema_mig_lock ON atlas_schema_migrations(domain, status, lock_expires_at)`);
 }
 
 /**
