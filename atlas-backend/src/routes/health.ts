@@ -64,6 +64,16 @@ export default async function healthRoutes(app: FastifyInstance): Promise<void> 
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
       }),
 
+      // 2b. Gemini LLM availability (primary swarm provider)
+      probeWithTimeout('gemini', async () => {
+        const key = process.env.GOOGLE_API_KEY ?? process.env.GEMINI_API_KEY;
+        if (!key) throw new Error('GOOGLE_API_KEY not set');
+        const res = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models?key=${key}`,
+        );
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      }),
+
       // 3. SQLite (backbone of 20+ tables — locked WAL, corruption, disk full)
       probeWithTimeout('sqlite', async () => {
         const db = getDb();
