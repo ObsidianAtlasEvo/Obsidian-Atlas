@@ -269,7 +269,8 @@ CREATE TABLE IF NOT EXISTS policy_profiles (
   tavily_api_key TEXT,
   deep_research_daily_count INTEGER NOT NULL DEFAULT 0,
   deep_research_quota_date_utc TEXT,
-  updated_at TEXT NOT NULL
+  updated_at TEXT NOT NULL,
+  is_learned INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS traces (

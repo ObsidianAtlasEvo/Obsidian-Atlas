@@ -38,7 +38,8 @@ CREATE TABLE IF NOT EXISTS policy_profiles (
   tavily_api_key TEXT,
   deep_research_daily_count INTEGER NOT NULL DEFAULT 0,
   deep_research_quota_date_utc TEXT,
-  updated_at TEXT NOT NULL
+  updated_at TEXT NOT NULL,
+  is_learned INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS traces (
@@ -1000,6 +1001,13 @@ function migratePolicyProfileColumns(database: Database.Database): void {
   }
   if (!names.has('deep_research_quota_date_utc')) {
     database.exec(`ALTER TABLE policy_profiles ADD COLUMN deep_research_quota_date_utc TEXT`);
+  }
+  if (!names.has('is_learned')) {
+    // Added to back the isLearned gate introduced in PR #117. Defaults to 0 so
+    // existing rows are treated as "unlearned" until an explicit update sets them to 1.
+    database.exec(
+      `ALTER TABLE policy_profiles ADD COLUMN is_learned INTEGER NOT NULL DEFAULT 0`
+    );
   }
 }
 
