@@ -20,7 +20,7 @@ import {
 import { AppState, Directive, DirectiveOutcome, DirectiveScope, ComputePosture, UIPosture } from '../types';
 import { cn } from '../lib/utils';
 import { validateDirective, applyDirectivesToPosture, constitutionAlignmentHint } from '../lib/directiveProcessor';
-import { atlasCache } from '../services/ollamaService';
+import { atlasCache } from '../lib/atlasCache';
 
 interface DirectiveControlCenterProps {
   state: AppState;

@@ -22,7 +22,7 @@ import { cn } from '../lib/utils';
 import { coerceActiveMode } from '../lib/atlasWayfinding';
 import { AppState, CrucibleMode, CrucibleIntensity, CrucibleSession, CrucibleExchange } from '../types';
 import { ATLAS_TRACE_CHANNEL, atlasTraceUserId } from '../lib/atlasTraceContext';
-import { conductCrucibleSession } from '../services/ollamaService';
+import { conductCrucibleSession } from '../lib/atlasCrucible';
 
 interface CrucibleViewProps {
   state: AppState;
@@ -89,10 +89,7 @@ export function CrucibleView({ state, setState }: CrucibleViewProps) {
     };
 
     try {
-      const response = await conductCrucibleSession(session, state.userModel, topic, {
-        userId: atlasTraceUserId(state),
-        channel: ATLAS_TRACE_CHANNEL.crucible,
-      });
+      const response = await conductCrucibleSession(session, state.userModel, topic, atlasTraceUserId(state));
       setResult(response.atlasResponse);
       const at = new Date().toISOString();
       setLastRunAt(at);

@@ -2,7 +2,7 @@
  * Atlas Explanation Routes
  * Phase 4 Section 4 — Explainability Layer
  *
- * POST /api/governance/nlsummary — generate a natural-language digest
+ * POST /v1/governance/nlsummary — generate a natural-language digest
  * of governance explanation entries via Groq LLM with rule-based fallback.
  */
 
@@ -88,7 +88,7 @@ async function tryGroqSummary(entries: NLEntry[]): Promise<string | null> {
         Authorization: `Bearer ${groqKey}`,
       },
       body: JSON.stringify({
-        model: 'llama-3.1-8b-instant',
+        model: 'llama-3.3-70b-versatile',
         messages: [{ role: 'user', content: prompt }],
         max_tokens: 512,
         temperature: 0.3,
@@ -107,7 +107,7 @@ async function tryGroqSummary(entries: NLEntry[]): Promise<string | null> {
 }
 
 export function registerExplanationRoutes(app: FastifyInstance): void {
-  app.post('/api/governance/nlsummary', { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (request, reply) => {
+  app.post('/v1/governance/nlsummary', { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (request, reply) => {
     const parsed = bodySchema.safeParse(request.body);
     if (!parsed.success) {
       return reply

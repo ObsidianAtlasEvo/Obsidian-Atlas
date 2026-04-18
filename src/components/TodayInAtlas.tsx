@@ -234,36 +234,39 @@ export const TodayInAtlas: React.FC<TodayInAtlasProps> = ({ state, setState }) =
 
           <section className="glass-panel p-10 border-titanium/10 bg-obsidian/50 space-y-10 shadow-2xl">
             <h3 className="text-[10px] uppercase tracking-[0.4em] text-stone font-bold">Active Tensions</h3>
-            <div className="space-y-10">
-              <div className="space-y-4">
-                <div className="flex justify-between text-[10px] uppercase tracking-[0.4em] text-stone font-bold">
-                  <span>Elegance vs Utility</span>
-                  <span className="text-gold">82%</span>
-                </div>
-                <div className="h-[2px] bg-titanium/10 rounded-full overflow-hidden">
-                  <motion.div 
-                    initial={{ width: 0 }}
-                    animate={{ width: '82%' }}
-                    transition={{ duration: 2, ease: "easeOut" }}
-                    className="h-full bg-gold shadow-[0_0_12px_rgba(212,175,55,0.5)]" 
-                  />
-                </div>
+            {state.constitution.tensions.length === 0 ? (
+              <p className="text-[10px] text-stone/40 font-serif italic">
+                No tensions defined. Add tensions in your Constitution to track balance here.
+              </p>
+            ) : (
+              <div className="space-y-10">
+                {state.constitution.tensions.slice(0, 3).map((tension) => {
+                  const pct = Math.round(tension.currentBalance * 100);
+                  const color = pct > 60 ? 'bg-gold' : pct < 40 ? 'bg-teal' : 'bg-violet-400';
+                  const shadowColor = pct > 60
+                    ? 'shadow-[0_0_12px_rgba(212,175,55,0.5)]'
+                    : pct < 40
+                    ? 'shadow-[0_0_12px_rgba(20,184,166,0.5)]'
+                    : 'shadow-[0_0_12px_rgba(139,92,246,0.5)]';
+                  return (
+                    <div key={tension.id} className="space-y-4">
+                      <div className="flex justify-between text-[10px] uppercase tracking-[0.4em] text-stone font-bold">
+                        <span>{tension.poleA} vs {tension.poleB}</span>
+                        <span className={pct > 60 ? 'text-gold' : pct < 40 ? 'text-teal' : 'text-violet-400'}>{pct}%</span>
+                      </div>
+                      <div className="h-[2px] bg-titanium/10 rounded-full overflow-hidden">
+                        <motion.div
+                          initial={{ width: 0 }}
+                          animate={{ width: `${pct}%` }}
+                          transition={{ duration: 2, ease: 'easeOut' }}
+                          className={`h-full ${color} ${shadowColor}`}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
-              <div className="space-y-4">
-                <div className="flex justify-between text-[10px] uppercase tracking-[0.4em] text-stone font-bold">
-                  <span>Sovereignty vs Scale</span>
-                  <span className="text-teal">45%</span>
-                </div>
-                <div className="h-[2px] bg-titanium/10 rounded-full overflow-hidden">
-                  <motion.div 
-                    initial={{ width: 0 }}
-                    animate={{ width: '45%' }}
-                    transition={{ duration: 2, ease: "easeOut" }}
-                    className="h-full bg-teal shadow-[0_0_12px_rgba(20,184,166,0.5)]" 
-                  />
-                </div>
-              </div>
-            </div>
+            )}
           </section>
 
           <motion.section 

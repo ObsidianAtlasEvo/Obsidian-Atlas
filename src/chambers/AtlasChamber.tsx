@@ -1,9 +1,10 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useAtlasStore } from '../store/useAtlasStore';
-import { streamChat, OllamaError, type OllamaMessage } from '../lib/ollama';
+import { atlasApiUrl, sanitizeAtlasError } from '../lib/atlasApi';
 import { buildAtlasSystemPrompt } from '../lib/atlasPrompt';
 import { generateId, nowISO } from '../lib/persistence';
 import { useChatRequestState, type ChatRequestStatus } from '../hooks/useChatRequestState';
+import { ModelSelector } from '../components/ModelSelector';
 import type { UserQuestion, AnswerDepthTier, InquiryStyle } from '@/types';
 
 // ── Types ─────────────────────────────────────────────────────────────────
@@ -87,9 +88,7 @@ const LABEL_COLORS: Record<string, string> = {
 function MessageBubble({ msg, isLast }: { msg: ChatMessage; isLast: boolean }) {
   const isUser = msg.role === 'user';
 
-  // Parse markdown-like formatting for assistant messages
   function renderContent(text: string) {
-    // Simple markdown: ** for bold, * for italic, ``` for code blocks
     const lines = text.split('\n');
     const elements: React.ReactNode[] = [];
     let inCodeBlock = false;
@@ -147,10 +146,6 @@ function MessageBubble({ msg, isLast }: { msg: ChatMessage; isLast: boolean }) {
   }
 
   function renderInline(text: string): React.ReactNode {
-    // Bold: **text** → strong
-    // Italic: *text* → em
-    // Inline code: `text` → code
-    // Epistemic markers: [FACT], [INFERENCE], [INTERPRETIVE], [SPECULATIVE]
     const parts: React.ReactNode[] = [];
     const regex = /(\*\*[^*]+\*\*|\*[^*]+\*|`[^`]+`|\[FACT\]|\[INFERENCE\]|\[INTERPRETATION\]|\[SPECULATIVE\]|\[UNCERTAIN\])/g;
     let last = 0;
@@ -187,52 +182,18 @@ function MessageBubble({ msg, isLast }: { msg: ChatMessage; isLast: boolean }) {
 
   if (isUser) {
     return (
-      <div
-        style={{
-          display: 'flex',
-          justifyContent: 'flex-end',
-          marginBottom: 16,
-          animation: 'atlas-fade-in 200ms ease both',
-        }}
-      >
-        <div
-          style={{
-            maxWidth: '72%',
-            background: 'rgba(88, 28, 135, 0.22)',
-            border: '1px solid rgba(88, 28, 135, 0.3)',
-            borderRadius: '12px 12px 3px 12px',
-            padding: '10px 14px',
-            color: 'rgba(226,232,240,0.92)',
-            fontSize: '0.875rem',
-            lineHeight: 1.65,
-          }}
-        >
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 16, animation: 'atlas-fade-in 200ms ease both' }}>
+        <div style={{ maxWidth: '72%', background: 'rgba(88, 28, 135, 0.22)', border: '1px solid rgba(88, 28, 135, 0.3)', borderRadius: '12px 12px 3px 12px', padding: '10px 14px', color: 'rgba(226,232,240,0.92)', fontSize: '0.875rem', lineHeight: 1.65 }}>
           {msg.content}
         </div>
       </div>
     );
   }
 
-  // Assistant message
   return (
-    <div
-      style={{
-        marginBottom: 20,
-        animation: 'atlas-fade-in 200ms ease both',
-      }}
-    >
-      {/* Atlas label */}
+    <div style={{ marginBottom: 20, animation: 'atlas-fade-in 200ms ease both' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-        <div
-          style={{
-            width: 20,
-            height: 20,
-            borderRadius: '50%',
-            border: '1px solid rgba(201,162,39,0.4)',
-            background: 'radial-gradient(circle, rgba(88,28,135,0.4) 0%, transparent 70%)',
-            flexShrink: 0,
-          }}
-        />
+        <div style={{ width: 20, height: 20, borderRadius: '50%', border: '1px solid rgba(201,162,39,0.4)', background: 'radial-gradient(circle, rgba(88,28,135,0.4) 0%, transparent 70%)', flexShrink: 0 }} />
         <span style={{ fontSize: '0.625rem', fontWeight: 600, letterSpacing: '0.12em', color: 'rgba(201,162,39,0.7)', textTransform: 'uppercase' }}>
           Atlas
         </span>
@@ -242,17 +203,7 @@ function MessageBubble({ msg, isLast }: { msg: ChatMessage; isLast: boolean }) {
           </span>
         )}
       </div>
-
-      {/* Content */}
-      <div
-        style={{
-          paddingLeft: 28,
-          fontSize: '0.875rem',
-          lineHeight: 1.75,
-          color: 'rgba(226,232,240,0.88)',
-        }}
-        className={msg.isStreaming ? 'cursor-blink' : ''}
-      >
+      <div style={{ paddingLeft: 28, fontSize: '0.875rem', lineHeight: 1.75, color: 'rgba(226,232,240,0.88)' }} className={msg.isStreaming ? 'cursor-blink' : ''}>
         {msg.error ? (
           <div style={{ color: 'rgba(239,68,68,0.8)', fontSize: '0.8rem', padding: '8px 12px', background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 6 }}>
             {msg.error}
@@ -269,6 +220,271 @@ function MessageBubble({ msg, isLast }: { msg: ChatMessage; isLast: boolean }) {
   );
 }
 
+// ── SSE streaming helper ───────────────────────────────────────────────────
+
+interface StreamCallbacks {
+  onToken: (token: string) => void;
+  onDone: (fullText: string, metrics?: { tokens?: number; duration?: number }) => void;
+  onError: (message: string, code: string) => void;
+  /** Fires on non-delta progress events (swarm_ticker, status, route, routing) — useful for resetting watchdogs. */
+  onProgress?: () => void;
+}
+
+async function streamOmniChat(
+  messages: { role: string; content: string }[],
+  userId: string,
+  posture: number,
+  callbacks: StreamCallbacks,
+  signal: AbortSignal,
+): Promise<void> {
+  const url = atlasApiUrl('/v1/chat/omni-stream');
+  let response: Response;
+
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId, messages, posture }),
+      signal,
+    });
+  } catch (err: unknown) {
+    if (signal.aborted) {
+      callbacks.onError('Request was cancelled', 'ABORTED');
+      return;
+    }
+    const msg = err instanceof Error ? err.message : String(err);
+    callbacks.onError(
+      msg.includes('fetch') || msg.includes('network') || msg.includes('Failed to fetch')
+        ? 'Cannot reach Atlas backend. Check your connection.'
+        : msg,
+      'NETWORK',
+    );
+    return;
+  }
+
+  if (!response.ok) {
+    if (response.status === 401 || response.status === 403) {
+      callbacks.onError('Authentication required. Please sign in to continue.', 'AUTH');
+    } else if (response.status === 429) {
+      // Try to parse quota error vs rate limit
+      const body = await response.json().catch(() => ({})) as { error?: string; message?: string };
+      if (body.error === 'cognitive_quota_reached') {
+        callbacks.onError('QUOTA_EXCEEDED', 'QUOTA');
+      } else {
+        callbacks.onError('Atlas is momentarily overloaded. Please try again in a few seconds.', 'RATE_LIMIT');
+      }
+    } else {
+      callbacks.onError(`Server error ${response.status}`, 'SERVER_ERROR');
+    }
+    return;
+  }
+
+  const reader = response.body?.getReader();
+  if (!reader) {
+    callbacks.onError('No response stream', 'SERVER_ERROR');
+    return;
+  }
+
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let fullText = '';
+  let startTime = Date.now();
+  let totalTokens = 0;
+
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      const parts = buffer.split('\n\n');
+      buffer = parts.pop() ?? '';
+
+      for (const part of parts) {
+        const lines = part.split('\n');
+        let eventType = 'message';
+        let dataStr = '';
+
+        for (const line of lines) {
+          if (line.startsWith('event: ')) eventType = line.slice(7).trim();
+          else if (line.startsWith('data: ')) dataStr = line.slice(6).trim();
+        }
+
+        if (!dataStr) continue;
+
+        let payload: Record<string, unknown>;
+        try {
+          payload = JSON.parse(dataStr) as Record<string, unknown>;
+        } catch {
+          continue;
+        }
+
+        if (eventType === 'delta' && typeof payload.text === 'string') {
+          fullText += payload.text;
+          callbacks.onToken(payload.text);
+        } else if (eventType === 'done') {
+          const tokens = typeof payload.tokens === 'number' ? payload.tokens : undefined;
+          const duration = Date.now() - startTime;
+          callbacks.onDone(fullText, { tokens, duration });
+          return;
+        } else if (eventType === 'error') {
+          const msg = typeof payload.message === 'string' ? sanitizeAtlasError(payload.message) : 'Unknown server error';
+          const code = typeof payload.code === 'string' ? payload.code : 'SERVER_ERROR';
+          callbacks.onError(msg, code);
+          return;
+        } else if (
+          eventType === 'swarm_ticker' ||
+          eventType === 'status' ||
+          eventType === 'route' ||
+          eventType === 'routing' ||
+          eventType === 'heartbeat'
+        ) {
+          // Progress events prove the server is alive — reset the watchdog
+          callbacks.onProgress?.();
+        }
+      }
+    }
+
+    // Stream ended without a 'done' event — treat accumulated text as complete
+    if (fullText) {
+      callbacks.onDone(fullText, { duration: Date.now() - startTime });
+    } else {
+      callbacks.onError('Stream ended without a response.', 'SERVER_ERROR');
+    }
+  } catch (err: unknown) {
+    if (signal.aborted) {
+      callbacks.onError('Request was cancelled', 'ABORTED');
+    } else if (fullText) {
+      // Stream broke mid-way but we already have content — deliver it
+      // instead of replacing the visible partial response with an error.
+      callbacks.onDone(fullText, { duration: Date.now() - startTime });
+    } else {
+      callbacks.onError(err instanceof Error ? err.message : 'Stream read error', 'NETWORK');
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+// ── AUDIT FIX: P0-2 — Upgrade Modal with Stripe checkout integration ─────
+
+function UpgradeModal({ onClose }: { onClose: () => void }) {
+  const [loading, setLoading] = React.useState<'core' | 'sovereign' | null>(null);
+  const [error, setError] = React.useState<string | null>(null);
+
+  const handleCheckout = async (tier: 'core' | 'sovereign') => {
+    setLoading(tier);
+    setError(null);
+    try {
+      const res = await fetch(atlasApiUrl('/v1/billing/create-checkout-session'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ tier }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+        throw new Error((body as { error?: string }).error ?? `Checkout failed (${res.status})`);
+      }
+      const data = (await res.json()) as { url: string };
+      window.location.href = data.url; // AUDIT FIX: redirect to Stripe Checkout
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Checkout failed');
+      setLoading(null);
+    }
+  };
+
+  const btnBase: React.CSSProperties = {
+    flex: 1,
+    padding: '10px 16px',
+    borderRadius: '8px',
+    fontSize: '0.875rem',
+    fontWeight: 600,
+    cursor: 'pointer',
+    transition: 'opacity 0.15s',
+  };
+
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, zIndex: 9999,
+      background: 'rgba(0,0,0,0.75)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      backdropFilter: 'blur(4px)',
+    }}>
+      <div style={{
+        background: 'var(--atlas-void-surface, #0f1117)',
+        border: '1px solid rgba(201,162,39,0.3)',
+        borderRadius: '12px',
+        padding: '32px',
+        maxWidth: '420px',
+        width: '90%',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '16px',
+        boxShadow: '0 0 40px rgba(201,162,39,0.1)',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <span style={{ fontSize: '1.5rem' }}>&#9889;</span>
+          <h2 style={{ margin: 0, color: 'rgba(201,162,39,0.9)', fontSize: '1.1rem', fontWeight: 600 }}>
+            Daily Limit Reached
+          </h2>
+        </div>
+        <p style={{ margin: 0, color: 'rgba(226,232,240,0.7)', fontSize: '0.875rem', lineHeight: 1.6 }}>
+          You have used your 120 free chats for today. Your limit resets at midnight UTC.
+        </p>
+        <p style={{ margin: 0, color: 'rgba(226,232,240,0.5)', fontSize: '0.8rem', lineHeight: 1.6 }}>
+          Upgrade to <strong style={{ color: 'rgba(201,162,39,0.9)' }}>Atlas Core</strong> for 500 chats/day with GPT-5.4 access, or <strong style={{ color: 'rgba(201,162,39,0.9)' }}>Atlas Sovereign</strong> for unlimited chats and full model access.
+        </p>
+        {error && (
+          <p style={{ margin: 0, color: '#ef4444', fontSize: '0.8rem' }}>{error}</p>
+        )}
+        <div style={{ display: 'flex', gap: '10px', marginTop: '4px' }}>
+          <button
+            disabled={loading !== null}
+            onClick={() => handleCheckout('core')}
+            style={{
+              ...btnBase,
+              background: 'rgba(201,162,39,0.15)',
+              border: '1px solid rgba(201,162,39,0.4)',
+              color: 'rgba(201,162,39,0.9)',
+              opacity: loading !== null ? 0.6 : 1,
+            }}
+          >
+            {loading === 'core' ? 'Loading...' : 'Upgrade to Core'}
+          </button>
+          <button
+            disabled={loading !== null}
+            onClick={() => handleCheckout('sovereign')}
+            style={{
+              ...btnBase,
+              background: 'rgba(147,51,234,0.15)',
+              border: '1px solid rgba(147,51,234,0.4)',
+              color: 'rgba(147,51,234,0.9)',
+              opacity: loading !== null ? 0.6 : 1,
+            }}
+          >
+            {loading === 'sovereign' ? 'Loading...' : 'Upgrade to Sovereign'}
+          </button>
+        </div>
+        <button
+          onClick={onClose}
+          style={{
+            padding: '8px 16px',
+            background: 'transparent',
+            border: '1px solid rgba(226,232,240,0.15)',
+            borderRadius: '8px',
+            color: 'rgba(226,232,240,0.4)',
+            fontSize: '0.875rem',
+            cursor: 'pointer',
+          }}
+        >
+          Dismiss
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ── Main Chamber ──────────────────────────────────────────────────────────
 
 export default function AtlasChamber() {
@@ -277,16 +493,14 @@ export default function AtlasChamber() {
   const [inputValue, setInputValue] = useState('');
   const [thinkingState, setThinkingState] = useState<ThinkingState>(null);
   const [isStreaming, setIsStreaming] = useState(false);
+  const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const thinkingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const request = useChatRequestState();
 
-  // Restore conversation history from persisted store on mount
   useEffect(() => {
-    const activeConv = store.conversations.find(
-      (c) => c.id === store.activeConversationId
-    );
+    const activeConv = store.conversations.find((c) => c.id === store.activeConversationId);
     if (activeConv && activeConv.messages && activeConv.messages.length > 0) {
       setMessages(
         activeConv.messages.map((m) => ({
@@ -298,22 +512,13 @@ export default function AtlasChamber() {
           error: m.error,
           tokens: m.tokens,
           durationMs: m.durationMs,
-        }))
+        })),
       );
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Scroll to bottom on new messages
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
-
-  // Auto-focus input
-  useEffect(() => {
-    inputRef.current?.focus();
-  }, []);
-
-  // Cleanup watchdog and thinking interval on unmount
+  useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
+  useEffect(() => { inputRef.current?.focus(); }, []);
   useEffect(() => {
     return () => {
       request.clearWatchdog();
@@ -321,40 +526,22 @@ export default function AtlasChamber() {
     };
   }, [request]);
 
-  // Build conversation history for Ollama context
-  const buildMessageHistory = useCallback((): OllamaMessage[] => {
+  const buildMessageHistory = useCallback((): { role: string; content: string }[] => {
     const systemPrompt = buildAtlasSystemPrompt(store);
-    const history: OllamaMessage[] = [
-      { role: 'system', content: systemPrompt },
-    ];
-
-    // Include last N messages for context
+    const history: { role: string; content: string }[] = [{ role: 'system', content: systemPrompt }];
     const contextWindow = messages.slice(-20);
     for (const msg of contextWindow) {
       if (!msg.isStreaming && !msg.error && msg.content) {
         history.push({ role: msg.role, content: msg.content });
       }
     }
-
     return history;
   }, [store, messages]);
 
-  // Helper: finalize the assistant message in a terminal state
-  const finalizeMessage = useCallback(
-    (
-      assistantMsgId: string,
-      patch: Partial<ChatMessage>,
-    ) => {
-      setMessages((prev) =>
-        prev.map((m) =>
-          m.id === assistantMsgId ? { ...m, ...patch, isStreaming: false } : m,
-        ),
-      );
-    },
-    [],
-  );
+  const finalizeMessage = useCallback((assistantMsgId: string, patch: Partial<ChatMessage>) => {
+    setMessages((prev) => prev.map((m) => m.id === assistantMsgId ? { ...m, ...patch, isStreaming: false } : m));
+  }, []);
 
-  // Debounced persistence for streaming tokens: write to store at most every 500ms
   const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingContentRef = useRef<string>('');
 
@@ -362,66 +549,30 @@ export default function AtlasChamber() {
     const text = inputValue.trim();
     if (!text) return;
 
-    // If already in flight, abort the old request first (prevents concurrency corruption)
     if (request.stateRef.current.status === 'submitting' || request.stateRef.current.status === 'streaming') {
       request.abortCurrent();
-      // Mark the old assistant message as aborted
       const oldId = request.stateRef.current.assistantMsgId;
-      if (oldId) {
-        finalizeMessage(oldId, { requestStatus: 'aborted' });
-      }
+      if (oldId) finalizeMessage(oldId, { requestStatus: 'aborted' });
     }
 
     const userMsgId = generateId();
     const assistantMsgId = generateId();
 
-    const userMessage: ChatMessage = {
-      id: userMsgId,
-      role: 'user',
-      content: text,
-      timestamp: nowISO(),
-    };
-
-    const assistantMessage: ChatMessage = {
-      id: assistantMsgId,
-      role: 'assistant',
-      content: '',
-      timestamp: nowISO(),
-      isStreaming: true,
-      requestStatus: 'submitting',
-    };
+    const userMessage: ChatMessage = { id: userMsgId, role: 'user', content: text, timestamp: nowISO() };
+    const assistantMessage: ChatMessage = { id: assistantMsgId, role: 'assistant', content: '', timestamp: nowISO(), isStreaming: true, requestStatus: 'submitting' };
 
     setInputValue('');
     setMessages((prev) => [...prev, userMessage, assistantMessage]);
     setIsStreaming(true);
 
-    // Ensure a conversation thread exists for persistence
     let convId = store.activeConversationId;
-    if (!convId) {
-      convId = store.createConversation();
-    }
-    // Persist user message immediately
-    store.addConversationMessage(convId, {
-      id: userMsgId,
-      role: 'user',
-      content: text,
-      timestamp: nowISO(),
-    });
-    // Persist assistant placeholder
-    store.addConversationMessage(convId, {
-      id: assistantMsgId,
-      role: 'assistant',
-      content: '',
-      timestamp: nowISO(),
-      requestStatus: 'submitting',
-    });
+    if (!convId) convId = store.createConversation();
+    store.addConversationMessage(convId, { id: userMsgId, role: 'user', content: text, timestamp: nowISO() });
+    store.addConversationMessage(convId, { id: assistantMsgId, role: 'assistant', content: '', timestamp: nowISO(), requestStatus: 'submitting' });
 
     pendingContentRef.current = '';
-
-    // FSM: begin → submitting
     const controller = request.begin(assistantMsgId);
 
-    // Cycle thinking states for UX texture
     const thinkingStates: ThinkingState[] = ['RETRIEVING', 'WEIGHING CONTRADICTIONS', 'SYNTHESIZING'];
     let thinkingIdx = 0;
     setThinkingState(thinkingStates[0]);
@@ -432,62 +583,40 @@ export default function AtlasChamber() {
     }, 1800);
 
     const cleanupThinking = () => {
-      if (thinkingIntervalRef.current) {
-        clearInterval(thinkingIntervalRef.current);
-        thinkingIntervalRef.current = null;
-      }
+      if (thinkingIntervalRef.current) { clearInterval(thinkingIntervalRef.current); thinkingIntervalRef.current = null; }
       setThinkingState(null);
     };
 
-    // Watchdog timeout handler — fires if 30s pass with no token
     const handleWatchdogTimeout = () => {
       controller.abort();
       cleanupThinking();
       setIsStreaming(false);
       request.transition('timed_out');
-      finalizeMessage(assistantMsgId, {
-        requestStatus: 'timed_out',
-        error: 'Request timed out — no response received within 30 seconds.',
-      });
+      finalizeMessage(assistantMsgId, { requestStatus: 'timed_out', error: 'Request timed out — no response received. Please try again.' });
     };
 
-    // Start watchdog
-    request.startWatchdog(handleWatchdogTimeout);
+    request.startInitialWatchdog(handleWatchdogTimeout);
 
     const history = buildMessageHistory();
     history.push({ role: 'user', content: text });
 
-    // Schedule a debounced write of partial content to the store
+    const userId = store.currentUser?.uid ?? store.currentUser?.email ?? 'anonymous';
+    const posture = store.activePosture.depth ?? 3;
+
     const flushToStore = (content: string) => {
-      if (convId) {
-        store.updateConversationMessage(convId, assistantMsgId, {
-          content,
-          requestStatus: 'streaming',
-        });
-      }
+      if (convId) store.updateConversationMessage(convId, assistantMsgId, { content, requestStatus: 'streaming' });
     };
 
-    try {
-      streamChat(history, {
+    await streamOmniChat(
+      history,
+      userId,
+      posture,
+      {
         onToken: (token) => {
-          // FSM: submitting → streaming (on first token)
-          if (request.stateRef.current.status === 'submitting') {
-            request.transition('streaming');
-          }
-          // Reset watchdog on each token
+          if (request.stateRef.current.status === 'submitting') request.transition('streaming');
           request.resetWatchdog(handleWatchdogTimeout);
-
           pendingContentRef.current += token;
-
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.id === assistantMsgId
-                ? { ...m, content: m.content + token, requestStatus: 'streaming' }
-                : m,
-            ),
-          );
-
-          // Debounced persistence: write partial content every 500ms
+          setMessages((prev) => prev.map((m) => m.id === assistantMsgId ? { ...m, content: m.content + token, requestStatus: 'streaming' } : m));
           if (!persistTimerRef.current) {
             persistTimerRef.current = setTimeout(() => {
               persistTimerRef.current = null;
@@ -496,171 +625,90 @@ export default function AtlasChamber() {
           }
         },
         onDone: (fullText, metrics) => {
-          if (persistTimerRef.current) {
-            clearTimeout(persistTimerRef.current);
-            persistTimerRef.current = null;
-          }
+          if (persistTimerRef.current) { clearTimeout(persistTimerRef.current); persistTimerRef.current = null; }
           cleanupThinking();
           setIsStreaming(false);
           request.transition('completed');
-          finalizeMessage(assistantMsgId, {
-            content: fullText,
-            requestStatus: 'completed',
-            tokens: metrics?.tokens,
-            durationMs: metrics?.duration,
-          });
+          finalizeMessage(assistantMsgId, { content: fullText, requestStatus: 'completed', tokens: metrics?.tokens, durationMs: metrics?.duration });
+          if (convId) store.updateConversationMessage(convId, assistantMsgId, { content: fullText, requestStatus: 'completed', tokens: metrics?.tokens, durationMs: metrics?.duration });
 
-          // Persist final state
-          if (convId) {
-            store.updateConversationMessage(convId, assistantMsgId, {
-              content: fullText,
-              requestStatus: 'completed',
-              tokens: metrics?.tokens,
-              durationMs: metrics?.duration,
-            });
-          }
-
-          // Record in store's recent questions
           const question: UserQuestion = {
             id: userMsgId,
             text,
             timestamp: nowISO(),
-            analysis: {
-              style: 'diagnostic' as InquiryStyle,
-              depth: store.activePosture.depth,
-              dimensions: {},
-            },
-            response: {
-              synthesis: fullText,
-              latentPatterns: [],
-              strategicImplications: [],
-              suggestedChambers: [],
-              epistemicStatus: 'inference',
-              cognitiveSignatureImpact: '',
-            },
+            analysis: { style: 'diagnostic' as InquiryStyle, depth: store.activePosture.depth, dimensions: {} },
+            response: { synthesis: fullText, latentPatterns: [], strategicImplications: [], suggestedChambers: [], epistemicStatus: 'inference', cognitiveSignatureImpact: '' },
           };
           store.addQuestion(question);
 
-          // Wire resonance observations from completed responses
           if (store.resonance?.isLearning !== false) {
-            store.addResonanceObservation({
-              timestamp: nowISO(),
-              signal: fullText.slice(0, 200),
-              dimension: 'inquiry',
-              strength: 0.5,
-              context: text.slice(0, 100),
-              sessionId: convId ?? undefined,
-            });
-
-            store.addResonanceGraphNode({
-              label: text.slice(0, 40),
-              type: 'concept',
-              weight: 1,
-            });
+            store.addResonanceObservation({ timestamp: nowISO(), signal: fullText.slice(0, 200), dimension: 'inquiry', strength: 0.5, context: text.slice(0, 100), sessionId: convId ?? undefined });
+            store.addResonanceGraphNode({ label: text.slice(0, 40), type: 'concept', weight: 1 });
           }
         },
-        onError: (err: OllamaError) => {
-          if (persistTimerRef.current) {
-            clearTimeout(persistTimerRef.current);
-            persistTimerRef.current = null;
-          }
+        onProgress: () => {
+          // Server is alive (swarm_ticker, status, route, etc.) — reset the
+          // watchdog so silent swarm steps don't trip the client timeout.
+          request.resetWatchdog(handleWatchdogTimeout);
+        },
+        onError: (message, code) => {
+          if (persistTimerRef.current) { clearTimeout(persistTimerRef.current); persistTimerRef.current = null; }
           cleanupThinking();
           setIsStreaming(false);
 
-          if (err.code === 'ABORTED') {
+          if (code === 'ABORTED') {
             request.transition('aborted');
             finalizeMessage(assistantMsgId, { requestStatus: 'aborted' });
-            if (convId) {
-              store.updateConversationMessage(convId, assistantMsgId, {
-                content: pendingContentRef.current,
-                requestStatus: 'aborted',
-              });
-            }
+            if (convId) store.updateConversationMessage(convId, assistantMsgId, { content: pendingContentRef.current, requestStatus: 'aborted' });
             return;
           }
 
-          if (err.code === 'TIMEOUT') {
+          if (code === 'TIMEOUT') {
             request.transition('timed_out');
-            finalizeMessage(assistantMsgId, {
-              requestStatus: 'timed_out',
-              error: 'Request timed out.',
-              content: '',
-            });
-            if (convId) {
-              store.updateConversationMessage(convId, assistantMsgId, {
-                requestStatus: 'timed_out',
-                error: 'Request timed out.',
-              });
-            }
+            finalizeMessage(assistantMsgId, { requestStatus: 'timed_out', error: 'Request timed out.', content: '' });
+            if (convId) store.updateConversationMessage(convId, assistantMsgId, { requestStatus: 'timed_out', error: 'Request timed out.' });
+            return;
+          }
+
+          if (code === 'QUOTA') {
+            setShowUpgradeModal(true);
+            // Still set the message as failed so the chat state is clean
+            finalizeMessage(assistantMsgId, { requestStatus: 'failed', error: '', content: '' });
+            if (convId) store.updateConversationMessage(convId, assistantMsgId, { requestStatus: 'failed', error: '' });
             return;
           }
 
           request.transition('failed');
-
-          let errorMsg = err.message;
-          if (err.code === 'NETWORK') {
-            errorMsg = 'Cannot reach the local model. Make sure Ollama is running: `ollama serve`';
-          } else if (err.code === 'MODEL_NOT_FOUND') {
-            errorMsg = `Model not found. Pull it with: ollama pull ${process.env.OLLAMA_MODEL ?? 'llama3.1:70b'}`;
-          }
-
-          finalizeMessage(assistantMsgId, {
-            requestStatus: 'failed',
-            error: errorMsg,
-            content: '',
-          });
-          if (convId) {
-            store.updateConversationMessage(convId, assistantMsgId, {
-              requestStatus: 'failed',
-              error: errorMsg,
-              content: '',
-            });
+          // If tokens already streamed, preserve accumulated content instead
+          // of wiping it with an error.  The user was reading a partial
+          // response — replacing it with "overloaded" is worse than showing
+          // what we have plus a non-destructive error note.
+          const hasPartial = pendingContentRef.current.length > 0;
+          if (hasPartial) {
+            finalizeMessage(assistantMsgId, { requestStatus: 'completed', content: pendingContentRef.current });
+            if (convId) store.updateConversationMessage(convId, assistantMsgId, { requestStatus: 'completed', content: pendingContentRef.current });
+          } else {
+            finalizeMessage(assistantMsgId, { requestStatus: 'failed', error: message, content: '' });
+            if (convId) store.updateConversationMessage(convId, assistantMsgId, { requestStatus: 'failed', error: message, content: '' });
           }
         },
-      });
-    } catch {
-      // Catch any synchronous throw from streamChat setup
-      cleanupThinking();
-      setIsStreaming(false);
-      request.transition('failed');
-      finalizeMessage(assistantMsgId, {
-        requestStatus: 'failed',
-        error: 'Unexpected error starting chat request.',
-        content: '',
-      });
-      if (convId) {
-        store.updateConversationMessage(convId, assistantMsgId, {
-          requestStatus: 'failed',
-          error: 'Unexpected error starting chat request.',
-          content: '',
-        });
-      }
-    }
+      },
+      controller.signal,
+    );
   }, [inputValue, buildMessageHistory, store, request, finalizeMessage]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      void handleSubmit();
-    }
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void handleSubmit(); }
   };
 
   const handleAbort = () => {
     request.abortCurrent();
     setIsStreaming(false);
     setThinkingState(null);
-    if (thinkingIntervalRef.current) {
-      clearInterval(thinkingIntervalRef.current);
-      thinkingIntervalRef.current = null;
-    }
-    setMessages((prev) =>
-      prev.map((m) =>
-        m.isStreaming ? { ...m, isStreaming: false, requestStatus: 'aborted' as ChatRequestStatus } : m,
-      ),
-    );
+    if (thinkingIntervalRef.current) { clearInterval(thinkingIntervalRef.current); thinkingIntervalRef.current = null; }
+    setMessages((prev) => prev.map((m) => m.isStreaming ? { ...m, isStreaming: false, requestStatus: 'aborted' as ChatRequestStatus } : m));
   };
 
-  // Auto-resize textarea
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setInputValue(e.target.value);
     const el = e.target;
@@ -671,95 +719,23 @@ export default function AtlasChamber() {
   const hasMessages = messages.length > 0;
 
   return (
-    <div
-      style={{
-        flex: 1,
-        display: 'flex',
-        flexDirection: 'column',
-        height: '100%',
-        overflow: 'hidden',
-        position: 'relative',
-      }}
-    >
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden', position: 'relative' }}>
       {/* Messages area */}
-      <div
-        style={{
-          flex: 1,
-          overflowY: 'auto',
-          padding: hasMessages ? '32px 40px 24px' : 0,
-          display: 'flex',
-          flexDirection: 'column',
-        }}
-      >
+      <div style={{ flex: 1, overflowY: 'auto', padding: hasMessages ? '32px 40px 24px' : 0, display: 'flex', flexDirection: 'column' }}>
         {!hasMessages ? (
-          // Empty state
-          <div
-            style={{
-              flex: 1,
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              justifyContent: 'center',
-              padding: '0 40px',
-              gap: 24,
-              animation: 'atlas-fade-in 400ms ease both',
-            }}
-          >
-            {/* Sigil */}
-            <div
-              style={{
-                width: 72,
-                height: 72,
-                borderRadius: '50%',
-                border: '1.5px solid rgba(201,162,39,0.3)',
-                background: 'radial-gradient(circle, rgba(88,28,135,0.2) 0%, transparent 70%)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                boxShadow: '0 0 40px -8px rgba(88,28,135,0.3)',
-              }}
-            >
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '0 40px', gap: 24, animation: 'atlas-fade-in 400ms ease both' }}>
+            <div style={{ width: 72, height: 72, borderRadius: '50%', border: '1.5px solid rgba(201,162,39,0.3)', background: 'radial-gradient(circle, rgba(88,28,135,0.2) 0%, transparent 70%)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 0 40px -8px rgba(88,28,135,0.3)' }}>
               <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="rgba(201,162,39,0.7)" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M12 2L2 7v10l10 5 10-5V7L12 2z" />
                 <path d="M12 22V12" />
                 <path d="M2 7l10 5 10-5" />
               </svg>
             </div>
-
             <div style={{ textAlign: 'center', maxWidth: 480 }}>
-              <h1
-                style={{
-                  fontSize: '1.4rem',
-                  fontWeight: 400,
-                  letterSpacing: '-0.03em',
-                  color: 'rgba(226,232,240,0.9)',
-                  margin: '0 0 10px',
-                }}
-              >
-                What requires your attention?
-              </h1>
-              <p
-                style={{
-                  fontSize: '0.875rem',
-                  color: 'rgba(226,232,240,0.35)',
-                  margin: 0,
-                  lineHeight: 1.7,
-                }}
-              >
-                Ask anything. Think through anything. Atlas responds with depth calibrated to your posture.
-              </p>
+              <h1 style={{ fontSize: '1.4rem', fontWeight: 400, letterSpacing: '-0.03em', color: 'rgba(226,232,240,0.9)', margin: '0 0 10px' }}>What requires your attention?</h1>
+              <p style={{ fontSize: '0.875rem', color: 'rgba(226,232,240,0.35)', margin: 0, lineHeight: 1.7 }}>Ask anything. Think through anything. Atlas responds with depth calibrated to your posture.</p>
             </div>
-
-            {/* Suggested entry points */}
-            <div
-              style={{
-                display: 'flex',
-                flexWrap: 'wrap',
-                gap: 8,
-                justifyContent: 'center',
-                maxWidth: 560,
-              }}
-            >
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, justifyContent: 'center', maxWidth: 560 }}>
               {[
                 'What should I be thinking about right now?',
                 'Help me stress-test a belief I hold.',
@@ -767,353 +743,109 @@ export default function AtlasChamber() {
                 'Map the system I\'m operating inside.',
                 'What am I not seeing clearly?',
               ].map((prompt) => (
-                <button
-                  key={prompt}
-                  onClick={() => {
-                    setInputValue(prompt);
-                    inputRef.current?.focus();
-                  }}
-                  style={{
-                    background: 'rgba(15,10,30,0.5)',
-                    border: '1px solid rgba(88,28,135,0.2)',
-                    borderRadius: 6,
-                    padding: '7px 12px',
-                    color: 'rgba(226,232,240,0.45)',
-                    fontSize: '0.77rem',
-                    cursor: 'pointer',
-                    transition: 'all 140ms ease',
-                    textAlign: 'left',
-                  }}
-                  onMouseEnter={(e) => {
-                    (e.target as HTMLButtonElement).style.borderColor = 'rgba(201,162,39,0.3)';
-                    (e.target as HTMLButtonElement).style.color = 'rgba(226,232,240,0.7)';
-                    (e.target as HTMLButtonElement).style.background = 'rgba(88,28,135,0.1)';
-                  }}
-                  onMouseLeave={(e) => {
-                    (e.target as HTMLButtonElement).style.borderColor = 'rgba(88,28,135,0.2)';
-                    (e.target as HTMLButtonElement).style.color = 'rgba(226,232,240,0.45)';
-                    (e.target as HTMLButtonElement).style.background = 'rgba(15,10,30,0.5)';
-                  }}
-                >
+                <button key={prompt} onClick={() => { setInputValue(prompt); inputRef.current?.focus(); }}
+                  style={{ background: 'rgba(15,10,30,0.5)', border: '1px solid rgba(88,28,135,0.2)', borderRadius: 6, padding: '7px 12px', color: 'rgba(226,232,240,0.45)', fontSize: '0.77rem', cursor: 'pointer', transition: 'all 140ms ease', textAlign: 'left' }}
+                  onMouseEnter={(e) => { (e.target as HTMLButtonElement).style.borderColor = 'rgba(201,162,39,0.3)'; (e.target as HTMLButtonElement).style.color = 'rgba(226,232,240,0.7)'; (e.target as HTMLButtonElement).style.background = 'rgba(88,28,135,0.1)'; }}
+                  onMouseLeave={(e) => { (e.target as HTMLButtonElement).style.borderColor = 'rgba(88,28,135,0.2)'; (e.target as HTMLButtonElement).style.color = 'rgba(226,232,240,0.45)'; (e.target as HTMLButtonElement).style.background = 'rgba(15,10,30,0.5)'; }}>
                   {prompt}
                 </button>
               ))}
             </div>
-
-            {/* Recent sessions */}
             {store.conversations.length > 0 && (
               <div style={{ marginTop: 32, width: '100%', maxWidth: 560 }}>
-                <p
-                  style={{
-                    fontSize: '0.6rem',
-                    color: 'rgba(226,232,240,0.2)',
-                    letterSpacing: '0.12em',
-                    textTransform: 'uppercase',
-                    fontWeight: 600,
-                    marginBottom: 10,
-                  }}
-                >
-                  Recent Sessions
-                </p>
+                <p style={{ fontSize: '0.6rem', color: 'rgba(226,232,240,0.2)', letterSpacing: '0.12em', textTransform: 'uppercase', fontWeight: 600, marginBottom: 10 }}>Recent Sessions</p>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  {[...store.conversations]
-                    .sort(
-                      (a, b) =>
-                        new Date(b.updatedAt ?? b.createdAt).getTime() -
-                        new Date(a.updatedAt ?? a.createdAt).getTime(),
-                    )
-                    .slice(0, 5)
-                    .map((conv) => (
-                      <button
-                        key={conv.id}
-                        onClick={() => {
-                          store.setActiveConversationId(conv.id);
-                          setMessages(
-                            conv.messages.map((m) => ({
-                              id: m.id,
-                              role: m.role as 'user' | 'assistant',
-                              content: m.content,
-                              timestamp: m.timestamp,
-                              requestStatus: (m.requestStatus ?? 'completed') as ChatRequestStatus,
-                              error: m.error,
-                              tokens: m.tokens,
-                              durationMs: m.durationMs,
-                            })),
-                          );
-                        }}
-                        style={{
-                          width: '100%',
-                          textAlign: 'left',
-                          padding: '10px 14px',
-                          borderRadius: 6,
-                          background: 'rgba(15,10,30,0.5)',
-                          border: '1px solid rgba(88,28,135,0.15)',
-                          cursor: 'pointer',
-                          transition: 'all 140ms ease',
-                        }}
-                        onMouseEnter={(e) => {
-                          (e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(201,162,39,0.25)';
-                          (e.currentTarget as HTMLButtonElement).style.background = 'rgba(88,28,135,0.08)';
-                        }}
-                        onMouseLeave={(e) => {
-                          (e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(88,28,135,0.15)';
-                          (e.currentTarget as HTMLButtonElement).style.background = 'rgba(15,10,30,0.5)';
-                        }}
-                      >
-                        <p
-                          style={{
-                            fontSize: '0.8rem',
-                            color: 'rgba(226,232,240,0.55)',
-                            margin: 0,
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            whiteSpace: 'nowrap',
-                          }}
-                        >
-                          {conv.messages[0]?.content?.slice(0, 80) ?? 'Untitled session'}
-                        </p>
-                        <p
-                          style={{
-                            fontSize: '0.6rem',
-                            color: 'rgba(226,232,240,0.2)',
-                            margin: '4px 0 0',
-                          }}
-                        >
-                          {conv.messages.length} messages
-                        </p>
-                      </button>
-                    ))}
+                  {[...store.conversations].sort((a, b) => new Date(b.updatedAt ?? b.createdAt).getTime() - new Date(a.updatedAt ?? a.createdAt).getTime()).slice(0, 5).map((conv) => (
+                    <button key={conv.id} onClick={() => { store.setActiveConversationId(conv.id); setMessages(conv.messages.map((m) => ({ id: m.id, role: m.role as 'user' | 'assistant', content: m.content, timestamp: m.timestamp, requestStatus: (m.requestStatus ?? 'completed') as ChatRequestStatus, error: m.error, tokens: m.tokens, durationMs: m.durationMs }))); }}
+                      style={{ width: '100%', textAlign: 'left', padding: '10px 14px', borderRadius: 6, background: 'rgba(15,10,30,0.5)', border: '1px solid rgba(88,28,135,0.15)', cursor: 'pointer', transition: 'all 140ms ease' }}
+                      onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(201,162,39,0.25)'; (e.currentTarget as HTMLButtonElement).style.background = 'rgba(88,28,135,0.08)'; }}
+                      onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(88,28,135,0.15)'; (e.currentTarget as HTMLButtonElement).style.background = 'rgba(15,10,30,0.5)'; }}>
+                      <div style={{ fontSize: '0.75rem', color: 'rgba(226,232,240,0.6)', marginBottom: 3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {conv.messages.find((m) => m.role === 'user')?.content?.slice(0, 80) ?? 'Session'}
+                      </div>
+                      <div style={{ fontSize: '0.62rem', color: 'rgba(226,232,240,0.22)' }}>
+                        {new Date(conv.updatedAt ?? conv.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                        {conv.messages.length > 0 && <> · {Math.floor(conv.messages.length / 2)} exchanges</>}
+                      </div>
+                    </button>
+                  ))}
                 </div>
               </div>
             )}
           </div>
         ) : (
           <>
-            <div style={{ maxWidth: 'var(--atlas-workspace-max)', width: '100%', margin: '0 auto' }}>
-              {messages.map((msg, i) => (
-                <MessageBubble key={msg.id} msg={msg} isLast={i === messages.length - 1} />
-              ))}
-            </div>
+            {messages.map((msg, i) => (
+              <MessageBubble key={msg.id} msg={msg} isLast={i === messages.length - 1} />
+            ))}
+            {thinkingState && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16, paddingLeft: 28, animation: 'atlas-fade-in 200ms ease both' }}>
+                <div style={{ display: 'flex', gap: 4 }}>
+                  {[0, 1, 2].map((i) => (
+                    <div key={i} style={{ width: 4, height: 4, borderRadius: '50%', background: 'rgba(201,162,39,0.5)', animation: `atlas-pulse 1.2s ease ${i * 0.2}s infinite` }} />
+                  ))}
+                </div>
+                <span style={{ fontSize: '0.62rem', color: 'rgba(226,232,240,0.25)', letterSpacing: '0.1em', textTransform: 'uppercase', fontWeight: 600 }}>
+                  {thinkingState}
+                </span>
+              </div>
+            )}
             <div ref={messagesEndRef} />
           </>
         )}
       </div>
 
-      {/* Thinking indicator */}
-      {thinkingState && (
-        <div
-          style={{
-            position: 'absolute',
-            bottom: 120,
-            left: '50%',
-            transform: 'translateX(-50%)',
-            background: 'rgba(15,10,30,0.85)',
-            border: '1px solid rgba(88,28,135,0.25)',
-            borderRadius: 20,
-            padding: '5px 14px',
-            fontSize: '0.6rem',
-            fontWeight: 600,
-            letterSpacing: '0.1em',
-            color: 'rgba(201,162,39,0.7)',
-            textTransform: 'uppercase',
-            backdropFilter: 'blur(8px)',
-            animation: 'atlas-pulse-slow 1.5s ease infinite',
-            pointerEvents: 'none',
-            whiteSpace: 'nowrap',
-          }}
-        >
-          {thinkingState}
-        </div>
-      )}
-
       {/* Input area */}
-      <div
-        style={{
-          borderTop: '1px solid var(--border-structural)',
-          background: 'var(--atlas-surface-shell)',
-          backdropFilter: 'blur(12px)',
-          padding: '16px 40px 20px',
-          flexShrink: 0,
-        }}
-      >
-        <div
-          style={{
-            maxWidth: 'var(--atlas-workspace-max)',
-            margin: '0 auto',
-          }}
-        >
-          {/* Depth + controls row */}
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              marginBottom: 10,
-            }}
-          >
-            <DepthControl />
-
-            {messages.length > 0 && (
-              <button
-                onClick={() => setMessages([])}
-                style={{
-                  background: 'transparent',
-                  border: 'none',
-                  color: 'rgba(226,232,240,0.2)',
-                  fontSize: '0.65rem',
-                  letterSpacing: '0.08em',
-                  cursor: 'pointer',
-                  padding: '3px 6px',
-                  borderRadius: 3,
-                  transition: 'color 140ms ease',
-                }}
-                onMouseEnter={(e) => { (e.target as HTMLButtonElement).style.color = 'rgba(226,232,240,0.45)'; }}
-                onMouseLeave={(e) => { (e.target as HTMLButtonElement).style.color = 'rgba(226,232,240,0.2)'; }}
-              >
-                CLEAR
-              </button>
-            )}
-          </div>
-
-          {/* Input row */}
-          <div
-            style={{
-              display: 'flex',
-              gap: 12,
-              alignItems: 'flex-end',
-            }}
-          >
-            <div
-              style={{
-                flex: 1,
-                background: 'var(--atlas-surface-inset)',
-                border: '1px solid var(--border-default)',
-                borderRadius: 'var(--radius-md)',
-                transition: 'border-color 140ms ease, box-shadow 140ms ease',
-                position: 'relative',
-              }}
-              onFocusCapture={(e) => {
-                (e.currentTarget as HTMLDivElement).style.borderColor = 'rgba(201,162,39,0.3)';
-                (e.currentTarget as HTMLDivElement).style.boxShadow = '0 0 0 2px rgba(201,162,39,0.08)';
-              }}
-              onBlurCapture={(e) => {
-                (e.currentTarget as HTMLDivElement).style.borderColor = 'var(--border-default)';
-                (e.currentTarget as HTMLDivElement).style.boxShadow = 'none';
-              }}
-            >
-              <textarea
-                ref={inputRef}
-                value={inputValue}
-                onChange={handleInputChange}
-                onKeyDown={handleKeyDown}
-                placeholder="Ask Atlas anything…"
-                rows={1}
-                disabled={false}
-                style={{
-                  width: '100%',
-                  background: 'transparent',
-                  border: 'none',
-                  outline: 'none',
-                  resize: 'none',
-                  padding: '12px 14px',
-                  color: 'rgba(226,232,240,0.9)',
-                  fontSize: '0.875rem',
-                  lineHeight: 1.6,
-                  fontFamily: 'inherit',
-                  minHeight: 44,
-                  maxHeight: 220,
-                  overflow: 'auto',
-                }}
-                // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-                // @ts-ignore — placeholder color via CSS
-                className="atlas-textarea"
-              />
+      <div style={{ padding: '0 40px 32px', flexShrink: 0 }}>
+        {hasMessages && (
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, paddingLeft: 2 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <DepthControl />
+              <ModelSelector onUpgradeClick={() => setShowUpgradeModal(true)} compact />
             </div>
-
-            {/* Send / Stop button */}
-            {isStreaming ? (
-              <button
-                onClick={handleAbort}
-                title="Stop generation"
-                style={{
-                  width: 44,
-                  height: 44,
-                  borderRadius: 8,
-                  background: 'rgba(239,68,68,0.12)',
-                  border: '1px solid rgba(239,68,68,0.3)',
-                  color: 'rgba(239,68,68,0.8)',
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  flexShrink: 0,
-                  transition: 'all 140ms ease',
-                }}
-              >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-                  <rect x="6" y="6" width="12" height="12" rx="2" />
-                </svg>
-              </button>
-            ) : (
-              <button
-                onClick={() => void handleSubmit()}
-                disabled={!inputValue.trim()}
-                title="Send (Enter)"
-                style={{
-                  width: 44,
-                  height: 44,
-                  borderRadius: 8,
-                  background: inputValue.trim()
-                    ? 'rgba(201,162,39,0.15)'
-                    : 'transparent',
-                  border: '1px solid',
-                  borderColor: inputValue.trim()
-                    ? 'rgba(201,162,39,0.4)'
-                    : 'rgba(88,28,135,0.2)',
-                  color: inputValue.trim()
-                    ? 'rgba(201,162,39,0.9)'
-                    : 'rgba(226,232,240,0.2)',
-                  cursor: inputValue.trim() ? 'pointer' : 'not-allowed',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  flexShrink: 0,
-                  transition: 'all 140ms ease',
-                }}
-              >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M22 2L11 13" />
-                  <path d="M22 2L15 22l-4-9-9-4 20-7z" />
-                </svg>
+            {isStreaming && (
+              <button onClick={handleAbort} style={{ background: 'transparent', border: '1px solid rgba(239,68,68,0.25)', borderRadius: 5, padding: '3px 10px', color: 'rgba(239,68,68,0.5)', fontSize: '0.65rem', cursor: 'pointer', fontFamily: 'inherit', letterSpacing: '0.06em', transition: 'all 140ms ease' }}
+                onMouseEnter={(e) => { (e.target as HTMLButtonElement).style.borderColor = 'rgba(239,68,68,0.5)'; (e.target as HTMLButtonElement).style.color = 'rgba(239,68,68,0.8)'; }}
+                onMouseLeave={(e) => { (e.target as HTMLButtonElement).style.borderColor = 'rgba(239,68,68,0.25)'; (e.target as HTMLButtonElement).style.color = 'rgba(239,68,68,0.5)'; }}>
+                STOP
               </button>
             )}
           </div>
-
-          {/* Footer hint */}
-          <div
-            style={{
-              marginTop: 8,
-              display: 'flex',
-              gap: 16,
-              alignItems: 'center',
-            }}
-          >
-            <span style={{ fontSize: '0.6rem', color: 'rgba(226,232,240,0.18)', letterSpacing: '0.06em' }}>
-              Enter to send · Shift+Enter for newline
-            </span>
-          </div>
+        )}
+        <div style={{ position: 'relative', background: 'rgba(10,7,20,0.7)', border: '1px solid rgba(88,28,135,0.2)', borderRadius: 10, transition: 'border-color 200ms ease' }}
+          onFocusCapture={(e) => { (e.currentTarget as HTMLDivElement).style.borderColor = 'rgba(88,28,135,0.45)'; }}
+          onBlurCapture={(e) => { (e.currentTarget as HTMLDivElement).style.borderColor = 'rgba(88,28,135,0.2)'; }}>
+          <textarea
+            ref={inputRef}
+            value={inputValue}
+            onChange={handleInputChange}
+            onKeyDown={handleKeyDown}
+            placeholder="Ask Atlas anything…"
+            rows={1}
+            style={{ width: '100%', background: 'transparent', border: 'none', outline: 'none', resize: 'none', padding: '14px 52px 14px 16px', color: 'rgba(226,232,240,0.9)', fontSize: '0.875rem', fontFamily: 'inherit', lineHeight: 1.65, minHeight: 52, maxHeight: 220, boxSizing: 'border-box' }}
+          />
+          <button
+            onClick={() => void handleSubmit()}
+            disabled={!inputValue.trim() || isStreaming}
+            style={{ position: 'absolute', right: 10, bottom: 10, width: 32, height: 32, borderRadius: 7, background: inputValue.trim() && !isStreaming ? 'rgba(88,28,135,0.6)' : 'rgba(88,28,135,0.15)', border: '1px solid', borderColor: inputValue.trim() && !isStreaming ? 'rgba(88,28,135,0.8)' : 'rgba(88,28,135,0.2)', cursor: inputValue.trim() && !isStreaming ? 'pointer' : 'default', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 140ms ease' }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={inputValue.trim() && !isStreaming ? 'rgba(226,232,240,0.9)' : 'rgba(226,232,240,0.25)'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="22" y1="2" x2="11" y2="13" />
+              <polygon points="22 2 15 22 11 13 2 9 22 2" />
+            </svg>
+          </button>
         </div>
+        {!hasMessages && (
+          <div style={{ marginTop: 10, display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 10 }}>
+            <DepthControl />
+            <ModelSelector onUpgradeClick={() => setShowUpgradeModal(true)} compact />
+          </div>
+        )}
       </div>
 
-      {/* Textarea placeholder color */}
-      <style>{`
-        .atlas-textarea::placeholder {
-          color: rgba(226,232,240,0.2);
-        }
-        .atlas-textarea:focus {
-          outline: none;
-        }
-      `}</style>
+      {/* AUDIT FIX: P0-2 — Wire billing checkout flow via Stripe create-checkout-session */}
+      {showUpgradeModal && (
+        <UpgradeModal onClose={() => setShowUpgradeModal(false)} />
+      )}
     </div>
   );
 }

@@ -1,12 +1,14 @@
 // Atlas-Audit: [EXEC-MODE] Verified — Advanced shortcuts open creator-console / audit-logs via coerceActiveMode(..., prev.activeMode).
 import React from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, Shield, Lock, Activity, Zap, Database, Eye, Bell, Monitor, Key, HardDrive, Trash2 } from 'lucide-react';
+import { X, Shield, Lock, Activity, Zap, Cpu, Eye, Bell, Monitor, Key, HardDrive, Trash2, LogOut } from 'lucide-react';
 import { AppState } from '../types';
 import { coerceActiveMode } from '../lib/atlasWayfinding';
+import { atlasAuthUrl } from '../lib/atlasApi';
 import { cn } from '../lib/utils';
 
 import { useSettingsStore, UITheme, AnimationSpeed, LanguageLevel } from '../services/state/settingsStore';
+import { ModelSelectorSettings } from './ModelSelectorSettings';
 
 interface SettingsMenuProps {
   state: AppState;
@@ -126,6 +128,23 @@ export function SettingsMenu({ state, setState }: SettingsMenuProps) {
                       </div>
                     </div>
                     
+                    <button
+                      onClick={async () => {
+                        try {
+                          await fetch(atlasAuthUrl('/auth/signout'), {
+                            method: 'POST',
+                            credentials: 'include',
+                          });
+                        } catch {
+                          // Redirect even if backend call fails
+                        }
+                        window.location.href = '/';
+                      }}
+                      className="w-full p-3 flex items-center justify-center gap-2 text-xs text-red-400 border border-red-500/20 bg-red-500/5 hover:bg-red-500/10 transition-colors rounded-sm"
+                    >
+                      <LogOut size={14} /> Sign Out
+                    </button>
+
                     <div className="space-y-2">
                       <SettingToggle label="Advanced Mode" active={settings.isAdvancedMode} onToggle={settings.setAdvancedMode} />
                       <SettingToggle label="Crisis Mode" active={settings.isCrisisMode} onToggle={settings.setCrisisMode} />
@@ -172,6 +191,19 @@ export function SettingsMenu({ state, setState }: SettingsMenuProps) {
                     <button className="w-full p-3 flex items-center justify-center gap-2 text-xs text-red-400 border border-red-500/20 bg-red-500/5 hover:bg-red-500/10 transition-colors rounded-sm">
                       <Trash2 size={14} /> Clear Local Cache
                     </button>
+                  </div>
+                </div>
+
+                {/* Default AI Model */}
+                <div className="space-y-6">
+                  <h3 className="text-sm font-bold text-gold uppercase tracking-widest flex items-center gap-2 border-b border-gold/10 pb-2">
+                    <Cpu size={16} /> Default AI Model
+                  </h3>
+                  <div className="space-y-4">
+                    <p className="text-[10px] text-stone/50 uppercase tracking-wider leading-relaxed">
+                      Your preferred model for all conversations. Locked models require a plan upgrade.
+                    </p>
+                    <ModelSelectorSettings />
                   </div>
                 </div>
 

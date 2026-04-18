@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { useAtlasStore } from '../store/useAtlasStore';
 import { nowISO } from '../lib/persistence';
+import { SyncStatusIndicator } from '../components/SyncStatusIndicator';
+import type { SyncStatus } from '../lib/sovereignSync';
 import type { PersonalDoctrine } from '@/types';
 
 const CATEGORIES: PersonalDoctrine['category'][] = [
@@ -178,6 +180,7 @@ export default function DoctrineChamber() {
   const removeDoctrineItem = useAtlasStore((s) => s.removeDoctrineItem);
 
   const [isAdding, setIsAdding] = useState(false);
+  const [syncStatus] = useState<SyncStatus>('idle');
   const [filter, setFilter] = useState<PersonalDoctrine['category'] | 'all'>('all');
   const [form, setForm] = useState<NewItemForm>({
     title: '',
@@ -229,6 +232,7 @@ export default function DoctrineChamber() {
           </h2>
           <p style={{ margin: '3px 0 0', fontSize: '0.75rem', color: 'rgba(226,232,240,0.28)' }}>
             {doctrine.length} {doctrine.length === 1 ? 'principle' : 'principles'} · The rules you live and decide by
+            {' '}<SyncStatusIndicator status={syncStatus} />
           </p>
         </div>
 

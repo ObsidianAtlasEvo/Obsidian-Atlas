@@ -19,7 +19,7 @@ import {
 } from '../types';
 import { AtlasGraph } from './AtlasGraph';
 import { ATLAS_TRACE_CHANNEL, atlasTraceUserId } from '../lib/atlasTraceContext';
-import { atlasApiUrl, atlasHttpEnabled } from '../lib/atlasApi';
+import { atlasApiUrl, atlasHttpEnabled, sanitizeAtlasError } from '../lib/atlasApi';
 import { LayeredResponse } from './LayeredResponse';
 import { DirectiveIntake } from './DirectiveIntake';
 import { ResonanceEngine } from '../resonance/engine';
@@ -138,6 +138,80 @@ const ProceduralStatusIndicator = ({ isAnalyzing, forcedStage, onAbort }: { isAn
 
 import { useSettingsStore } from '../services/state/settingsStore';
 
+// ---------------------------------------------------------------------------
+// OverseerAnnotationPanel — collapsible Constitutional Review panel
+// ---------------------------------------------------------------------------
+function OverseerAnnotationPanel({
+  annotation,
+}: {
+  annotation: NonNullable<NonNullable<UserQuestion['response']>['overseerAnnotation']>;
+}) {
+  const [open, setOpen] = React.useState(false);
+  const hasFlags = annotation.constitutional_check.length > 0;
+  const hasGaps = annotation.gap_summary.length > 0;
+  if (!hasFlags && !hasGaps && !annotation.synthesis_notes) return null;
+
+  return (
+    <div className="border border-purple-500/20 rounded-sm bg-obsidian/30">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center justify-between px-4 py-2 text-left text-xs text-stone/70 hover:text-ivory transition-colors"
+      >
+        <span className="flex items-center gap-2 instrument-label uppercase tracking-widest text-[9px]">
+          <Shield className="w-3 h-3 text-purple-400" />
+          Constitutional Review
+          {hasFlags && (
+            <span className="bg-amber-500/20 text-amber-400 rounded-sm px-1 py-0.5 text-[8px]">
+              {annotation.constitutional_check.length} flag{annotation.constitutional_check.length !== 1 ? 's' : ''}
+            </span>
+          )}
+          {annotation.degraded && (
+            <span className="bg-stone/20 text-stone/50 rounded-sm px-1 py-0.5 text-[8px]">degraded</span>
+          )}
+        </span>
+        <span className="text-[10px] text-stone/40">{open ? '▲' : '▼'}</span>
+      </button>
+      {open && (
+        <div className="px-4 pb-4 space-y-3">
+          {hasFlags && (
+            <div>
+              <p className="instrument-label text-amber-400 uppercase tracking-widest text-[9px] mb-1">Constitutional Flags</p>
+              <ul className="space-y-1">
+                {annotation.constitutional_check.map((flag, i) => (
+                  <li key={i} className="text-xs text-stone flex items-start gap-2">
+                    <AlertTriangle className="w-3 h-3 text-amber-400 mt-0.5 flex-shrink-0" />
+                    {flag}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {hasGaps && (
+            <div>
+              <p className="instrument-label text-purple-400 uppercase tracking-widest text-[9px] mb-1">Epistemic Gaps</p>
+              <ul className="space-y-1">
+                {annotation.gap_summary.map((gap, i) => (
+                  <li key={i} className="text-xs text-stone flex items-start gap-2">
+                    <span className="text-purple-400 mt-0.5">–</span>
+                    {gap}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {annotation.synthesis_notes && (
+            <div>
+              <p className="instrument-label text-gold-500 uppercase tracking-widest text-[9px] mb-1">Overseer Notes</p>
+              <p className="text-xs text-stone/80 leading-relaxed">{annotation.synthesis_notes}</p>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 interface HomeViewProps {
   state: AppState;
   setState: React.Dispatch<React.SetStateAction<AppState>>;
@@ -193,6 +267,13 @@ export function HomeView({ state, setState, onInteraction }: HomeViewProps) {
         body: JSON.stringify(streamBody),
       });
       if (!res.ok) {
+        if (res.status === 429) {
+          const body = await res.json().catch(() => ({})) as { error?: string };
+          if (body.error === 'cognitive_quota_reached') {
+            throw new Error('Daily limit reached (120 chats). Upgrade to Atlas Core or Sovereign for more. Resets at midnight UTC.');
+          }
+          throw new Error('Atlas is momentarily overloaded. Please try again in a few seconds.');
+        }
         const t = await res.text().catch(() => '');
         throw new Error(t || `HTTP ${res.status}`);
       }
@@ -207,6 +288,13 @@ export function HomeView({ state, setState, onInteraction }: HomeViewProps) {
         mode?: string;
         posture?: number;
         lineOfInquiry?: string | null;
+      } | null = null;
+      let overseerAnnotation: {
+        constitutional_check: string[];
+        gap_summary: string[];
+        synthesis_notes: string;
+        was_personalized: boolean;
+        degraded: boolean;
       } | null = null;
       while (true) {
         const { done, value } = await reader.read();
@@ -250,8 +338,24 @@ export function HomeView({ state, setState, onInteraction }: HomeViewProps) {
               serverRouting = { ...serverRouting, ...d.routing };
             }
           }
+          if (eventName === 'overseer_annotation' && data && typeof data === 'object') {
+            const oa = data as {
+              constitutional_check?: unknown;
+              gap_summary?: unknown;
+              synthesis_notes?: unknown;
+              was_personalized?: unknown;
+              degraded?: unknown;
+            };
+            overseerAnnotation = {
+              constitutional_check: Array.isArray(oa.constitutional_check) ? (oa.constitutional_check as string[]) : [],
+              gap_summary: Array.isArray(oa.gap_summary) ? (oa.gap_summary as string[]) : [],
+              synthesis_notes: typeof oa.synthesis_notes === 'string' ? oa.synthesis_notes : '',
+              was_personalized: Boolean(oa.was_personalized),
+              degraded: Boolean(oa.degraded),
+            };
+          }
           if (eventName === 'error') {
-            streamError = String(data?.message ?? 'Atlas stream failed');
+            streamError = sanitizeAtlasError(String(data?.message ?? 'Atlas stream failed'));
           }
         }
       }
@@ -312,6 +416,7 @@ export function HomeView({ state, setState, onInteraction }: HomeViewProps) {
                 ? serverRouting.lineOfInquiry
                 : null,
           },
+          ...(overseerAnnotation ? { overseerAnnotation } : {}),
           followUp,
         },
       };
@@ -380,7 +485,8 @@ export function HomeView({ state, setState, onInteraction }: HomeViewProps) {
             profiles: state.resonance.profiles,
             threads: state.resonance.threads,
             graph: state.resonance.graph
-          }
+          },
+          atlasTraceUserId(state),
         ),
         new Promise<null>((resolve) => setTimeout(() => resolve(null), 8_000)),
       ]).catch(() => null);
@@ -942,7 +1048,11 @@ export function HomeView({ state, setState, onInteraction }: HomeViewProps) {
                       <span className="text-[8px] text-gold-500 uppercase tracking-widest animate-pulse ml-auto">Scanning...</span>
                     )}
                   </div>
-                  <p className="text-[10px] text-stone-400 leading-relaxed group-hover:text-stone-300 transition-colors">Systemic coherence has shifted by 12%. Calibration ritual suggested.</p>
+                  <p className="text-[10px] text-stone-400 leading-relaxed group-hover:text-stone-300 transition-colors">
+                    {state.driftDetection?.alerts && state.driftDetection.alerts.length > 0
+                      ? state.driftDetection.alerts[0].description ?? 'Drift pattern detected. Review recommended.'
+                      : 'Drift monitoring active. No quantified alert data yet.'}
+                  </p>
                 </motion.div>
                 <motion.div 
                   whileHover={{ scale: 0.98 }}
@@ -1361,6 +1471,10 @@ export function HomeView({ state, setState, onInteraction }: HomeViewProps) {
                             "{analysisResult.response?.synthesis}"
                           </p>
                         </div>
+
+                        {analysisResult.response?.overseerAnnotation && (
+                          <OverseerAnnotationPanel annotation={analysisResult.response.overseerAnnotation} />
+                        )}
 
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-8 md:gap-12">
                           <div className="space-y-4">

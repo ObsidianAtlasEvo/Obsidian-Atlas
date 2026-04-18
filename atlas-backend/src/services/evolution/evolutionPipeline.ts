@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import { appendAtlasSftJsonl, appendApprovedSftExample } from './datasetWriter.js';
+import { appendAtlasSftJsonl, appendApprovedSftExample, appendEvalToSqlite } from './datasetWriter.js';
 import { evaluateExchange } from './evalEngine.js';
 import { saveEvolutionGap } from './gapStore.js';
 import { evolvePolicyTelemetryFromEval } from '../autonomy/policyEvolver.js';
@@ -12,7 +12,11 @@ import {
 } from './subsystemEvolvers.js';
 import { applyExplicitPolicyCorrections } from './policyStore.js';
 import { extractMemoryCandidates } from '../memory/memoryExtractor.js';
-import { saveMemory, saveTrace } from '../memory/memoryStore.js';
+import { saveMemory, saveTrace, listMemoriesByKind, listRecentTraces } from '../memory/memoryStore.js';
+import { analyzeDrift } from '../driftDetection.js';
+import type { DriftAnalysisContext } from '../driftDetection.js';
+import { appendAutonomyLog } from '../autonomy/autonomyLog.js';
+import { getDb } from '../../db/sqlite.js';
 import type { ModelProvider } from '../model/modelProvider.js';
 import { env } from '../../config/env.js';
 import type { ChatRole } from '../../types/atlas.js';
@@ -97,6 +101,13 @@ async function runEvolutionJob(job: EvolutionJobPayload): Promise<void> {
     /* policy telemetry evolution is best-effort */
   }
 
+  // Persist eval scores to SQLite for queryable history (fire-and-forget)
+  try {
+    appendEvalToSqlite(userId, evalResult);
+  } catch {
+    /* eval history write is best-effort */
+  }
+
   const memoriesPersisted: { id: string; summary: string }[] = [];
   for (const c of candidates) {
     if (c.confidence < env.memoryConfidenceThreshold) continue;
@@ -167,6 +178,56 @@ async function runEvolutionJob(job: EvolutionJobPayload): Promise<void> {
     evolveResonanceModel(userId, subsystemCtx),
     evolveGoalMemory(userId, subsystemCtx),
   ]);
+
+  // Drift detection: analyze recent behavior for misalignment with stated values/goals
+  try {
+    const valueMemories = listMemoriesByKind(userId, 'identity', 20);
+    const goalMemories = listMemoriesByKind(userId, 'goal', 20);
+    const recentTraces = listRecentTraces(userId, 20);
+
+    const driftCtx: DriftAnalysisContext = {
+      currentValues: valueMemories.map((m) => m.summary),
+      currentGoals: goalMemories.map((m) => m.summary),
+      recentActions: recentTraces.map((t) => t.assistantResponse),
+      recentQuestions: recentTraces.map((t) => t.userMessage),
+      doctrine: [],
+      timeframeDays: 7,
+    };
+
+    const driftSignals = analyzeDrift(driftCtx);
+    for (const signal of driftSignals) {
+      if (signal.severity === 'high' || signal.severity === 'medium') {
+        appendAutonomyLog({
+          userId,
+          kind: 'drift-detection',
+          message: `[${signal.type}] ${signal.description} — evidence: ${signal.evidence.join('; ')}`,
+          decisionJson: JSON.stringify(signal),
+          status: 'warning',
+        });
+      }
+      // Persist all drift signals to drift_events table for UI consumption
+      try {
+        const db = getDb();
+        const id = `drift-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        db.prepare(
+          `INSERT INTO drift_events (id, user_id, subject_type, subject_id, magnitude, narrative, detected_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`
+        ).run(
+          id,
+          userId,
+          signal.type,
+          signal.type,
+          signal.severity === 'high' ? 0.9 : signal.severity === 'medium' ? 0.6 : 0.3,
+          JSON.stringify({ description: signal.description, evidence: signal.evidence, severity: signal.severity }),
+          signal.detectedAt,
+        );
+      } catch {
+        // Non-fatal — table may not exist on fresh installs
+      }
+    }
+  } catch (err) {
+    console.warn('[evolution] drift detection failed (non-fatal):', err);
+  }
 
   pipelineEvents.emit('complete', {
     traceId,

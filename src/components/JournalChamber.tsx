@@ -39,7 +39,8 @@ import {
 } from 'lucide-react';
 import { JournalEntry, JournalAssistanceMode, AppState } from '../types';
 import { cn } from '../lib/utils';
-import { analyzeJournalEntry } from '../services/ollamaService';
+import { analyzeJournalEntry } from '../lib/atlasJournalAnalysis';
+import { atlasTraceUserId } from '../lib/atlasTraceContext';
 
 interface JournalChamberProps {
   state: AppState;
@@ -98,10 +99,11 @@ export function JournalChamber({ state, onUpdateState }: JournalChamberProps) {
     setIsAnalyzing(true);
     try {
       const analysis = await analyzeJournalEntry(
-        selectedEntry.content, 
+        selectedEntry.content,
         selectedEntry.assistanceMode,
         state.userModel,
-        selectedEntry.customAssistancePrompt
+        selectedEntry.customAssistancePrompt,
+        atlasTraceUserId(state),
       );
       handleUpdateEntry({ analysis });
     } catch (error) {

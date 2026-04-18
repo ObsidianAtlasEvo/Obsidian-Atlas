@@ -1,5 +1,5 @@
 import { ResonanceThread, ResonanceTier } from "./types";
-import { ollamaComplete, parseJsonFromAssistant } from "../services/ollamaClient";
+import { backendComplete as ollamaComplete, parseJsonFromBackend as parseJsonFromAssistant } from "../lib/backendInference";
 
 /**
  * Resonance-Aware Summarization.
@@ -8,7 +8,8 @@ import { ollamaComplete, parseJsonFromAssistant } from "../services/ollamaClient
 
 export async function generateResonanceSummary(
   content: string,
-  resonanceThreads: ResonanceThread[]
+  resonanceThreads: ResonanceThread[],
+  userId?: string,
 ): Promise<{
   factualSummary: string;
   significanceSummary: string;
@@ -41,7 +42,7 @@ export async function generateResonanceSummary(
   `;
 
   try {
-    const raw = await ollamaComplete(prompt, { json: true });
+    const raw = await ollamaComplete(prompt, { json: true, userId });
     return parseJsonFromAssistant(raw);
   } catch (error) {
     console.error("Error generating resonance summary:", error);

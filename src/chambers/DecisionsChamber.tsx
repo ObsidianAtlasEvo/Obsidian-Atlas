@@ -1,6 +1,8 @@
 import React, { useState, useCallback } from 'react';
 import { useAtlasStore } from '../store/useAtlasStore';
 import { generateId, nowISO } from '../lib/persistence';
+import { SyncStatusIndicator } from '../components/SyncStatusIndicator';
+import type { SyncStatus } from '../lib/sovereignSync';
 import type { Decision } from '@/types';
 
 // ── Shared style tokens ────────────────────────────────────────────────────
@@ -1124,6 +1126,7 @@ export default function DecisionsChamber() {
   const [selectedId, setSelectedId] = useState<string | null>(decisions[0]?.id ?? null);
   const [mode, setMode] = useState<'view' | 'create' | 'edit'>('view');
   const [formState, setFormState] = useState<FormState>(makeBlankForm());
+  const [syncStatus] = useState<SyncStatus>('idle');
 
   const selected = decisions.find((d) => d.id === selectedId) ?? null;
 
@@ -1219,6 +1222,7 @@ export default function DecisionsChamber() {
             </div>
             <div style={{ fontSize: '0.62rem', color: T.dimmer, marginTop: 1 }}>
               {decisions.length} {decisions.length === 1 ? 'decision' : 'decisions'}
+              <SyncStatusIndicator status={syncStatus} />
             </div>
           </div>
           <button

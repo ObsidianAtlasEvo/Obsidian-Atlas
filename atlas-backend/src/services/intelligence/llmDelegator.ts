@@ -1,4 +1,4 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { GoogleGenAI } from '@google/genai';
 import { env } from '../../config/env.js';
 import { getPolicyProfile } from '../evolution/policyStore.js';
 import {
@@ -8,6 +8,7 @@ import {
 } from './omniRouter.js';
 import { messagesWithPrimeDirective, type DelegatorMessage } from './primeDirective.js';
 import { isSovereignOwnerEmail } from './router.js';
+import { isGeminiTransient, TRANSIENT_USER_MESSAGE, truncateForGroq } from './universalAdapter.js';
 import { runMaximumClarityTrack } from './maximumClarityPipeline.js';
 import {
   executeSwarmPipeline,
@@ -32,7 +33,7 @@ function resolveGroqExecution(): { base: string; apiKey: string; model: string }
   const model =
     env.groqDelegateModel?.trim() ||
     env.cloudChatModel?.trim() ||
-    'llama-3.1-8b-instant';
+    'llama-3.3-70b-versatile';
   return { base, apiKey, model };
 }
 
@@ -45,9 +46,10 @@ async function groqChatNonStream(
   options: { jsonMode?: boolean; temperature?: number; maxTokens?: number; signal?: AbortSignal }
 ): Promise<{ text: string; model: string }> {
   const { base, apiKey, model } = resolveGroqExecution();
+  const truncated = truncateForGroq(msgs);
   const body: Record<string, unknown> = {
     model,
-    messages: openAiStyleMessages(msgs),
+    messages: openAiStyleMessages(truncated),
     temperature: options.temperature ?? 0.2,
     max_tokens: options.maxTokens ?? 2048,
     stream: false,
@@ -88,10 +90,12 @@ async function groqChatStream(
   options: { temperature?: number; signal?: AbortSignal; timeoutMs?: number }
 ): Promise<{ fullText: string; model: string }> {
   const { base, apiKey, model } = resolveGroqExecution();
+  const truncated = truncateForGroq(msgs);
   const body: Record<string, unknown> = {
     model,
-    messages: openAiStyleMessages(msgs),
+    messages: openAiStyleMessages(truncated),
     temperature: options.temperature ?? 0.35,
+    max_tokens: 2048,
     stream: true,
   };
 
@@ -169,17 +173,30 @@ function geminiModelId(): string {
   return env.geminiModel?.trim() || 'gemini-2.0-flash';
 }
 
-async function geminiGenerateStream(
+function delayMs(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Lazy singleton — allocated on the first Gemini call. Mirrors universalAdapter.ts pattern. */
+let _geminiClient: InstanceType<typeof GoogleGenAI> | null = null;
+function getGeminiClient(): InstanceType<typeof GoogleGenAI> {
+  if (!_geminiClient) {
+    const key = env.geminiApiKey?.trim();
+    if (!key) throw new Error('Gemini execution requires GEMINI_API_KEY');
+    _geminiClient = new GoogleGenAI({ apiKey: key });
+  }
+  return _geminiClient;
+}
+
+async function geminiGenerateStreamRaw(
   msgs: DelegatorMessage[],
   onDelta: StreamDeltaHandler,
-  options: { signal?: AbortSignal; timeoutMs?: number }
+  options: { signal?: AbortSignal; timeoutMs?: number },
+  modelOverride?: string,
 ): Promise<{ fullText: string; model: string }> {
-  const key = env.geminiApiKey?.trim();
-  if (!key) throw new Error('Gemini execution requires GEMINI_API_KEY');
-
+  const client = getGeminiClient();
   const { system, rest } = splitSystemAndRest(msgs);
-  const model = geminiModelId();
-  const ai = new GoogleGenerativeAI(key);
+  const model = modelOverride ?? geminiModelId();
 
   const contents = rest.map((m) => ({
     role: m.role === 'assistant' ? ('model' as const) : ('user' as const),
@@ -191,16 +208,16 @@ async function geminiGenerateStream(
   let full = '';
 
   try {
-    const stream = await ai.getGenerativeModel({ model: "gemini-1.5-flash" }).generateContentStream({
+    const stream = await client.models.generateContentStream({
+      model,
       contents,
-      systemInstruction: system || undefined,
-      generationConfig: {
-
+      config: {
+        systemInstruction: system || undefined,
         temperature: 0.35,
       },
     });
 
-    for await (const chunk of stream.stream) {
+    for await (const chunk of stream) {
       const piece = typeof chunk.text === 'string' ? chunk.text : '';
       if (piece) {
         full += piece;
@@ -211,6 +228,59 @@ async function geminiGenerateStream(
   } finally {
     if (t) clearTimeout(t);
   }
+}
+
+/**
+ * Gemini streaming with transient-error fallback chain:
+ * retry same model → gemini-2.0-flash → Groq → clean error.
+ */
+async function geminiGenerateStream(
+  msgs: DelegatorMessage[],
+  onDelta: StreamDeltaHandler,
+  options: { signal?: AbortSignal; timeoutMs?: number }
+): Promise<{ fullText: string; model: string }> {
+  // Attempt 1: primary model
+  try {
+    return await geminiGenerateStreamRaw(msgs, onDelta, options);
+  } catch (err) {
+    if (!isGeminiTransient(err)) throw err;
+  }
+
+  // Attempt 2: retry after delay
+  await delayMs(1500);
+  try {
+    return await geminiGenerateStreamRaw(msgs, onDelta, options);
+  } catch (err) {
+    if (!isGeminiTransient(err)) throw err;
+  }
+
+  // Attempt 3: secondary Gemini model
+  const primary = geminiModelId();
+  const secondary = 'gemini-2.0-flash';
+  if (primary !== secondary) {
+    try {
+      return await geminiGenerateStreamRaw(msgs, onDelta, options, secondary);
+    } catch (err) {
+      if (!isGeminiTransient(err)) throw err;
+    }
+  }
+
+  // Attempt 4: fall back to Groq streaming (retry once on 429 rate limit)
+  try {
+    return await groqChatStream(msgs, onDelta, { temperature: 0.35, ...options });
+  } catch (groqErr) {
+    const groqMsg = groqErr instanceof Error ? groqErr.message : String(groqErr);
+    if (groqMsg.includes('429') || groqMsg.includes('Rate limit') || groqMsg.includes('Too Many Requests')) {
+      await delayMs(3000);
+      try {
+        return await groqChatStream(msgs, onDelta, { temperature: 0.35, ...options });
+      } catch {
+        // Second attempt also failed
+      }
+    }
+  }
+
+  throw new Error(TRANSIENT_USER_MESSAGE);
 }
 
 async function ollamaChatStream(
@@ -385,6 +455,7 @@ export async function evaluateRouteThenExecuteStream(
     policyProfile,
     mirrorforge: input.mirrorforge,
     signal: input.signal,
+    userId: input.userId,
   });
   const routing = swarmPlanToGroqRoutingDecision(plan);
   const { fullText, surface, model } = await executeSwarmPipeline({

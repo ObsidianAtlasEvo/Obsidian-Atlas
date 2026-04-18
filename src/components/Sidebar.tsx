@@ -60,6 +60,7 @@ import { coerceActiveMode } from '../lib/atlasWayfinding';
 import { AppState } from '../types';
 import { auth, logAudit } from '../services/firebase';
 import { signOut } from 'firebase/auth';
+import { SOVEREIGN_CREATOR_EMAIL } from '../config/sovereignCreator';
 
 interface SidebarProps {
   state: AppState;
@@ -260,7 +261,7 @@ export function Sidebar({ state, setState, activeMode, setActiveMode, absoluteSi
             )}
             <AnimatePresence mode="popLayout">
               {NAV_ITEMS.filter(item => item.category === category).map((item, index) => {
-                if (item.category === 'Governance' && state.currentUser?.email !== 'crowleyrc62@gmail.com') return null;
+                if (item.category === 'Governance' && state.currentUser?.email !== SOVEREIGN_CREATOR_EMAIL) return null;
                 if (item.role && state.currentUser?.role !== item.role) return null;
                 return (
                   <motion.button

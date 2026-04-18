@@ -13,6 +13,7 @@ import { SignJWT, jwtVerify } from 'jose';
 import { env } from '../../config/env.js';
 import { getDb } from '../../db/sqlite.js';
 import { normalizeEmail } from '../intelligence/router.js';
+import { getSubscriptionStatus } from '../billing/stripeService.js';
 
 export const ATLAS_SESSION_COOKIE = 'atlas_session';
 export const ATLAS_OAUTH_STATE_COOKIE = 'atlas_google_oauth_state';
@@ -24,9 +25,11 @@ export type AuthenticatedAtlasUser = {
   email: string;
 };
 
-function jwtKeyMaterial(): Uint8Array {
+export function jwtKeyMaterial(): Uint8Array {
   const secret = env.authSecret?.trim();
-  if (!secret) return new Uint8Array();
+  if (!secret) {
+    throw new Error('[FATAL] AUTH_SECRET / NEXTAUTH_SECRET is not set. Cannot sign or verify JWTs.');
+  }
   return new Uint8Array(createHash('sha256').update(secret).digest());
 }
 
@@ -123,16 +126,16 @@ export async function signAtlasSessionJwt(user: AuthenticatedAtlasUser): Promise
 }
 
 export async function verifyAtlasSessionJwt(token: string): Promise<AuthenticatedAtlasUser | null> {
-  const key = jwtKeyMaterial();
-  if (key.length === 0) return null;
   try {
+    const key = jwtKeyMaterial();
     const { payload } = await jwtVerify(token, key, { algorithms: ['HS256'] });
     const sub = typeof payload.sub === 'string' ? payload.sub : '';
     const emailRaw = payload.email;
     const email = typeof emailRaw === 'string' ? emailRaw : '';
     if (!sub || !email) return null;
     return { databaseUserId: sub, email };
-  } catch {
+  } catch (err) {
+    console.error('[AUTH] JWT verification failed — key material unavailable or token invalid:', err);
     return null;
   }
 }
@@ -174,17 +177,30 @@ export async function attachAtlasSession(request: FastifyRequest): Promise<void>
   const u = await getAuthenticatedUser(request);
   if (u) {
     request.atlasVerifiedEmail = normalizeEmail(u.email);
+
+    // Attach subscription tier for downstream quota/model-access checks
+    try {
+      const sub = await getSubscriptionStatus(u.databaseUserId, getDb(), u.email);
+      request.subscriptionTier = sub?.tier ?? 'free';
+    } catch {
+      request.subscriptionTier = 'free';
+    }
   }
 }
 
 export function upsertTenantFromGoogleOAuth(sub: string, email: string): void {
-  const db = getDb();
-  const now = new Date().toISOString();
-  db.prepare(
-    `INSERT INTO tenant_users (id, email, created_at, plan_tier)
-     VALUES (?, ?, ?, 'free')
-     ON CONFLICT(id) DO UPDATE SET email = excluded.email`
-  ).run(sub, email, now);
+  try {
+    const db = getDb();
+    const now = new Date().toISOString();
+    db.prepare(
+      `INSERT INTO tenant_users (id, email, created_at, plan_tier)
+       VALUES (?, ?, ?, 'free')
+       ON CONFLICT(id) DO UPDATE SET email = excluded.email`
+    ).run(sub, email, now);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(`[AUTH] tenant_users upsert failed (table may not exist in Supabase): ${msg}`);
+  }
 }
 
 export function authSuccessRedirectLocation(): string {

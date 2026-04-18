@@ -1,4 +1,5 @@
 import React from 'react';
+import { SOVEREIGN_CREATOR_EMAIL } from '../config/sovereignCreator';
 
 export function TermsAndConditions() {
   return (
@@ -31,7 +32,7 @@ export function TermsAndConditions() {
             <li>All activity that occurs under your account</li>
             <li>Providing accurate and current account information</li>
           </ul>
-          <p>You agree to notify us promptly at crowleyrc62@gmail.com if you believe your account has been compromised.</p>
+          <p>You agree to notify us promptly at {SOVEREIGN_CREATOR_EMAIL} if you believe your account has been compromised.</p>
 
           <h2 className="text-xl font-serif text-ivory pt-4">5. Acceptable Use</h2>
           <p>You agree not to use the Services to:</p>
@@ -119,7 +120,7 @@ export function TermsAndConditions() {
             <p>Obsidian Atlas</p>
             <p>Ryan Crowley</p>
             <p>5809 Parkside Crossing, Dublin, OH 43016</p>
-            <p>crowleyrc62@gmail.com</p>
+            <p>{SOVEREIGN_CREATOR_EMAIL}</p>
           </div>
         </div>
       </div>

@@ -245,12 +245,19 @@ async function applyUserLens(
     // Non-fatal
   }
 
+  // Only apply learned style preferences — unlearned defaults must not be passed to the LLM
+  // as if they were user-stated. For new users, translate only vocabulary level (evidence-based).
+  const learnedStyleBlock = profile.isLearned
+    ? `VERBOSITY: ${verbosityMap[profile.verbosity] ?? 'medium'}
+TONE: ${toneMap[profile.tone] ?? 'analytical'}
+STRUCTURE: ${structureMap[profile.structurePreference] ?? 'balanced'}`
+    : `NOTE: This user has no learned style preferences yet. Do not assert or infer tone/verbosity.
+Adapt from live evidence in the conversation only. Default to precision and neutrality.`;
+
   const system = `You are the Atlas user-lens translator.
 Rewrite the answer to perfectly match this specific user's evolved profile:
 
-VERBOSITY: ${verbosityMap[profile.verbosity] ?? 'medium'}
-TONE: ${toneMap[profile.tone] ?? 'analytical'}
-STRUCTURE: ${structureMap[profile.structurePreference] ?? 'balanced'}
+${learnedStyleBlock}
 VOCABULARY LEVEL: ${vocabLevel}
 ${domainExpertise ? `DOMAIN CONTEXT: ${domainExpertise}` : ''}
 
@@ -404,7 +411,12 @@ export async function applyOverseerLens(
     };
   } catch (err) {
     // Pipeline failed mid-flight — degrade gracefully, never block user
-    console.error('[OverseerService] pipeline error:', err);
+    // TPD (tokens per day) exhaustion is end-of-day normal behaviour — suppress the log noise
+    const errMsg = err instanceof Error ? err.message : String(err);
+    const isTPD = errMsg.includes('per day') || errMsg.includes('tokens per day') || errMsg.includes('TPD');
+    if (!isTPD) {
+      console.error('[OverseerService] pipeline error:', err);
+    }
     recordTraining(userId, context.query, rawResponse, ['pipeline_error']);
     return {
       response: rawResponse,

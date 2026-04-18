@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { useAtlasStore } from '../store/useAtlasStore';
 import { nowISO } from '../lib/persistence';
+import { SyncStatusIndicator } from '../components/SyncStatusIndicator';
+import type { SyncStatus } from '../lib/sovereignSync';
 import type {
   PersonalConstitution,
   ConstitutionValue,
@@ -1794,6 +1796,7 @@ const TABS: Array<{ id: TabId; label: string; color: string }> = [
 export default function ConstitutionChamber() {
   const constitution = useAtlasStore((s) => s.constitution);
   const [activeTab, setActiveTab] = useState<TabId>('values');
+  const [syncStatus] = useState<SyncStatus>('idle');
 
   const activeTabMeta = TABS.find((t) => t.id === activeTab)!;
 
@@ -1859,6 +1862,7 @@ export default function ConstitutionChamber() {
               {' '}·{' '}
               {constitution.values.length} values · {constitution.standards.length} standards ·{' '}
               {constitution.goals.length} goals
+              {' '}<SyncStatusIndicator status={syncStatus} />
             </p>
           </div>
         </div>

@@ -6,6 +6,7 @@ import { AppState, UserProfile } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
 import { Lock, Mail, ShieldCheck, Smartphone, Key, AlertTriangle, ArrowRight, Github } from 'lucide-react';
 import { cn } from '../lib/utils';
+import { SOVEREIGN_CREATOR_EMAIL } from '../config/sovereignCreator';
 
 interface AuthViewProps {
   state: AppState;
@@ -35,7 +36,7 @@ export function AuthView({ state, setState }: AuthViewProps) {
         const userCredential = await signInWithEmailAndPassword(auth, email, password);
         const user = userCredential.user;
 
-        if (user.email === 'crowleyrc62@gmail.com') {
+        if (user.email === SOVEREIGN_CREATOR_EMAIL) {
           // Trigger 3FA for Creator
           setState(prev => ({ ...prev, is3FAPending: true }));
           
@@ -111,7 +112,7 @@ export function AuthView({ state, setState }: AuthViewProps) {
               <Mail size={32} className="text-gold mx-auto opacity-50" />
               <div className="space-y-2">
                 <p className="text-sm text-ivory">A verification link has been sent to</p>
-                <p className="text-gold font-mono text-xs">crowleyrc62@gmail.com</p>
+                <p className="text-gold font-mono text-xs">{SOVEREIGN_CREATOR_EMAIL}</p>
               </div>
               <p className="text-[10px] text-stone uppercase tracking-widest leading-relaxed">
                 Please click the link in the email to verify your identity and establish your sovereign session.

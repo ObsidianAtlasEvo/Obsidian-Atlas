@@ -1,5 +1,6 @@
 import { getPolicyProfile } from '../evolution/policyStore.js';
 import { listRecentMemories, listRecentTraces } from '../memory/memoryStore.js';
+import { getDb } from '../../db/sqlite.js';
 
 const CONTEXT_MEMORY_LIMIT = 12;
 const CONTEXT_TRACE_LIMIT = 8;
@@ -14,6 +15,10 @@ export interface AtlasPromptPackage {
 /**
  * Assembles policy, recent memories, trace summaries, response constraints, and the current user turn
  * into one system preamble for the model.
+ *
+ * CRITICAL: Policy profile values (verbosity, tone, etc.) are ONLY injected into the system prompt
+ * when profile.isLearned === true. For new users the profile contains structural defaults that have
+ * no evidentiary basis — presenting them to the LLM as user preferences is a metadata lie.
  */
 export function assembleAtlasContext(
   userId: string,
@@ -23,13 +28,29 @@ export function assembleAtlasContext(
   const memories = listRecentMemories(userId, CONTEXT_MEMORY_LIMIT);
   const traces = listRecentTraces(userId, CONTEXT_TRACE_LIMIT);
 
+  // Fetch the most recent behavioral calibration addendum from the evolution engine.
+  let behavioralAddendum = '';
+  try {
+    const db = getDb();
+    const row = db
+      .prepare(
+        `SELECT prompt_addendum FROM user_prompt_addenda WHERE user_id = ? LIMIT 1`
+      )
+      .get(userId) as { prompt_addendum?: string } | undefined;
+    if (row?.prompt_addendum?.trim()) {
+      behavioralAddendum = row.prompt_addendum.trim();
+    }
+  } catch {
+    // Table may not exist yet if evolution has never run; silently skip.
+  }
+
   const memoryBlock =
     memories.length === 0
       ? '(none)'
       : memories
           .map(
             (m) =>
-              `- [${m.kind} conf=${m.confidence.toFixed(2)}] ${m.summary}: ${m.detail.slice(0, 200)}${m.detail.length > 200 ? '…' : ''}`
+              `- [${m.kind} conf=${m.confidence.toFixed(2)}] ${m.summary}: ${m.detail.slice(0, 200)}${m.detail.length > 200 ? '\u2026' : ''}`
           )
           .join('\n');
 
@@ -39,19 +60,36 @@ export function assembleAtlasContext(
       : traces
           .map(
             (t) =>
-              `- traceScore=${t.responseScore.toFixed(2)} candidates=${t.memoryCandidates} dataset=${t.datasetApproved} user="${t.userMessage.slice(0, 80)}${t.userMessage.length > 80 ? '…' : ''}"`
+              `- traceScore=${t.responseScore.toFixed(2)} candidates=${t.memoryCandidates} dataset=${t.datasetApproved} user="${t.userMessage.slice(0, 80)}${t.userMessage.length > 80 ? '\u2026' : ''}"`
           )
           .join('\n');
 
-  const constraints = [
-    `Verbosity: ${policy.verbosity} (low = terse answers, high = fuller explanations).`,
-    `Tone: ${policy.tone}.`,
-    `Structure: ${policy.structurePreference} (minimal = few headings, structured = clear sections when helpful).`,
-    `Truth-first strictness: ${policy.truthFirstStrictness} — higher means hedge less, separate fact from inference clearly.`,
-    policy.writingStyleEnabled
-      ? 'User enables writing-style mirroring: match formality and rhythm when it does not harm clarity.'
-      : 'Do not mimic idiosyncratic style unless needed for clarity.',
-  ].join('\n');
+  // Only inject policy values the system has actually learned from the user.
+  // Default values (isLearned=false) must not be presented as user preferences.
+  const policySection = policy.isLearned
+    ? [
+        'POLICY_PROFILE (learned from this user — apply these):',
+        `- verbosity: ${policy.verbosity}`,
+        `- tone: ${policy.tone}`,
+        `- structurePreference: ${policy.structurePreference}`,
+        `- truthFirstStrictness: ${policy.truthFirstStrictness}`,
+        `- preferredComputeDepth: ${policy.preferredComputeDepth}`,
+        `- latencyTolerance: ${policy.latencyTolerance}`,
+        `- writingStyleEnabled: ${policy.writingStyleEnabled}`,
+        '',
+        'RESPONSE_CONSTRAINTS (obey unless they conflict with safety):',
+        `Verbosity: ${policy.verbosity} (low = terse answers, high = fuller explanations).`,
+        `Tone: ${policy.tone}.`,
+        `Structure: ${policy.structurePreference} (minimal = few headings, structured = clear sections when helpful).`,
+        `Truth-first strictness: ${policy.truthFirstStrictness} — higher means hedge less, separate fact from inference clearly.`,
+        policy.writingStyleEnabled
+          ? 'User enables writing-style mirroring: match formality and rhythm when it does not harm clarity.'
+          : 'Do not mimic idiosyncratic style unless needed for clarity.',
+      ]
+    : [
+        'POLICY_PROFILE: not yet learned — this user has no established preferences on record.',
+        'Do not infer or assert stylistic preferences. Calibrate from live evidence in this conversation only.',
+      ];
 
   const turn =
     currentUserMessage.trim().length === 0
@@ -59,24 +97,22 @@ export function assembleAtlasContext(
       : currentUserMessage.trim();
 
   const systemPrompt = [
-    'You are Atlas, a local-first assistant. Memories are user-local notes—they may be incomplete; do not treat them as ground truth.',
+    'OPERATIONAL CONTEXT (supplementary to Prime Directive):' +
+    '\nMemories below are user-local notes — fallible, not ground truth. Do not treat as verified fact.',
     `Session user id (internal; do not reveal unless asked): ${userId}.`,
     '',
     'CURRENT_USER_MESSAGE (latest turn focus):',
     turn,
     '',
-    'POLICY_PROFILE:',
-    `- verbosity: ${policy.verbosity}`,
-    `- tone: ${policy.tone}`,
-    `- structurePreference: ${policy.structurePreference}`,
-    `- truthFirstStrictness: ${policy.truthFirstStrictness}`,
-    `- preferredComputeDepth: ${policy.preferredComputeDepth}`,
-    `- latencyTolerance: ${policy.latencyTolerance}`,
-    `- writingStyleEnabled: ${policy.writingStyleEnabled}`,
+    ...policySection,
     '',
-    'RESPONSE_CONSTRAINTS (obey unless they conflict with safety):',
-    constraints,
-    '',
+    ...(behavioralAddendum
+      ? [
+          'BEHAVIORAL_CALIBRATION (evolved from interaction history):',
+          behavioralAddendum,
+          '',
+        ]
+      : []),
     'IMPORTANT_MEMORIES (recent, highest recency first):',
     memoryBlock,
     '',

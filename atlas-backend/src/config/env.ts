@@ -1,17 +1,24 @@
 import path from 'node:path';
 import { z } from 'zod';
 
+// NOTE: NODE_ENV is intentionally included in the Zod schema below.
+// Operators MUST set NODE_ENV=production in their PM2 ecosystem file or shell
+// environment. Without it, error messages are unredacted, pino-pretty is used
+// (slow), and some security guards are relaxed. All code that branches on
+// NODE_ENV should read `env.nodeEnv` from this module rather than accessing
+// process.env.NODE_ENV directly, so the value is validated and centralised.
 const envSchema = z.object({
+  NODE_ENV: z.enum(['development', 'production', 'test']).optional(),
   /** Bind address (production: 0.0.0.0 behind reverse proxy). */
   HOST: z.string().min(1).optional(),
   PORT: z.coerce.number().int().positive(),
-  OLLAMA_BASE_URL: z.string().min(1),
-  OLLAMA_CHAT_MODEL: z.string().min(1),
-  OLLAMA_EMBED_MODEL: z.string().min(1),
+  OLLAMA_BASE_URL: z.string().optional().default('http://127.0.0.1:11434'),
+  OLLAMA_CHAT_MODEL: z.string().optional().default('llama3.1:8b'),
+  OLLAMA_EMBED_MODEL: z.string().optional().default('nomic-embed-text'),
   /** Smaller / faster model for background evolution (defaults to chat model). */
-  OLLAMA_EVOLUTION_MODEL: z.string().min(1).optional(),
+  OLLAMA_EVOLUTION_MODEL: z.string().optional().default('disabled'),
   /** Optional comma-separated local model pool (fallback chain). Example: "llama3.1:8b,qwen2.5:7b,mistral:7b". */
-  OLLAMA_MODEL_POOL: z.string().optional(),
+  OLLAMA_MODEL_POOL: z.string().optional().default('[]'),
   /** Force cloud/public routing even for sovereign users (useful when local Ollama is unstable). */
   DISABLE_LOCAL_OLLAMA: z
     .string()
@@ -69,6 +76,32 @@ const envSchema = z.object({
   /** Direct OpenAI API (optional fallback when OpenRouter unset). */
   OPENAI_API_KEY: z.string().optional(),
   OPENAI_BASE_URL: z.string().optional(),
+  // ── OpenAI groundwork (Phase 2) ──────────────────────────────────────────
+  OPENAI_TIMEOUT_MS:                    z.coerce.number().optional(),
+  OPENAI_STREAM_TIMEOUT_MS:             z.coerce.number().optional(),
+  OPENAI_MAX_RETRIES:                   z.coerce.number().optional(),
+  OPENAI_EMBEDDING_MODEL:               z.string().optional(),
+  OPENAI_EMBEDDING_DIMENSIONS:          z.coerce.number().optional(),
+  OPENAI_SYNTHESIS_MODEL:               z.string().optional(),
+  OPENAI_WORKER_MODEL:                  z.string().optional(),
+  OPENAI_ROUTER_MODEL:                  z.string().optional(),
+  OPENAI_AUDIT_MODEL:                   z.string().optional(),
+  OPENAI_DEFAULT_BUDGET_MODE:           z.enum(['fast', 'balanced', 'max-depth']).optional(),
+  OPENAI_NANO_ROUTING_ENABLED:          z.coerce.boolean().optional(),
+  OPENAI_PRO_AUDIT_STAKE_THRESHOLD:     z.coerce.number().optional(),
+  OPENAI_PRO_AUDIT_CONFLICT_THRESHOLD:  z.coerce.number().optional(),
+  // ── Stripe billing (Phase 3) ──────────────────────────────────────────────
+  STRIPE_SECRET_KEY:       z.string().optional(),
+  STRIPE_WEBHOOK_SECRET:   z.string().optional(),
+  STRIPE_PRICE_CORE:       z.string().optional(),
+  STRIPE_PRICE_SOVEREIGN:  z.string().optional(),
+  STRIPE_SUCCESS_URL:      z.string().optional(),
+  STRIPE_CANCEL_URL:       z.string().optional(),
+  // ── Sovereign identity (Phase 1) ─────────────────────────────────────────
+  SOVEREIGN_CREATOR_USER_ID: z.string().optional(),
+  SOVEREIGN_CREATOR_EMAIL:   z.string().optional(),
+  /** Google Generative Language API key (direct REST calls to Gemini). */
+  GOOGLE_API_KEY: z.string().optional(),
   /** Google Programmable Search (Custom Search JSON API). */
   GOOGLE_CSE_API_KEY: z.string().optional(),
   GOOGLE_CSE_ENGINE_ID: z.string().optional(),
@@ -101,13 +134,14 @@ const envSchema = z.object({
 });
 
 const raw = envSchema.parse({
+  NODE_ENV: process.env.NODE_ENV,
   HOST: process.env.HOST,
   PORT: process.env.PORT ?? '3001',
-  // Ollama is optional in cloud/production — default to localhost so schema passes
-  // even when Ollama is not installed. DISABLE_LOCAL_OLLAMA=true routes away from it.
-  OLLAMA_BASE_URL: process.env.OLLAMA_BASE_URL ?? 'http://127.0.0.1:11434',
-  OLLAMA_CHAT_MODEL: process.env.OLLAMA_CHAT_MODEL ?? 'llama3.1:8b',
-  OLLAMA_EMBED_MODEL: process.env.OLLAMA_EMBED_MODEL ?? 'nomic-embed-text',
+  // Ollama is optional in cloud/production — Zod defaults handle missing vars.
+  // DISABLE_LOCAL_OLLAMA=true routes away from Ollama at runtime.
+  OLLAMA_BASE_URL: process.env.OLLAMA_BASE_URL,
+  OLLAMA_CHAT_MODEL: process.env.OLLAMA_CHAT_MODEL,
+  OLLAMA_EMBED_MODEL: process.env.OLLAMA_EMBED_MODEL,
   OLLAMA_EVOLUTION_MODEL: process.env.OLLAMA_EVOLUTION_MODEL,
   OLLAMA_MODEL_POOL: process.env.OLLAMA_MODEL_POOL,
   DISABLE_LOCAL_OLLAMA: process.env.DISABLE_LOCAL_OLLAMA ?? 'true',
@@ -116,7 +150,7 @@ const raw = envSchema.parse({
   EVAL_GAP_THRESHOLD: process.env.EVAL_GAP_THRESHOLD ?? '0.42',
   DATASET_MIN_AXIS_SCORE: process.env.DATASET_MIN_AXIS_SCORE ?? '9',
   EVOLUTION_LLM_TIMEOUT_MS: process.env.EVOLUTION_LLM_TIMEOUT_MS ?? '120000',
-  SQLITE_PATH: process.env.SQLITE_PATH ?? '/var/www/obsidian-atlas-src/atlas-backend/data/atlas.db',
+  SQLITE_PATH: process.env.SQLITE_PATH ?? '/var/data/atlas/atlas.db',
   CHRONOS_ENABLED: process.env.CHRONOS_ENABLED,
   CHRONOS_TICK_MS: process.env.CHRONOS_TICK_MS,
   CHRONOS_IDLE_MS: process.env.CHRONOS_IDLE_MS,
@@ -140,6 +174,28 @@ const raw = envSchema.parse({
   OPENROUTER_HTTP_REFERER: process.env.OPENROUTER_HTTP_REFERER,
   OPENAI_API_KEY: process.env.OPENAI_API_KEY,
   OPENAI_BASE_URL: process.env.OPENAI_BASE_URL,
+  OPENAI_TIMEOUT_MS:                    process.env.OPENAI_TIMEOUT_MS,
+  OPENAI_STREAM_TIMEOUT_MS:             process.env.OPENAI_STREAM_TIMEOUT_MS,
+  OPENAI_MAX_RETRIES:                   process.env.OPENAI_MAX_RETRIES,
+  OPENAI_EMBEDDING_MODEL:               process.env.OPENAI_EMBEDDING_MODEL,
+  OPENAI_EMBEDDING_DIMENSIONS:          process.env.OPENAI_EMBEDDING_DIMENSIONS,
+  OPENAI_SYNTHESIS_MODEL:               process.env.OPENAI_SYNTHESIS_MODEL,
+  OPENAI_WORKER_MODEL:                  process.env.OPENAI_WORKER_MODEL,
+  OPENAI_ROUTER_MODEL:                  process.env.OPENAI_ROUTER_MODEL,
+  OPENAI_AUDIT_MODEL:                   process.env.OPENAI_AUDIT_MODEL,
+  OPENAI_DEFAULT_BUDGET_MODE:           process.env.OPENAI_DEFAULT_BUDGET_MODE,
+  OPENAI_NANO_ROUTING_ENABLED:          process.env.OPENAI_NANO_ROUTING_ENABLED,
+  OPENAI_PRO_AUDIT_STAKE_THRESHOLD:     process.env.OPENAI_PRO_AUDIT_STAKE_THRESHOLD,
+  OPENAI_PRO_AUDIT_CONFLICT_THRESHOLD:  process.env.OPENAI_PRO_AUDIT_CONFLICT_THRESHOLD,
+  STRIPE_SECRET_KEY:                    process.env.STRIPE_SECRET_KEY,
+  STRIPE_WEBHOOK_SECRET:                process.env.STRIPE_WEBHOOK_SECRET,
+  STRIPE_PRICE_CORE:                    process.env.STRIPE_PRICE_CORE,
+  STRIPE_PRICE_SOVEREIGN:               process.env.STRIPE_PRICE_SOVEREIGN,
+  STRIPE_SUCCESS_URL:                   process.env.STRIPE_SUCCESS_URL,
+  STRIPE_CANCEL_URL:                    process.env.STRIPE_CANCEL_URL,
+  SOVEREIGN_CREATOR_USER_ID:            process.env.SOVEREIGN_CREATOR_USER_ID,
+  SOVEREIGN_CREATOR_EMAIL:              process.env.SOVEREIGN_CREATOR_EMAIL,
+  GOOGLE_API_KEY: process.env.GOOGLE_API_KEY,
   GOOGLE_CSE_API_KEY: process.env.GOOGLE_CSE_API_KEY,
   GOOGLE_CSE_ENGINE_ID: process.env.GOOGLE_CSE_ENGINE_ID,
   TAVILY_API_KEY: process.env.TAVILY_API_KEY,
@@ -160,15 +216,30 @@ const raw = envSchema.parse({
   CORS_ORIGINS: process.env.CORS_ORIGINS,
 });
 
+// ── GPT-5.4 family model ID constants ──────────────────────────────────────
+export const OPENAI_MODEL_NANO        = 'gpt-5.4-nano' as const;
+export const OPENAI_MODEL_MINI        = 'gpt-5.4-mini' as const;
+export const OPENAI_MODEL_FULL        = 'gpt-5.4' as const;
+export const OPENAI_MODEL_PRO         = 'gpt-5.4-pro' as const;
+
+// Role aliases
+export const OPENAI_MODEL_OVERSEER    = OPENAI_MODEL_FULL;   // Core + Sovereign Overseer
+export const OPENAI_MODEL_ARBITRATION = OPENAI_MODEL_PRO;    // hard arbitration only — no structured outputs
+
+// Legacy — do not use in new paths
+export const OPENAI_MODEL_GPT4O       = 'gpt-4o' as const;       // DEPRECATED
+export const OPENAI_MODEL_GPT4O_MINI  = 'gpt-4o-mini' as const;  // DEPRECATED
+// gpt-3.5-turbo: REMOVED — do not add a constant
+
 const sqlitePath = path.resolve(process.cwd(), raw.SQLITE_PATH);
 const dataDir = path.dirname(sqlitePath);
 
+// AUDIT FIX: P2-18 — gate localhost origins behind NODE_ENV to prevent production CORS bypass
 const DEFAULT_CORS_ORIGINS = [
-  'http://localhost:5173',
-  'http://localhost:3000',
   'https://obsidianatlastech.com',
   'https://www.obsidianatlastech.com',
-] as const;
+  ...(process.env.NODE_ENV !== 'production' ? ['http://localhost:5173', 'http://localhost:3000'] : []),
+];
 
 function parseCorsOrigins(raw: string | undefined): string[] {
   if (!raw?.trim()) return [...DEFAULT_CORS_ORIGINS];
@@ -177,6 +248,10 @@ function parseCorsOrigins(raw: string | undefined): string[] {
     .map((s) => s.trim())
     .filter(Boolean);
 }
+
+// ── Gemini Free-tier Overseer constants ──────────────────────────────────────
+export const GEMINI_MODEL_OVERSEER_FREE = 'gemini-3.1-flash-lite-preview' as const;
+export const GEMINI_OVERSEER_FALLBACK = OPENAI_MODEL_NANO;
 
 function parseModelPool(raw: string | undefined): string[] {
   if (!raw?.trim()) return [];
@@ -187,6 +262,7 @@ function parseModelPool(raw: string | undefined): string[] {
 }
 
 export const env = {
+  nodeEnv: raw.NODE_ENV ?? 'development',
   host: raw.HOST?.trim() || '0.0.0.0',
   port: raw.PORT,
   ollamaBaseUrl: raw.OLLAMA_BASE_URL.replace(/\/$/, ''),
@@ -231,7 +307,9 @@ export const env = {
   groqRouterModel: raw.GROQ_ROUTER_MODEL?.trim() || undefined,
   groqDelegateModel: raw.GROQ_DELEGATE_MODEL?.trim() || undefined,
   geminiApiKey: raw.GEMINI_API_KEY?.trim() || undefined,
-  geminiModel: raw.GEMINI_MODEL?.trim() || undefined,
+  geminiModel: raw.GEMINI_MODEL?.trim() || 'gemini-2.5-flash',
+  geminiOverseerModelFree: process.env['GEMINI_OVERSEER_MODEL_FREE'] ?? GEMINI_MODEL_OVERSEER_FREE,
+  geminiOverseerFallback: process.env['GEMINI_OVERSEER_FALLBACK'] ?? GEMINI_OVERSEER_FALLBACK,
   omniRouterTimeoutMs: raw.OMNI_ROUTER_TIMEOUT_MS ?? 12_000,
   /** Local Ollama stream budget for sovereign lane (was 180s; large prompts + slow GPUs need more). */
   omniLocalTimeoutMs: raw.OMNI_LOCAL_TIMEOUT_MS ?? 600_000,
@@ -240,13 +318,43 @@ export const env = {
   openrouterReferer: raw.OPENROUTER_HTTP_REFERER?.trim() || undefined,
   openaiApiKey: raw.OPENAI_API_KEY?.trim() || undefined,
   openaiBaseUrl: raw.OPENAI_BASE_URL?.trim() || undefined,
+  // ── OpenAI groundwork (Phase 2) ──────────────────────────────────────────
+  openaiTimeoutMs:               raw.OPENAI_TIMEOUT_MS ?? 30_000,
+  openaiStreamTimeoutMs:         raw.OPENAI_STREAM_TIMEOUT_MS ?? 60_000,
+  openaiMaxRetries:              raw.OPENAI_MAX_RETRIES ?? 2,
+  openaiEmbeddingModel:          raw.OPENAI_EMBEDDING_MODEL?.trim() || undefined,
+  openaiEmbeddingDimensions:     raw.OPENAI_EMBEDDING_DIMENSIONS ?? undefined,
+  openaiSynthesisModel:          raw.OPENAI_SYNTHESIS_MODEL?.trim() || undefined,
+  openaiWorkerModel:             raw.OPENAI_WORKER_MODEL?.trim() || undefined,
+  openaiRouterModel:             raw.OPENAI_ROUTER_MODEL?.trim() || undefined,
+  openaiAuditModel:              raw.OPENAI_AUDIT_MODEL?.trim() || undefined,
+  openaiDefaultBudgetMode:       (process.env['OPENAI_DEFAULT_BUDGET_MODE']   ?? 'fast') as 'fast' | 'balanced' | 'max-depth',
+  openaiNanoRoutingEnabled:      process.env['OPENAI_NANO_ROUTING_ENABLED']   !== 'false',
+  openaiProAuditStakeThreshold:  raw.OPENAI_PRO_AUDIT_STAKE_THRESHOLD ?? 70,
+  openaiProAuditConflictThreshold: raw.OPENAI_PRO_AUDIT_CONFLICT_THRESHOLD ?? 60,
+  // ── GPT-5.4 model routing (Phase 4) ────────────────────────────────────────
+  openaiOverseerModel:       process.env['OPENAI_OVERSEER_MODEL']        ?? OPENAI_MODEL_OVERSEER,
+  openaiNanoModel:           process.env['OPENAI_NANO_MODEL']             ?? OPENAI_MODEL_NANO,
+  openaiMiniModel:           process.env['OPENAI_MINI_MODEL']             ?? OPENAI_MODEL_MINI,
+  openaiProModel:            process.env['OPENAI_PRO_MODEL']              ?? OPENAI_MODEL_PRO,
+  // ── Stripe billing (Phase 3) ──────────────────────────────────────────────
+  stripeSecretKey:       raw.STRIPE_SECRET_KEY?.trim() || undefined,
+  stripeWebhookSecret:   raw.STRIPE_WEBHOOK_SECRET?.trim() || undefined,
+  stripePriceCore:       raw.STRIPE_PRICE_CORE?.trim() || undefined,
+  stripePriceSovereign:  raw.STRIPE_PRICE_SOVEREIGN?.trim() || undefined,
+  stripeSuccessUrl:      raw.STRIPE_SUCCESS_URL?.trim() || undefined,
+  stripeCancelUrl:       raw.STRIPE_CANCEL_URL?.trim() || undefined,
+  // ── Sovereign identity (Phase 1) ─────────────────────────────────────────
+  sovereignCreatorUserId: raw.SOVEREIGN_CREATOR_USER_ID?.trim() || undefined,
+  sovereignCreatorEmail:  raw.SOVEREIGN_CREATOR_EMAIL?.trim() || undefined,
+  googleApiKey: raw.GOOGLE_API_KEY?.trim() || undefined,
   googleCseApiKey: raw.GOOGLE_CSE_API_KEY?.trim() || undefined,
   googleCseEngineId: raw.GOOGLE_CSE_ENGINE_ID?.trim() || undefined,
   tavilyApiKey: raw.TAVILY_API_KEY?.trim() || undefined,
   /** Quota-backed system research; BYOK users never consume this. */
   systemTavilyApiKey:
     raw.SYSTEM_TAVILY_API_KEY?.trim() || raw.TAVILY_API_KEY?.trim() || undefined,
-  consensusGeminiModel: raw.CONSENSUS_GEMINI_MODEL?.trim() || 'gemini-1.5-pro',
+  consensusGeminiModel: raw.CONSENSUS_GEMINI_MODEL?.trim() || 'gemini-2.5-flash',
   consensusGroqAnalystModel: raw.CONSENSUS_GROQ_ANALYST_MODEL?.trim() || 'llama-3.3-70b-versatile',
   consensusGroqAltModel: raw.CONSENSUS_GROQ_ALT_MODEL?.trim() || 'mixtral-8x7b-32768',
   consensusGroqJudgeModel: raw.CONSENSUS_GROQ_JUDGE_MODEL?.trim() || 'llama-3.3-70b-versatile',

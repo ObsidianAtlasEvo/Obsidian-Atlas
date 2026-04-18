@@ -3,6 +3,7 @@ import Database from 'better-sqlite3';
 import fs from 'node:fs';
 import path from 'node:path';
 import { env } from '../config/env.js';
+import { runMigration as runBillingMigration } from '../services/billing/subscriptionSchema.js';
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS memories (
@@ -775,6 +776,39 @@ CREATE TABLE IF NOT EXISTS mind_map_snapshots (
 CREATE INDEX IF NOT EXISTS idx_mm_snap_user ON mind_map_snapshots(user_id, created_at DESC);
 `;
 
+/** Gap Ledger — governance gaps formerly stored in Firestore. */
+const GAP_LEDGER_TABLES = `
+CREATE TABLE IF NOT EXISTS governance_gaps (
+  id TEXT PRIMARY KEY NOT NULL,
+  title TEXT NOT NULL,
+  description TEXT NOT NULL,
+  severity TEXT NOT NULL DEFAULT 'medium',
+  status TEXT NOT NULL DEFAULT 'identified',
+  notes TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_governance_gaps_status ON governance_gaps(status);
+CREATE INDEX IF NOT EXISTS idx_governance_gaps_created ON governance_gaps(created_at DESC);
+`;
+
+/** Change Control — governance change proposals (migrated from Firestore). */
+const CHANGE_CONTROL_TABLE = `
+CREATE TABLE IF NOT EXISTS governance_changes (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  description TEXT NOT NULL,
+  impact TEXT NOT NULL,
+  proposedBy TEXT NOT NULL DEFAULT 'system',
+  status TEXT NOT NULL DEFAULT 'pending',
+  notes TEXT,
+  createdAt INTEGER NOT NULL,
+  updatedAt INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_governance_changes_status ON governance_changes(status);
+CREATE INDEX IF NOT EXISTS idx_governance_changes_time ON governance_changes(createdAt DESC);
+`;
+
 /** Phase 4 §5 — Data Retention & Deletion tables. */
 const RETENTION_TABLES = `
 CREATE TABLE IF NOT EXISTS atlas_sovereign_audit (
@@ -844,6 +878,23 @@ CREATE TABLE IF NOT EXISTS atlas_deletion_runs (
 );
 `;
 
+/** Substrate Unification: journal entries (user-authored cognitive artifacts). */
+const SUBSTRATE_UNIFICATION = `
+CREATE TABLE IF NOT EXISTS journal_entries (
+  id TEXT PRIMARY KEY NOT NULL,
+  user_id TEXT NOT NULL,
+  title TEXT NOT NULL DEFAULT '',
+  content TEXT NOT NULL DEFAULT '',
+  mood TEXT,
+  tags TEXT NOT NULL DEFAULT '[]',
+  assistance_mode TEXT,
+  analysis TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_journal_entries_user_id ON journal_entries(user_id, created_at DESC);
+`;
+
 let _db: Database.Database | null = null;
 
 /**
@@ -853,23 +904,76 @@ export function initSqlite(): Database.Database {
   if (_db) return _db;
 
   const file = env.sqlitePath;
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  const database = new Database(file);
-  database.pragma('journal_mode = WAL');
-  database.pragma('foreign_keys = ON');
-  database.exec(SCHEMA);
-  database.exec(SOVEREIGNTY_LAYER_V1);
-  database.exec(SOVEREIGNTY_LAYER_V2);
-  database.exec(SOVEREIGNTY_LAYER_V3);
-  database.exec(SOVEREIGNTY_LAYER_V4);
-  database.exec(SOVEREIGNTY_LAYER_V5);
-  database.exec(SOVEREIGNTY_LAYER_V6);
-  database.exec(RETENTION_TABLES);
-  migratePolicyProfileColumns(database);
-  migrateSectionVIIIContinuity(database);
-  migrateArchivedAtIndexes(database);
-  _db = database;
-  return _db;
+  console.log(`[SQLite] Opening database at ${file}`);
+
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const database = new Database(file);
+    database.pragma('journal_mode = WAL');
+    database.pragma('foreign_keys = ON');
+    database.exec(SCHEMA);
+    database.exec(SOVEREIGNTY_LAYER_V1);
+    database.exec(SOVEREIGNTY_LAYER_V2);
+    database.exec(SOVEREIGNTY_LAYER_V3);
+    database.exec(SOVEREIGNTY_LAYER_V4);
+    database.exec(SOVEREIGNTY_LAYER_V5);
+    database.exec(SOVEREIGNTY_LAYER_V6);
+    database.exec(RETENTION_TABLES);
+    database.exec(GAP_LEDGER_TABLES);
+    database.exec(CHANGE_CONTROL_TABLE);
+    database.exec(SUBSTRATE_UNIFICATION);
+    migrateBillingSubscriptionSchema(database);
+    runBillingMigration(database);
+    migratePolicyProfileColumns(database);
+    migrateSectionVIIIContinuity(database);
+    migrateArchivedAtIndexes(database);
+    _db = database;
+    return _db;
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[FATAL] SQLite cannot open database at ${file}: ${msg}. Check that the directory exists and is writable.`);
+    throw err;
+  }
+}
+
+/**
+ * Reconcile the user_subscriptions table from the old snake_case schema
+ * (Phase 3 initial commit) to the canonical camelCase schema used by
+ * subscriptionSchema.ts / stripeService.ts. Idempotent — uses safe
+ * ALTER TABLE ADD COLUMN instead of DROP TABLE to preserve existing data.
+ */
+function migrateBillingSubscriptionSchema(database: Database.Database): void {
+  const tableExists = database
+    .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='user_subscriptions'`)
+    .get() as { name: string } | undefined;
+  if (!tableExists) return; // runBillingMigration will create it fresh
+
+  const cols = database.prepare(`PRAGMA table_info(user_subscriptions)`).all() as { name: string }[];
+  const colNames = new Set(cols.map((c) => c.name));
+
+  // If the table already has camelCase columns, nothing to do
+  if (colNames.has('userId')) return;
+
+  // Old schema detected (snake_case columns). Add any missing camelCase columns
+  // so downstream code works regardless of which schema the table was created with.
+  const additions: [string, string][] = [
+    ['userId',              'TEXT'],
+    ['stripeCustomerId',    'TEXT'],
+    ['stripeSubscriptionId','TEXT'],
+    ['tier',                "TEXT NOT NULL DEFAULT 'free'"],
+    ['status',              "TEXT NOT NULL DEFAULT 'inactive'"],
+    ['currentPeriodEnd',    'INTEGER'],
+    ['cancelAtPeriodEnd',   'INTEGER NOT NULL DEFAULT 0'],
+    ['gracePeriodEnd',      'INTEGER'],
+    ['createdAt',           'INTEGER'],
+    ['updatedAt',           'INTEGER'],
+  ];
+
+  for (const [col, typedef] of additions) {
+    if (!colNames.has(col)) {
+      database.exec(`ALTER TABLE user_subscriptions ADD COLUMN ${col} ${typedef}`);
+    }
+  }
 }
 
 /** Add Chrysalis telemetry columns on existing DBs (idempotent). */

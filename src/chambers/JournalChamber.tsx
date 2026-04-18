@@ -1,8 +1,10 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useAtlasStore } from '../store/useAtlasStore';
-import { complete } from '../lib/ollama';
+import { backendComplete } from '../lib/backendInference';
 import { buildAnalysisPrompt } from '../lib/atlasPrompt';
 import { nowISO } from '../lib/persistence';
+import { SyncStatusIndicator } from '../components/SyncStatusIndicator';
+import type { SyncStatus } from '../lib/sovereignSync';
 import type { JournalEntry, JournalAssistanceMode } from '@/types';
 
 // ── Assistance mode labels ─────────────────────────────────────────────────
@@ -177,6 +179,7 @@ export default function JournalChamber() {
   const [editTitle, setEditTitle] = useState('');
   const [assistMode, setAssistMode] = useState<JournalAssistanceMode>('reflective-mirror');
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [syncStatus] = useState<SyncStatus>('idle');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const selected = journal.find((e) => e.id === selectedId) ?? null;
@@ -256,10 +259,9 @@ Respond with a JSON object with this exact structure:
 Return ONLY valid JSON. No commentary.`);
 
     try {
-      const raw = await complete([
-        { role: 'system', content: 'You are an analytical engine. Return only valid JSON.' },
-        { role: 'user', content: prompt },
-      ], { temperature: 0.3 });
+      const currentUser = useAtlasStore.getState().currentUser;
+      const userId = currentUser?.uid ?? currentUser?.email ?? 'anonymous';
+      const raw = await backendComplete(prompt, { system: 'You are an analytical engine. Return only valid JSON.', userId });
 
       const jsonMatch = raw.match(/\{[\s\S]*\}/);
       if (!jsonMatch) throw new Error('No JSON found');
@@ -317,6 +319,7 @@ Return ONLY valid JSON. No commentary.`);
             <div style={{ fontSize: '0.75rem', fontWeight: 500, color: 'rgba(226,232,240,0.8)', letterSpacing: '-0.01em' }}>Journal</div>
             <div style={{ fontSize: '0.62rem', color: 'rgba(226,232,240,0.25)', marginTop: 1 }}>
               {journal.length} {journal.length === 1 ? 'entry' : 'entries'}
+              <SyncStatusIndicator status={syncStatus} />
             </div>
           </div>
           <button

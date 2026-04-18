@@ -15,7 +15,7 @@ import React, {
   useCallback,
 } from 'react';
 import { useAtlasStore } from '../store/useAtlasStore';
-import { streamChat, type OllamaMessage } from '../lib/ollama';
+import { streamBackendChat } from '../lib/backendInference';
 import { generateId } from '../lib/persistence';
 import type {
   CrucibleMode,
@@ -1255,9 +1255,9 @@ function ActiveSession() {
     return 'reality-check';
   }, []);
 
-  const buildConversationHistory = useCallback((): OllamaMessage[] => {
+  const buildConversationHistory = useCallback((): { role: string; content: string }[] => {
     const systemPrompt = buildCrucibleSystemPrompt(mode, intensity, topic);
-    const history: OllamaMessage[] = [{ role: 'system', content: systemPrompt }];
+    const history: { role: string; content: string }[] = [{ role: 'system', content: systemPrompt }];
 
     // Include prior exchanges (last 16 turns)
     const recent = exchanges.slice(-8);
@@ -1305,7 +1305,10 @@ function ActiveSession() {
     const history = buildConversationHistory();
     history.push({ role: 'user', content: text });
 
-    abortRef.current = streamChat(
+    const currentUser = useAtlasStore.getState().currentUser;
+    const userId = currentUser?.uid ?? currentUser?.email ?? 'anonymous';
+
+    abortRef.current = streamBackendChat(
       history,
       {
         onToken: (token) => {
@@ -1332,24 +1335,22 @@ function ActiveSession() {
             )
           );
 
-          // Persist to store
           addCrucibleExchange({
             userInput: text,
             atlasResponse: fullText,
             epistemicCategory: category,
           });
         },
-        onError: (err) => {
+        onError: (message, code) => {
           clearInterval(labelInterval);
           setThinkingLabel(null);
           setIsStreaming(false);
 
-          let errorMsg = err.message;
-          if (err.code === 'NETWORK') {
-            errorMsg = 'Cannot reach the local model. Make sure Ollama is running.';
-          } else if (err.code === 'ABORTED') {
-            return;
-          }
+          if (code === 'ABORTED') return;
+
+          const errorMsg = code === 'NETWORK'
+            ? 'Cannot reach Atlas backend. Check your connection.'
+            : message;
 
           setExchanges((prev) =>
             prev.map((ex) =>
@@ -1360,7 +1361,7 @@ function ActiveSession() {
           );
         },
       },
-      { temperature: intensityConf.temp }
+      { userId },
     );
   }, [inputValue, isStreaming, buildConversationHistory, intensityConf.temp, inferCategory, addCrucibleExchange]);
 

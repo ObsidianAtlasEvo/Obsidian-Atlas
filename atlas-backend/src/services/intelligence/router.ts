@@ -1,12 +1,14 @@
 import { env } from '../../config/env.js';
+import {
+  SOVEREIGN_CREATOR_EMAIL,
+  isSovereignOwnerEmail,
+} from './sovereignCreatorDirective.js';
 import type { GenerateInput, GenerateOutput, ModelProvider } from '../model/modelProvider.js';
 import { createOllamaModelProvider } from '../model/ollamaClient.js';
 import type { IntelligenceSurface, RoutedGenerateInput, StreamChunk } from './types.js';
 
 /** Server-only sovereign operator identity; normalized before compare. */
-export const SOVEREIGN_OWNER_EMAIL_RAW = 'crowleyrc62@gmail.com';
-
-const SOVEREIGN_OWNER_EMAIL_NORMALIZED = normalizeEmail(SOVEREIGN_OWNER_EMAIL_RAW);
+export const SOVEREIGN_OWNER_EMAIL_RAW = SOVEREIGN_CREATOR_EMAIL;
 
 export function normalizeEmail(email: string | null | undefined): string | null {
   if (email == null || typeof email !== 'string') return null;
@@ -14,14 +16,14 @@ export function normalizeEmail(email: string | null | undefined): string | null 
   return t.length ? t : null;
 }
 
-export function isSovereignOwnerEmail(email: string | null | undefined): boolean {
-  return normalizeEmail(email) === SOVEREIGN_OWNER_EMAIL_NORMALIZED;
-}
+export { isSovereignOwnerEmail };
 
 let ollamaReachableCache: { at: number; ok: boolean } | null = null;
 const OLLAMA_HEALTH_TTL_MS = 5000;
 
 export async function isLocalOllamaReachable(signal?: AbortSignal): Promise<boolean> {
+  if (!env.ollamaBaseUrl) return false;
+
   const now = Date.now();
   if (ollamaReachableCache && now - ollamaReachableCache.at < OLLAMA_HEALTH_TTL_MS) {
     return ollamaReachableCache.ok;
@@ -184,7 +186,7 @@ export class LocalOllamaAdapter implements IntelligenceSurface {
     let completionTokens: number | undefined;
 
     try {
-      const res = await fetch(`${env.ollamaBaseUrl}/chat`, {
+      const res = await fetch(`${env.ollamaBaseUrl}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),

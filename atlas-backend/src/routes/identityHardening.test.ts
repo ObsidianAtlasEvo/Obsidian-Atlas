@@ -48,7 +48,7 @@ test('registerOllamaCompatRoutes rejects unauthenticated requests', async () => 
 
   const response = await app.inject({
     method: 'POST',
-    url: '/api/chat',
+    url: '/v1/ollama/chat',
     remoteAddress: '198.51.100.1',
     payload: {
       messages: [{ role: 'user', content: 'hello' }],
@@ -64,7 +64,7 @@ test('registerExplanationRoutes rejects unauthenticated requests', async () => {
 
   const response = await app.inject({
     method: 'POST',
-    url: '/api/governance/nlsummary',
+    url: '/v1/governance/nlsummary',
     remoteAddress: '198.51.100.2',
     payload: {
       entries: [],
@@ -81,7 +81,7 @@ test('registerExplanationRoutes returns 429 after repeated requests from the sam
   for (let i = 0; i < 10; i += 1) {
     const response = await app.inject({
       method: 'POST',
-      url: '/api/governance/nlsummary',
+      url: '/v1/governance/nlsummary',
       remoteAddress: '198.51.100.10',
       payload: { entries: [] },
     });
@@ -90,7 +90,7 @@ test('registerExplanationRoutes returns 429 after repeated requests from the sam
 
   const blocked = await app.inject({
     method: 'POST',
-    url: '/api/governance/nlsummary',
+    url: '/v1/governance/nlsummary',
     remoteAddress: '198.51.100.10',
     payload: { entries: [] },
   });
@@ -105,7 +105,7 @@ test('registerOllamaCompatRoutes returns 429 after repeated requests from the sa
   for (let i = 0; i < 5; i += 1) {
     const response = await app.inject({
       method: 'POST',
-      url: '/api/chat',
+      url: '/v1/ollama/chat',
       remoteAddress: '198.51.100.20',
       payload: { messages: [{ role: 'user', content: 'hello' }] },
     });
@@ -114,7 +114,7 @@ test('registerOllamaCompatRoutes returns 429 after repeated requests from the sa
 
   const blocked = await app.inject({
     method: 'POST',
-    url: '/api/chat',
+    url: '/v1/ollama/chat',
     remoteAddress: '198.51.100.20',
     payload: { messages: [{ role: 'user', content: 'hello' }] },
   });

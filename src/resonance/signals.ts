@@ -1,6 +1,6 @@
 import { ResonanceObservation, ResonanceConfidence } from "./types";
 import { RESONANCE_SIGNAL_EXTRACTION_PROMPT } from "./prompts";
-import { ollamaComplete, parseJsonFromAssistant } from "../services/ollamaClient";
+import { backendComplete as ollamaComplete, parseJsonFromBackend as parseJsonFromAssistant } from "../lib/backendInference";
 
 /**
  * Extracts message-level resonance signals from a user message.
@@ -9,7 +9,8 @@ import { ollamaComplete, parseJsonFromAssistant } from "../services/ollamaClient
 export async function extractResonanceSignals(
   messageId: string,
   messageContent: string,
-  _userContext?: string // Optional context from the user model
+  _userContext?: string, // Optional context from the user model
+  userId?: string,
 ): Promise<ResonanceObservation> {
   const basePrompt = RESONANCE_SIGNAL_EXTRACTION_PROMPT.replace("{{MESSAGE}}", messageContent);
   const prompt = `${basePrompt}
@@ -23,7 +24,7 @@ Return ONLY valid JSON (no markdown fences) with:
 `;
 
   try {
-    const raw = await ollamaComplete(prompt, { json: true });
+    const raw = await ollamaComplete(prompt, { json: true, userId });
     const result = parseJsonFromAssistant<Record<string, unknown>>(raw);
 
     return {

@@ -3,6 +3,7 @@
  */
 
 import { idbAuthGet, idbAuthPut, type AuthUserRecord } from './atlasIndexedDb';
+import { SOVEREIGN_CREATOR_EMAIL } from '../config/sovereignCreator';
 
 const SESSION_KEY = 'atlas-local-session-v1';
 
@@ -133,51 +134,35 @@ export function onAuthStateChanged(_auth: Auth, nextOrObserver: AuthCb): () => v
   };
 }
 
+/**
+ * @deprecated UNSAFE — stores passwords in plaintext in IndexedDB.
+ * This method is dead code and must not be re-enabled without a proper
+ * hashing implementation. Google OAuth is the only supported auth path.
+ * @throws Always throws in production builds.
+ */
+// AUDIT FIX: P2-20 — Email/password auth is permanently disabled. This shim stored
+// passwords in plaintext in IndexedDB. Use Google OAuth via /auth/google instead.
 export async function signInWithEmailAndPassword(
   _auth: Auth,
-  email: string,
-  password: string
+  _email: string,
+  _password: string
 ): Promise<UserCredential> {
-  const trimmed = email.trim();
-  const uid = stableUidFromEmail(trimmed);
-  let rec = await idbAuthGet(uid);
-  if (!rec) {
-    rec = {
-      email: trimmed,
-      password,
-      emailVerified: trimmed !== 'crowleyrc62@gmail.com',
-    };
-    await idbAuthPut(uid, rec);
-  } else if (rec.password !== password) {
-    throw new Error('Firebase: Error (auth/wrong-password).');
-  }
-  const user = new User(uid, rec.email, rec.emailVerified);
-  writeSession(user);
-  notify(user);
-  return { user };
+  throw new Error('Email/password authentication is disabled. Use Google OAuth.');
 }
 
+/**
+ * @deprecated UNSAFE — stores passwords in plaintext in IndexedDB.
+ * This method is dead code and must not be re-enabled without a proper
+ * hashing implementation. Google OAuth is the only supported auth path.
+ * @throws Always throws in production builds.
+ */
+// AUDIT FIX: P2-20 — Email/password registration is permanently disabled. See above.
 export async function createUserWithEmailAndPassword(
   _auth: Auth,
-  email: string,
-  password: string
+  _email: string,
+  _password: string
 ): Promise<UserCredential> {
-  const trimmed = email.trim();
-  const uid = stableUidFromEmail(trimmed);
-  const existing = await idbAuthGet(uid);
-  if (existing) {
-    throw new Error('Firebase: Error (auth/email-already-in-use).');
-  }
-  const rec: AuthUserRecord = {
-    email: trimmed,
-    password,
-    emailVerified: trimmed !== 'crowleyrc62@gmail.com',
-  };
-  await idbAuthPut(uid, rec);
-  const user = new User(uid, rec.email, rec.emailVerified);
-  writeSession(user);
-  notify(user);
-  return { user };
+  throw new Error('Email/password authentication is disabled. Use Google OAuth.');
 }
 
 export async function signOut(_auth: Auth): Promise<void> {

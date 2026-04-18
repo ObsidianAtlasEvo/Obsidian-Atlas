@@ -1,6 +1,58 @@
 import { getDb } from '../../db/sqlite.js';
 import type { PolicyProfile } from '../../types/atlas.js';
 
+// ---------------------------------------------------------------------------
+// Feature flags
+// ---------------------------------------------------------------------------
+
+export interface ActiveFeatureFlag {
+  feature: string;
+  confidence: number;
+  recommended_at: string;
+  expires_at: string | null;
+}
+
+/**
+ * Returns all non-expired feature flags with confidence > 0 for a user.
+ * Reads from user_feature_recommendations (written by evolveFeatureFlags).
+ */
+export function getActiveFeatureFlags(userId: string): ActiveFeatureFlag[] {
+  const db = getDb();
+  try {
+    const rows = db
+      .prepare(
+        `SELECT feature, confidence, recommended_at, expires_at
+         FROM user_feature_recommendations
+         WHERE user_id = ?
+           AND (expires_at IS NULL OR expires_at > datetime('now'))
+           AND (confidence IS NULL OR confidence > 0)
+         ORDER BY confidence DESC, recommended_at DESC`
+      )
+      .all(userId) as Array<{
+        feature: string;
+        confidence: number | null;
+        recommended_at: string;
+        expires_at: string | null;
+      }>;
+    return rows.map((r) => ({
+      feature: r.feature,
+      confidence: r.confidence ?? 1.0,
+      recommended_at: r.recommended_at,
+      expires_at: r.expires_at,
+    }));
+  } catch {
+    // Table may not exist yet on first run before migration
+    return [];
+  }
+}
+
+// ---------------------------------------------------------------------------
+// IMPORTANT: These are structural fallback defaults only.
+// They are NOT learned preferences. They must NEVER be presented to the LLM
+// as user-stated or user-derived settings.
+// A new user's profile is "unlearned" until explicit signals update it.
+// Use profile.isLearned to gate whether policy values are passed to the LLM.
+// ---------------------------------------------------------------------------
 export const DEFAULT_POLICY_PROFILE_VALUES: Omit<PolicyProfile, 'userId' | 'updatedAt'> = {
   verbosity: 'medium',
   tone: 'analytical',
@@ -9,6 +61,7 @@ export const DEFAULT_POLICY_PROFILE_VALUES: Omit<PolicyProfile, 'userId' | 'upda
   writingStyleEnabled: false,
   preferredComputeDepth: 'Light',
   latencyTolerance: 'Low',
+  isLearned: false,
 };
 
 function rowToProfile(
@@ -22,6 +75,7 @@ function rowToProfile(
     preferred_compute_depth?: string | null;
     latency_tolerance?: string | null;
     updated_at: string;
+    is_learned?: number | null;
   }
 ): PolicyProfile {
   const depthRaw = row.preferred_compute_depth ?? 'Light';
@@ -36,6 +90,7 @@ function rowToProfile(
     preferredComputeDepth: depthRaw === 'Heavy' ? 'Heavy' : 'Light',
     latencyTolerance: latRaw === 'High' ? 'High' : 'Low',
     updatedAt: row.updated_at,
+    isLearned: Boolean(row.is_learned),
   };
 }
 
@@ -44,7 +99,8 @@ export function getPolicyProfile(userId: string): PolicyProfile {
   const row = db
     .prepare(
       `SELECT verbosity, tone, structure_preference, truth_first_strictness, writing_style_enabled,
-              preferred_compute_depth, latency_tolerance, updated_at
+              preferred_compute_depth, latency_tolerance, updated_at,
+              COALESCE(is_learned, 0) as is_learned
        FROM policy_profiles WHERE user_id = ?`
     )
     .get(userId) as
@@ -57,6 +113,7 @@ export function getPolicyProfile(userId: string): PolicyProfile {
         preferred_compute_depth?: string | null;
         latency_tolerance?: string | null;
         updated_at: string;
+        is_learned?: number | null;
       }
     | undefined;
 
@@ -65,8 +122,8 @@ export function getPolicyProfile(userId: string): PolicyProfile {
     db.prepare(
       `INSERT INTO policy_profiles (
          user_id, verbosity, tone, structure_preference, truth_first_strictness, writing_style_enabled,
-         preferred_compute_depth, latency_tolerance, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         preferred_compute_depth, latency_tolerance, updated_at, is_learned
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`
     ).run(
       userId,
       DEFAULT_POLICY_PROFILE_VALUES.verbosity,
@@ -105,13 +162,15 @@ export function updatePolicyProfile(
     ...patch,
     userId,
     updatedAt: new Date().toISOString(),
+    isLearned: true,  // Any explicit update marks the profile as learned
   };
 
   const db = getDb();
   db.prepare(
     `UPDATE policy_profiles SET
       verbosity = ?, tone = ?, structure_preference = ?, truth_first_strictness = ?,
-      writing_style_enabled = ?, preferred_compute_depth = ?, latency_tolerance = ?, updated_at = ?
+      writing_style_enabled = ?, preferred_compute_depth = ?, latency_tolerance = ?, updated_at = ?,
+      is_learned = 1
      WHERE user_id = ?`
   ).run(
     next.verbosity,

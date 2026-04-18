@@ -135,6 +135,34 @@ function buildCognitionSection(state: AppState): string {
 - Contradiction tolerance: ${((sig.topology?.toleranceForUnresolvedTension ?? 0.65) * 100).toFixed(0)}%`;
 }
 
+function buildResonanceSection(state: AppState): string {
+  const { resonance } = state;
+  if (!resonance?.threads?.length) return '';
+
+  const activeThreads = resonance.threads.filter((t) => t.status === 'active');
+  if (activeThreads.length === 0) return '';
+
+  const lines: string[] = [];
+
+  // Top active themes
+  const topThemes = activeThreads
+    .sort((a, b) => b.coherence - a.coherence)
+    .slice(0, 5);
+  lines.push('- Active Themes: ' + topThemes.map((t) => `${t.topic} (coherence: ${(t.coherence * 100).toFixed(0)}%)`).join(', '));
+
+  // Resonance mode
+  if (resonance.activeMode) {
+    lines.push(`- Resonance Mode: ${resonance.activeMode}`);
+  }
+
+  // Learning state
+  if (resonance.isLearning) {
+    lines.push('- Status: Actively learning from interactions');
+  }
+
+  return `## Adaptive Resonance Context\n${lines.join('\n')}`;
+}
+
 function buildConstitutionSection(state: AppState): string {
   const { constitution } = state;
   if (!constitution.values.length && !constitution.goals.length) return '';
@@ -178,6 +206,7 @@ export function buildAtlasSystemPrompt(state: AppState): string {
     buildDoctrineSection(state.userModel.doctrine),
     buildDirectivesSection(state.directives),
     buildMemorySection(state),
+    buildResonanceSection(state),
   ].filter(Boolean);
 
   // Response format guidance

@@ -19,7 +19,7 @@ import {
 } from 'lucide-react';
 import { AppState, MirrorforgeModel } from '../types';
 import { cn } from '../lib/utils';
-import { conductMirrorforgeReflection } from '../services/ollamaService';
+import { conductMirrorforgeReflection } from '../lib/atlasMirrorforge';
 import { ATLAS_TRACE_CHANNEL, atlasTraceUserId } from '../lib/atlasTraceContext';
 
 interface MirrorforgeProps {
@@ -52,7 +52,7 @@ export function Mirrorforge({ state, setState }: MirrorforgeProps) {
         input,
         activeMode.label,
         state.userModel,
-        { userId: atlasTraceUserId(state), channel: ATLAS_TRACE_CHANNEL.mirrorforge }
+        atlasTraceUserId(state),
       );
       setMirrorLog((prev) => [...prev, { role: 'atlas', text: atlasResponse || '(empty response)' }]);
     } catch (e) {

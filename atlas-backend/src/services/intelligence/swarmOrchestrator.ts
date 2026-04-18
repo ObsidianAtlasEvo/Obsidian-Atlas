@@ -4,6 +4,8 @@ import type { PolicyProfile } from '../../types/atlas.js';
 import type { GroqRoutingDecision } from './routingTypes.js';
 import {
   DEFAULT_SWARM_MODEL_ID,
+  FALLBACK_SWARM_MODEL_ID,
+  assertEntryUsable,
   getRegistryEntry,
   getLlmRegistryJsonForPrompt,
   normalizeRegistryModelId,
@@ -11,15 +13,23 @@ import {
   type RegistryModelId,
 } from './llmRegistry.js';
 import { buildConstitutionalVerificationBundle } from './constitutionalContext.js';
+import { getActiveFeatureFlags } from '../evolution/policyStore.js';
 import { buildPrimeDirective, messagesWithPrimeDirective, type DelegatorMessage } from './primeDirective.js';
+import {
+  inferSovereignResponseMode,
+  sovereignModeDirective,
+  type SovereignResponseMode,
+} from './sovereigntyResponseRouter.js';
 import {
   buildChiefRoutingPayload,
   type MirrorforgeState,
   userTelemetryFromPolicyProfile,
 } from './telemetryTranslator.js';
 import { isLocalOllamaReachable } from './router.js';
+import { TIER_MODEL_ACCESS, type SubscriptionTier } from './groundwork/v4/subscriptionSchema.js';
 import {
   completeGeminiChat,
+  completeGeminiOverseerFree,
   completeGroqChat,
   streamGeminiChat,
   streamGroqChat,
@@ -83,7 +93,7 @@ function normalizePlanModelField(model: string): RegistryModelId {
   return normalizeRegistryModelId(model);
 }
 
-/** Coerce invalid / unknown models → default Groq registry id (fail-safe). */
+/** Coerce invalid / unknown models → default registry id (fail-safe). */
 export function normalizeExecutionPlan(plan: ExecutionPlan): ExecutionPlan {
   if (plan.strategy === 'swarm') {
     return {
@@ -111,17 +121,19 @@ function canRunRegistryEntry(entry: LlmRegistryEntry): boolean {
   if (entry.tier === 'premium' && !premiumModelAvailable()) return false;
   if (entry.backend === 'gemini_sdk' && !env.geminiApiKey?.trim()) return false;
   if (entry.backend === 'groq' && !(env.groqApiKey?.trim() || env.cloudOpenAiApiKey?.trim())) return false;
+  if (entry.backend === 'openai_chat' && !env.openaiApiKey?.trim()) return false;
   if (entry.backend === 'openrouter' && !premiumModelAvailable()) return false;
+  if (entry.backend === 'ollama' && env.disableLocalOllama) return false;
   return true;
 }
 
 /**
- * Downgrade unavailable specialists to {@link DEFAULT_SWARM_MODEL_ID} (server truth).
+ * Downgrade unavailable specialists to {@link FALLBACK_SWARM_MODEL_ID} (server truth).
  */
 export function enforcePlanRegistryAndCredentials(plan: ExecutionPlan): ExecutionPlan {
   const norm = normalizeExecutionPlan(plan);
 
-  const fallback = (): RegistryModelId => DEFAULT_SWARM_MODEL_ID;
+  const fallback = (): RegistryModelId => FALLBACK_SWARM_MODEL_ID;
 
   if (norm.strategy === 'swarm') {
     return {
@@ -143,6 +155,49 @@ export function enforcePlanRegistryAndCredentials(plan: ExecutionPlan): Executio
     return { ...norm, model: fallback() };
   }
   return { ...norm, model: id };
+}
+
+/**
+ * Fix 3: Enforce tier model access — downgrade any model the Chief of Staff assigned
+ * that is not in the user's tier allowlist. Prevents cost leaks from free-tier users
+ * being routed to claude-opus or gpt-5.4.
+ */
+export function enforceTierModelAccess(plan: ExecutionPlan, userTier?: SubscriptionTier): ExecutionPlan {
+  if (!userTier) return plan; // no tier info — skip enforcement
+
+  const tierAccess = TIER_MODEL_ACCESS[userTier];
+  if (!tierAccess) return plan;
+
+  const allowedSet = new Set(tierAccess.modelIds);
+  // Also allow the swarm-level IDs that map from the canonical TIER_MODEL_ACCESS IDs.
+  // TIER_MODEL_ACCESS uses bare IDs like 'groq/llama-3.3-70b-versatile' and 'gpt-5.4-nano'.
+  // The swarm uses IDs like 'groq-llama3-70b'. Map the Groq one explicitly.
+  if (allowedSet.has('groq/llama-3.3-70b-versatile')) {
+    allowedSet.add('groq-llama3-70b');
+  }
+  // gemini-3.1-flash-lite-preview is the free-tier Overseer — always allow it for free tier
+  if (userTier === 'free') {
+    allowedSet.add('gemini-3.1-flash-lite-preview');
+  }
+
+  const freeTierDefault: RegistryModelId = FALLBACK_SWARM_MODEL_ID; // groq-llama3-70b — fast safe fallback
+
+  if (plan.strategy === 'swarm') {
+    return {
+      ...plan,
+      steps: plan.steps.map((s) => {
+        if (allowedSet.has(s.model)) return s;
+        console.warn(`[swarm] Tier enforcement: downgrading ${s.model} → ${freeTierDefault} for tier '${userTier}'`);
+        return { ...s, model: freeTierDefault };
+      }),
+    };
+  }
+
+  if (!allowedSet.has(plan.model)) {
+    console.warn(`[swarm] Tier enforcement: downgrading ${plan.model} → ${freeTierDefault} for tier '${userTier}'`);
+    return { ...plan, model: freeTierDefault };
+  }
+  return plan;
 }
 
 export async function enforceSovereignLocalGpu(
@@ -182,10 +237,52 @@ export async function enforceSovereignLocalGpu(
 }
 
 // ---------------------------------------------------------------------------
-// Groq Chief of Staff — system prompt (registry + telemetry)
+// Overseer — identity-enforcement system prompt (final synthesis layer)
 // ---------------------------------------------------------------------------
 
-const CHIEF_OF_STAFF_SYSTEM = `You are Atlas Chief of Staff (Groq): a swarm orchestrator. You decide HOW compute is dispatched across registered specialists.
+const OVERSEER_SYSTEM_PROMPT = `
+You are Atlas — a sovereign intelligence layer operating as the final synthesis and identity-enforcement lens.
+
+ROLE:
+You receive the outputs of multiple specialist worker models, the user's evolution profile, memory context, and tool outputs. Your task is to synthesize these into a single, coherent, Atlas-identity response.
+
+IDENTITY ENFORCEMENT:
+- Apply Atlas doctrine to every response
+- Enforce truth constraints — never speculate as fact
+- Apply the user's evolution context and preferences
+- Resolve contradictions between worker outputs using doctrine as the tiebreaker
+
+OUTPUT:
+- Produce the final user-facing response in Atlas voice
+- If a policy conflict exists that cannot be resolved by synthesis, emit requireProAudit: true and describe the conflict. Do not resolve it yourself.
+- Never expose raw worker outputs to the user
+- Never break Atlas identity to defer to a model provider's style
+
+WORKERS:
+The inputs you receive come from specialist worker models. They are raw material, not final answers.
+`.trim();
+
+/**
+ * Resolve the correct Overseer model for the user's subscription tier.
+ * Free → gpt-5.4-nano; Core + Sovereign → gpt-5.4.
+ */
+function resolveOverseerModel(tier?: string): string {
+  if (tier === 'free') return 'gpt-5.4-nano';
+  return 'gpt-5.4'; // Core + Sovereign
+}
+
+/**
+ * Intermediate synthesis model for swarm pipelines (between workers and Overseer).
+ * Used when multi-step swarms need consolidation before the final Overseer pass.
+ * Exported for use by future intermediate synthesis steps — not Groq.
+ */
+export const INTERMEDIATE_SYNTHESIS_MODEL = 'gpt-5.4-mini';
+
+// ---------------------------------------------------------------------------
+// Chief of Staff — routing planner (decides strategy, NOT the final synthesis)
+// ---------------------------------------------------------------------------
+
+const CHIEF_OF_STAFF_SYSTEM = `You are Atlas Overseer (OpenAI): a swarm orchestrator. You decide HOW compute is dispatched across registered specialists.
 
 AVAILABLE_LLM_REGISTRY (JSON array — you MUST only assign work to "id" values present here):
 ${getLlmRegistryJsonForPrompt()}
@@ -205,24 +302,35 @@ OUTPUT RULES:
 
 OPERATIONAL LAW:
 - VIP SOVEREIGN: You may use "local-ollama" ONLY when ROUTING_PAYLOAD.ROUTING_METADATA.sovereign_eligible is true. Otherwise never emit local-ollama.
-- Follow GROQ_ROUTING_DIRECTIVES.force_speed_path: when true, prefer "direct" with "groq-llama3-70b" unless the user prompt absolutely requires long-context (then gemini-1.5-pro) or elite code (claude-3-5-sonnet).
-- When GROQ_ROUTING_DIRECTIVES.bias_heavy_models is true, prefer gemini-1.5-pro, claude-3-5-sonnet, gpt-4o, or a short swarm over a single shallow Groq pass.
+- Follow GROQ_ROUTING_DIRECTIVES.force_speed_path: when true, prefer "direct" with "groq-llama3-70b" unless the user prompt absolutely requires long-context (then gemini-2.5-flash) or elite code (claude-sonnet-4-6).
+- When GROQ_ROUTING_DIRECTIVES.bias_heavy_models is true, prefer gemini-2.5-flash, claude-sonnet-4-6, gpt-5.4-mini, or a short swarm over a single shallow Groq pass.
 - When GROQ_ROUTING_DIRECTIVES.skip_premium_for_speed is true, avoid premium-tier models unless indispensable.
 - Use "swarm" when steps genuinely require different modalities (e.g. huge read → structured matrix). Keep steps ≤ 6 when possible.
-- If you are unsure, {"strategy":"direct","model":"groq-llama3-70b","reason":"default safe path"}.
+- For prompts requiring unified psychological analysis, philosophical depth, personal calibration, self-concept examination, or holistic identity work: ALWAYS use "direct" or "delegate" strategy, NEVER "swarm". These prompts need a single coherent voice — splitting them into sub-tasks produces fragmented, duplicated, generic output.
+- If you are unsure, {"strategy":"direct","model":"gemini-2.5-flash","reason":"default primary path"}.
+- If the task is very simple or speed is critical, {"strategy":"direct","model":"groq-llama3-70b","reason":"fast fallback"}.
 
 You will receive ROUTING_PAYLOAD_JSON with ROUTING_METADATA, UserTelemetry, MirrorforgeSignal, and GROQ_ROUTING_DIRECTIVES. Obey it.`;
 
-function getGroqRouterConfig(): { base: string; apiKey: string; model: string } | null {
-  const apiKey = env.groqApiKey?.trim() || env.cloudOpenAiApiKey?.trim();
-  if (!apiKey) return null;
+function getOverseerConfig(): { base: string; apiKey: string; model: string } | null {
+  // Prefer OpenAI (gpt-5.4-nano as routing planner) if configured
+  const openaiKey = env.openaiApiKey?.trim();
+  if (openaiKey) {
+    const base = (env.openaiBaseUrl?.trim() || 'https://api.openai.com/v1').replace(/\/$/, '');
+    const model = env.openaiRouterModel?.trim() || 'gpt-5.4-nano';
+    return { base, apiKey: openaiKey, model };
+  }
+
+  // Fallback: Groq (preserves backward compatibility when OpenAI key is absent)
+  const groqKey = env.groqApiKey?.trim() || env.cloudOpenAiApiKey?.trim();
+  if (!groqKey) return null;
   const base = (
     env.groqBaseUrl?.trim() ||
     env.cloudOpenAiBaseUrl?.trim() ||
     'https://api.groq.com/openai/v1'
   ).replace(/\/$/, '');
-  const model = env.groqRouterModel?.trim() || env.cloudChatModel?.trim() || 'llama-3.1-8b-instant';
-  return { base, apiKey, model };
+  const model = env.groqRouterModel?.trim() || env.cloudChatModel?.trim() || 'llama-3.3-70b-versatile';
+  return { base, apiKey: groqKey, model };
 }
 
 export interface PlanSwarmExecutionInput {
@@ -232,13 +340,75 @@ export interface PlanSwarmExecutionInput {
   policyProfile: PolicyProfile;
   mirrorforge?: Partial<MirrorforgeState> | undefined;
   signal?: AbortSignal;
+  /** Optional: used to read active feature flags for plan overrides. */
+  userId?: string;
+  /** User's preferred swarm-level model ID (from llmRegistry). When set, the
+   *  Overseer is instructed to route to this model for direct/delegate strategies
+   *  unless technically inappropriate. */
+  preferredModel?: string;
+  /** Subscription tier — when 'free', the Overseer routes through Gemini
+   *  (gemini-3.1-flash-lite-preview) with gpt-5.4-nano as degraded fallback. */
+  userTier?: SubscriptionTier;
+}
+
+/** Apply feature-flag and coherence overrides after initial plan guarding. */
+async function applyPostGuards(input: PlanSwarmExecutionInput, guarded: ExecutionPlan): Promise<ExecutionPlan> {
+  let plan = guarded;
+
+  // Feature flag override: if advanced_reasoning_mode is active, bias toward swarm.
+  if (input.userId && plan.strategy === 'direct') {
+    const flags = getActiveFeatureFlags(input.userId);
+    const armFlag = flags.find((f) => f.feature === 'advanced_reasoning_mode');
+    if (armFlag && armFlag.confidence >= 0.7) {
+      plan = {
+        strategy: 'swarm',
+        steps: [
+          { step: 1, model: plan.model, task: 'Primary synthesis' },
+          { step: 2, model: FALLBACK_SWARM_MODEL_ID, task: 'Critical review and gap analysis' },
+        ],
+        reason: `feature_flag:advanced_reasoning_mode(confidence=${armFlag.confidence.toFixed(2)})`,
+      };
+      plan = enforcePlanRegistryAndCredentials(plan);
+    }
+  }
+
+  // mind_coherence override: if resonance confidence is critically low, force multi-agent review.
+  if (input.userId && plan.strategy !== 'swarm') {
+    try {
+      const { getDb } = await import('../../db/sqlite.js');
+      const db = getDb();
+      const coherenceRow = db
+        .prepare(`SELECT confidence FROM resonance_state WHERE user_id = ?`)
+        .get(input.userId) as { confidence: number } | undefined;
+      const coherence = coherenceRow?.confidence ?? 1.0;
+      if (coherence < 0.4) {
+        const baseModel = plan.strategy === 'direct' ? plan.model : FALLBACK_SWARM_MODEL_ID;
+        plan = {
+          strategy: 'swarm',
+          steps: [
+            { step: 1, model: baseModel, task: 'Primary synthesis' },
+            { step: 2, model: FALLBACK_SWARM_MODEL_ID, task: 'Coherence stabilization — cross-check and reconcile' },
+          ],
+          reason: `mind_coherence_low(${coherence.toFixed(3)})`,
+        };
+        plan = enforcePlanRegistryAndCredentials(plan);
+      }
+    } catch (err) {
+      console.warn('[swarm] Resonance coherence check failed (safe to skip):', err); // AUDIT FIX: P1-6 log silent failure
+    }
+  }
+
+  return plan;
 }
 
 /**
- * Ask Groq (Chief of Staff) for a validated {@link ExecutionPlan}.
+ * Ask Overseer for a validated {@link ExecutionPlan}.
+ *
+ * Free-tier: Gemini (gemini-3.1-flash-lite-preview) primary → gpt-5.4-nano fallback.
+ * Core/Sovereign: OpenAI (gpt-5.4-nano or configured model) / Groq.
  */
 export async function planSwarmExecution(input: PlanSwarmExecutionInput): Promise<ExecutionPlan> {
-  const cfg = getGroqRouterConfig();
+  const cfg = getOverseerConfig();
   const payload = buildChiefRoutingPayload({
     userPrompt: input.userPrompt,
     conversationSnippet: input.conversationSnippet,
@@ -248,8 +418,8 @@ export async function planSwarmExecution(input: PlanSwarmExecutionInput): Promis
     userTelemetryOverride: userTelemetryFromPolicyProfile(input.policyProfile),
   });
 
-  if (!cfg) {
-    return { strategy: 'direct', model: DEFAULT_SWARM_MODEL_ID, reason: 'groq_router_unconfigured' };
+  if (!cfg && input.userTier !== 'free') {
+    return { strategy: 'direct', model: FALLBACK_SWARM_MODEL_ID, reason: 'overseer_unconfigured' };
   }
 
   /** Swarm doctrine: non-sovereign tenants never touch on-prem models in plans. */
@@ -268,7 +438,53 @@ export async function planSwarmExecution(input: PlanSwarmExecutionInput): Promis
     return plan;
   };
 
-  const userContent = `ROUTING_PAYLOAD_JSON:\n${JSON.stringify(payload)}\n\nReturn ExecutionPlan JSON only.`;
+  const preferredHint = input.preferredModel
+    ? `\n\nUSER_PREFERRED_MODEL: "${input.preferredModel}" — route to this model for direct/delegate strategies unless technically inappropriate for the task.`
+    : '';
+  const userContent = `ROUTING_PAYLOAD_JSON:\n${JSON.stringify(payload)}${preferredHint}\n\nReturn ExecutionPlan JSON only.`;
+
+  /** Parse an ExecutionPlan from raw LLM text (strips fences, validates). */
+  const tryParse = (raw: string): ExecutionPlan | null => parseExecutionPlan(raw);
+
+  // ── Free-tier path: Gemini primary → gpt-5.4-nano fallback ───────────────
+  if (input.userTier === 'free' && env.geminiApiKey?.trim()) {
+    let content: string | null = null;
+    try {
+      console.warn('[overseer] Free-tier routing via gemini-3.1-flash-lite-preview (PUBLIC PREVIEW)');
+      const geminiResult = await completeGeminiOverseerFree({
+        systemPrompt: CHIEF_OF_STAFF_SYSTEM,
+        userContent,
+        temperature: 0.08,
+        timeoutMs: env.omniRouterTimeoutMs,
+      });
+      content = geminiResult.text;
+    } catch (geminiErr) {
+      console.warn('[overseer] gemini-3.1-flash-lite-preview unavailable, falling back to gpt-5.4-nano:', geminiErr);
+    }
+
+    // If Gemini failed or returned unparseable output, fall back to nano via OpenAI
+    const parsed = content ? tryParse(content) : null;
+    if (!parsed) {
+      if (cfg) {
+        // Fall through to standard OpenAI path below
+        console.warn('[overseer] Gemini parse failure — degrading to gpt-5.4-nano');
+      } else {
+        return { strategy: 'direct', model: FALLBACK_SWARM_MODEL_ID, reason: 'gemini_overseer_failed_no_fallback' };
+      }
+    } else {
+      // Gemini succeeded — apply guards and return
+      let guarded = await enforceSovereignLocalGpu(parsed, input.sovereignEligible, input.signal);
+      guarded = stripLocalForPublic(guarded);
+      guarded = enforcePlanRegistryAndCredentials(guarded);
+      guarded = enforceTierModelAccess(guarded, input.userTier);
+      return applyPostGuards(input, guarded);
+    }
+  }
+
+  // ── Core/Sovereign path (or free-tier Gemini fallback): OpenAI/Groq ──────
+  if (!cfg) {
+    return { strategy: 'direct', model: FALLBACK_SWARM_MODEL_ID, reason: 'overseer_unconfigured' };
+  }
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), env.omniRouterTimeoutMs);
@@ -298,30 +514,33 @@ export async function planSwarmExecution(input: PlanSwarmExecutionInput): Promis
     try {
       data = rawText ? JSON.parse(rawText) : null;
     } catch {
-      return { strategy: 'direct', model: DEFAULT_SWARM_MODEL_ID, reason: 'chief_non_json' };
+      return { strategy: 'direct', model: FALLBACK_SWARM_MODEL_ID, reason: 'chief_non_json' };
     }
     if (!res.ok) {
-      return { strategy: 'direct', model: DEFAULT_SWARM_MODEL_ID, reason: `chief_http_${res.status}` };
+      return { strategy: 'direct', model: FALLBACK_SWARM_MODEL_ID, reason: `chief_http_${res.status}` };
     }
 
     const obj = data as Record<string, unknown>;
     const choices = obj?.choices;
     if (!Array.isArray(choices) || !choices[0]) {
-      return { strategy: 'direct', model: DEFAULT_SWARM_MODEL_ID, reason: 'chief_missing_choices' };
+      return { strategy: 'direct', model: FALLBACK_SWARM_MODEL_ID, reason: 'chief_missing_choices' };
     }
     const msg = (choices[0] as Record<string, unknown>).message as Record<string, unknown> | undefined;
     const content = typeof msg?.content === 'string' ? msg.content : '';
     const parsed = parseExecutionPlan(content);
     if (!parsed) {
-      return { strategy: 'direct', model: DEFAULT_SWARM_MODEL_ID, reason: 'chief_parse_fail' };
+      return { strategy: 'direct', model: FALLBACK_SWARM_MODEL_ID, reason: 'chief_parse_fail' };
     }
 
     let guarded = await enforceSovereignLocalGpu(parsed, input.sovereignEligible, input.signal);
     guarded = stripLocalForPublic(guarded);
     guarded = enforcePlanRegistryAndCredentials(guarded);
-    return guarded;
-  } catch {
-    return { strategy: 'direct', model: DEFAULT_SWARM_MODEL_ID, reason: 'chief_exception' };
+    guarded = enforceTierModelAccess(guarded, input.userTier);
+
+    return applyPostGuards(input, guarded);
+  } catch (err) {
+    console.warn('[swarm] Chief of Staff routing failed:', err); // AUDIT FIX: P1-6 log silent failure
+    return { strategy: 'direct', model: FALLBACK_SWARM_MODEL_ID, reason: 'chief_exception' };
   } finally {
     clearTimeout(timeout);
   }
@@ -339,7 +558,7 @@ export function swarmPlanToGroqRoutingDecision(plan: ExecutionPlan): GroqRouting
   }
   const id = normalizeRegistryModelId(plan.model);
   if (id === 'local-ollama') return { target: 'local_gpu', rationale: plan.reason };
-  if (id === 'gemini-1.5-pro') return { target: 'gemini_pro', rationale: plan.reason };
+  if (id === 'gemini-2.5-flash') return { target: 'gemini_pro', rationale: plan.reason };
   return { target: 'groq', rationale: plan.reason };
 }
 
@@ -362,7 +581,8 @@ export type SwarmTickerHandler = (evt: {
 }) => void;
 
 /**
- * Execute plan: every LLM call uses Prime Directive in-system; swarm ends with a Groq synthesis pass so the user sees one Atlas voice.
+ * Execute plan: every LLM call uses Prime Directive in-system; swarm ends with
+ * a gpt-5.4 Overseer synthesis pass (tier-gated) so the user sees one Atlas voice.
  */
 export async function executeSwarmPipeline(input: {
   userId: string;
@@ -372,27 +592,43 @@ export async function executeSwarmPipeline(input: {
   onSwarmTicker?: SwarmTickerHandler | undefined;
   signal?: AbortSignal;
   timeoutMs?: number;
+  /** User subscription tier — determines Overseer model (free → gpt-5.4-nano, else gpt-5.4). */
+  userTier?: string;
 }): Promise<{ fullText: string; surface: string; model: string }> {
   const prepared = messagesWithPrimeDirective(input.userId, input.messages);
   const baseMessages = delegatorMessagesToUniversal(prepared);
   const { onDelta, onSwarmTicker, signal, timeoutMs } = input;
   const plan = input.plan;
 
-  const runEntry = async (entry: LlmRegistryEntry, msgs: UniversalMessage[]) => {
-    return streamRegistryModel({
-      entry,
-      messages: msgs,
-      onDelta,
-      signal,
-      timeoutMs,
-    });
-  };
-
+  // For direct/delegate strategies, stream directly to the client — single model, no synthesis needed.
   if (plan.strategy === 'direct' || plan.strategy === 'delegate') {
     const entry = getRegistryEntry(plan.model);
     if (!entry) {
       throw new Error('Swarm: registry entry missing after normalization');
     }
+
+    // Fix 2: Validate entry is usable before dispatch (not DEPRECATED/REMOVED/gated)
+    try {
+      assertEntryUsable(entry);
+    } catch (usableErr) {
+      console.error(`[swarm] assertEntryUsable failed for ${entry.id}, falling back to default:`, usableErr);
+      const fallbackEntry = getRegistryEntry(DEFAULT_SWARM_MODEL_ID)!;
+      onSwarmTicker?.({
+        phase: 'step',
+        message: `Atlas fallback: ${entry.id} unavailable, routing to ${fallbackEntry.id}…`,
+        step: 1,
+        model: fallbackEntry.id,
+      });
+      const { fullText, model } = await streamRegistryModel({
+        entry: fallbackEntry,
+        messages: baseMessages,
+        onDelta,
+        signal,
+        timeoutMs,
+      });
+      return { fullText, surface: plan.strategy === 'delegate' ? 'delegate' : 'direct', model };
+    }
+
     onSwarmTicker?.({
       phase: 'step',
       message:
@@ -402,12 +638,34 @@ export async function executeSwarmPipeline(input: {
       step: 1,
       model: entry.id,
     });
-    const { fullText, model } = await runEntry(entry, baseMessages);
+    const { fullText, model } = await streamRegistryModel({
+      entry,
+      messages: baseMessages,
+      onDelta,
+      signal,
+      timeoutMs,
+    });
+    // TODO: Wire Overseer synthesis here — currently direct/delegate paths bypass constitutional governance.
+    // The Overseer's 4-step pipeline (synthesis, completeness, user lens, constitutional check) only runs
+    // on multi-model swarm paths. To wire it here: collect fullText, then call applyOverseerLens() from
+    // overseerService.ts post-streaming, and emit a replacement event. This requires architectural changes
+    // to the streaming pipeline (the client expects a single stream, not a post-hoc replacement) and risks
+    // breaking the real-time delta flow, so it is deferred to a dedicated PR.
     return { fullText, surface: plan.strategy === 'delegate' ? 'delegate' : 'direct', model };
   }
 
+  // ── Swarm strategy: collect step outputs silently, then stream only the synthesis ──
   const lastUserRaw = lastUserFromClient(input.messages);
-  const systemContent = prepared[0]!.content;
+
+  // Detect sovereign response mode from user text so swarm steps and synthesis
+  // receive the full mode directive (e.g. truth_pressure anti-therapy-speak rules).
+  const detectedMode: SovereignResponseMode = inferSovereignResponseMode(lastUserRaw);
+  const modeDirective = sovereignModeDirective(detectedMode);
+
+  const baseSystemContent = prepared[0]!.content;
+  // Inject mode directive into swarm system prompt so steps respect truth_pressure, etc.
+  const systemContent = `${baseSystemContent}\n\n---\n${modeDirective}`;
+
   const dialog = prepared.slice(1);
   const historySnippet = dialog
     .map((m) => `${m.role}: ${m.content}`)
@@ -418,6 +676,16 @@ export async function executeSwarmPipeline(input: {
   for (const s of plan.steps) {
     const entry = getRegistryEntry(s.model);
     if (!entry) continue;
+
+    // Fix 2: Validate entry is usable before dispatch (not DEPRECATED/REMOVED/gated)
+    try {
+      assertEntryUsable(entry);
+    } catch (usableErr) {
+      console.warn(`[swarm] Step ${s.step}: ${entry.id} is not usable, skipping:`, usableErr);
+      outputs.push(`Step ${s.step} (${entry.id}): [SKIPPED — model not usable: ${usableErr instanceof Error ? usableErr.message : String(usableErr)}]`);
+      continue;
+    }
+
     onSwarmTicker?.({
       phase: 'step',
       message: `Atlas swarm — ${entry.id}: ${s.task.slice(0, 120)}${s.task.length > 120 ? '…' : ''}`,
@@ -444,45 +712,165 @@ export async function executeSwarmPipeline(input: {
       { role: 'system', content: systemContent },
       { role: 'user', content: stepUser },
     ];
-    const { fullText } = await runEntry(entry, stepMessages);
+
+    // Collect step output silently — do NOT stream intermediate steps to the client.
+    // Only the final synthesis pass streams via onDelta.
+    const { fullText } = await streamRegistryModel({
+      entry,
+      messages: stepMessages,
+      onDelta: () => {},  // silent — step output collected, not streamed
+      signal,
+      timeoutMs,
+    });
     outputs.push(`Step ${s.step} (${entry.id}):\n${fullText}`);
   }
 
   const combined = outputs.join('\n\n');
+
+  // ── Overseer: gpt-5.4 (Core/Sovereign) or gpt-5.4-nano (Free) ──
+  // The Overseer is the LAST step — all worker outputs must be fully collected
+  // before this point. Groq must NOT be used at or after the Overseer position.
+  const overseerModelId = resolveOverseerModel(input.userTier);
+  const overseerEntry = getRegistryEntry(overseerModelId);
+
   onSwarmTicker?.({
     phase: 'synthesize',
-    message: 'Atlas synthesizing final response (Chief consolidation)…',
+    message: `Atlas Overseer (${overseerModelId}) synthesizing final response…`,
   });
 
-  const synthEntry = getRegistryEntry(DEFAULT_SWARM_MODEL_ID)!;
-  const synthMessages: UniversalMessage[] = [
-    ...baseMessages.slice(0, 1),
+  const overseerMessages: UniversalMessage[] = [
+    { role: 'system', content: OVERSEER_SYSTEM_PROMPT },
     {
       role: 'user',
-      content: `You are consolidating swarm work into ONE final user-facing answer (same identity as the system preamble). Be concise unless the user asked for depth.
+      content: `${modeDirective}
 
---- SWARM_RAW_OUTPUTS ---
-${combined.slice(0, 100_000)}`,
+ORIGINAL_USER_REQUEST:
+${lastUserRaw}
+
+CONVERSATION_CONTEXT:
+${historySnippet || '(single-turn)'}
+
+--- SPECIALIST_WORKER_OUTPUTS (${outputs.length} workers) ---
+${combined.slice(0, 100_000)}
+
+Synthesize the above into a single, coherent Atlas-identity response. Do not expose worker identities or meta-commentary about the synthesis process.`,
     },
   ];
 
   let synth = '';
-  const { fullText: finalText, model: synthModel } = await streamRegistryModel({
-    entry: synthEntry,
-    messages: synthMessages,
-    onDelta: (t) => {
-      synth += t;
-      onDelta(t);
-    },
-    signal,
-    timeoutMs,
-  });
 
-  return {
-    fullText: finalText || synth,
-    surface: 'swarm',
-    model: `swarm→${synthModel}`,
-  };
+  // Fix 1 (part 2): Wrap entire Overseer dispatch in try/catch so that if
+  // streamRegistryModel throws (e.g. "Unknown backend: undefined", temporary
+  // API outage), the pipeline degrades gracefully — return raw worker synthesis
+  // rather than crashing the entire response.
+  try {
+    // Use registry-based streaming if the Overseer model has a registry entry;
+    // otherwise fall back to direct OpenAI Chat Completions API.
+    if (overseerEntry) {
+      const { fullText: finalText, model: synthModel } = await streamRegistryModel({
+        entry: overseerEntry,
+        messages: overseerMessages,
+        onDelta: (t) => {
+          synth += t;
+          onDelta(t);
+        },
+        signal,
+        timeoutMs,
+      });
+      return {
+        fullText: finalText || synth,
+        surface: 'swarm',
+        model: `swarm→overseer:${synthModel}`,
+      };
+    }
+
+    // Fallback: direct OpenAI API call for gpt-5.4 family models not yet in the registry
+    const openaiKey = env.openaiApiKey?.trim();
+    if (!openaiKey) {
+      // Last resort: fall back to default swarm model if OpenAI is unavailable
+      const fallbackEntry = getRegistryEntry(DEFAULT_SWARM_MODEL_ID)!;
+      const { fullText: finalText, model: synthModel } = await streamRegistryModel({
+        entry: fallbackEntry,
+        messages: overseerMessages,
+        onDelta: (t) => {
+          synth += t;
+          onDelta(t);
+        },
+        signal,
+        timeoutMs,
+      });
+      return {
+        fullText: finalText || synth,
+        surface: 'swarm',
+        model: `swarm→fallback:${synthModel}`,
+      };
+    }
+
+    const openaiBase = (env.openaiBaseUrl?.trim() || 'https://api.openai.com/v1').replace(/\/$/, '');
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs ?? 120_000);
+    try {
+      const res = await fetch(`${openaiBase}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${openaiKey}`,
+        },
+        body: JSON.stringify({
+          model: overseerModelId,
+          temperature: 0.25,
+          stream: true,
+          messages: overseerMessages.map((m) => ({ role: m.role, content: m.content })),
+        }),
+        signal: signal ?? controller.signal,
+      });
+
+      if (!res.ok || !res.body) {
+        throw new Error(`Overseer API error: ${res.status}`);
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const payload = line.slice(6).trim();
+          if (payload === '[DONE]') continue;
+          try {
+            const chunk = JSON.parse(payload) as { choices?: { delta?: { content?: string } }[] };
+            const text = chunk.choices?.[0]?.delta?.content;
+            if (text) {
+              synth += text;
+              onDelta(text);
+            }
+          } catch { /* skip malformed chunk */ }
+        }
+      }
+      return {
+        fullText: synth,
+        surface: 'swarm',
+        model: `swarm→overseer:${overseerModelId}`,
+      };
+    } finally {
+      clearTimeout(timeout);
+    }
+  } catch (overseerErr) {
+    // Overseer synthesis failed — degrade gracefully by returning raw worker output
+    console.error(`[swarm] Overseer synthesis failed, returning raw worker output:`, overseerErr);
+    // Emit the combined worker output to the client since Overseer couldn't synthesize
+    onDelta(combined);
+    return {
+      fullText: combined,
+      surface: 'swarm',
+      model: `swarm→overseer-degraded:${overseerModelId}`,
+    };
+  }
 }
 
 const SHARED_LANE_RULES = `Shared rules: If VERIFIED_LIVE_WEB_CONTEXT is present, cite only URLs from that block when referencing the web. If absent, reason from the conversation and state limits clearly. Output a structured hypothesis (bullets/sections OK). A parallel model lane runs independently — be thorough.`;
@@ -501,6 +889,8 @@ export async function executeGroqGeminiDualConsensus(input: {
   onSwarmTicker?: SwarmTickerHandler | undefined;
   signal?: AbortSignal;
   timeoutMs?: number;
+  /** User subscription tier — determines Overseer model for final synthesis. */
+  userTier?: string;
 }): Promise<{ fullText: string; surface: string; model: string }> {
   const { userId, clientMessages, evidenceBlock, onDelta, onSwarmTicker, signal, timeoutMs } = input;
   const budget = timeoutMs ?? 180_000;
@@ -545,7 +935,7 @@ export async function executeGroqGeminiDualConsensus(input: {
   const geminiLane: UniversalMessage[] = [
     {
       role: 'system',
-      content: `${buildPrimeDirective(userId)}\n\nYou are the Gemini 1.5 Pro reasoning lane.\n${SHARED_LANE_RULES}`,
+      content: `${buildPrimeDirective(userId)}\n\nYou are the Gemini 2.5 Flash reasoning lane.\n${SHARED_LANE_RULES}`,
     },
     { role: 'user', content: laneUserContent },
   ];
@@ -577,7 +967,7 @@ export async function executeGroqGeminiDualConsensus(input: {
         phase: 'step',
         message: `Gemini lane degraded: ${e instanceof Error ? e.message : String(e)}`,
         step: 2,
-        model: 'gemini-1.5-pro',
+        model: 'gemini-2.5-flash',
       });
       return { text: '(Gemini lane unavailable)', model: geminiModel };
     }),

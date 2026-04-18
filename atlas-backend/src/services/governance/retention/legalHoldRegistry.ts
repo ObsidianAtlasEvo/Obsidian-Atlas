@@ -3,15 +3,14 @@
  *
  * Manages legal holds that prevent data from being deleted during
  * retention sweeps or erasure requests. Only the Sovereign Creator
- * (crowleyrc62@gmail.com) can release holds. Holds older than 90 days
+ * (Sovereign Creator — see SOVEREIGN_CREATOR_EMAIL) can release holds. Holds older than 90 days
  * without re-confirmation are flagged.
  */
 
 import { randomUUID } from 'node:crypto';
 import { getDb } from '../../../db/sqlite.js';
 import { logRetentionEvent } from './retentionAuditTrail.js';
-
-const SOVEREIGN_CREATOR_EMAIL = 'crowleyrc62@gmail.com';
+import { SOVEREIGN_CREATOR_EMAIL } from '../../intelligence/sovereignCreatorDirective.js';
 
 export interface LegalHold {
   id?: string;
