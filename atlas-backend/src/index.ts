@@ -12,6 +12,7 @@ import { initSqlite, getDb } from './db/sqlite.js';
 import { runBootMigrations } from './services/governance/migration/bootMigrations.js';
 import registerHealthRoutes from './routes/health.js'
 import { registerRateLimit } from './plugins/rateLimit.js';
+import { createScopedRateLimiter } from './plugins/scopedRateLimit.js';
 import { registerOllamaCompatRoutes } from './routes/ollamaCompat.js';
 import { registerInferenceQueueRoutes } from './routes/inferenceQueue.js';
 import { registerOmniStreamRoutes } from './routes/omniStream.js';
@@ -323,7 +324,21 @@ await app.register(async (billingScope) => {
 
 // ── User preferences routes — model selection, etc. ──────────────────────
 await app.register(async (userScope) => {
+  // Scoped rate limit (CodeQL CWE-770): CodeQL can't trace the global
+  // @fastify/rate-limit registration through nested scopes, so we add a
+  // visible per-IP guard inside this scope's preHandler. Defence in depth
+  // with the global limiter registered above.
+  const userPrefsLimiter = createScopedRateLimiter({
+    max: 30,
+    windowMs: 60_000,
+    scopeName: 'User preferences',
+  });
+  userScope.addHook('onRequest', async (request: FastifyRequest, reply: FastifyReply) => {
+    await userPrefsLimiter.enforce(request, reply);
+  });
   userScope.addHook('preHandler', async (request: FastifyRequest, reply: FastifyReply) => {
+    const allowed = await userPrefsLimiter.enforce(request, reply);
+    if (!allowed) return;
     await attachAtlasSession(request);
     if (!request.atlasAuthUser) {
       return reply.code(401).send({ error: 'Unauthorized — Atlas session required' });
@@ -341,7 +356,21 @@ await app.register(async (userScope) => {
 // and GET /v1/legal/acceptance require a valid session — we reuse the same
 // OAuth session bridge used by billing/preferences.
 await app.register(async (legalScope) => {
+  // Scoped rate limit (CodeQL CWE-770). Legal endpoints hit SQLite on every
+  // call (version lookup, acceptance read/write). Same pattern as billing
+  // and user-preferences scopes: visible per-IP guard inside preHandler plus
+  // the global limiter for defence in depth.
+  const legalLimiter = createScopedRateLimiter({
+    max: 30,
+    windowMs: 60_000,
+    scopeName: 'Legal',
+  });
+  legalScope.addHook('onRequest', async (request: FastifyRequest, reply: FastifyReply) => {
+    await legalLimiter.enforce(request, reply);
+  });
   legalScope.addHook('preHandler', async (request: FastifyRequest, reply: FastifyReply) => {
+    const allowed = await legalLimiter.enforce(request, reply);
+    if (!allowed) return;
     // Public endpoints under /v1/legal/ are enumerated here to skip auth.
     if (request.url.startsWith('/v1/legal/versions')) return;
     await attachAtlasSession(request);
