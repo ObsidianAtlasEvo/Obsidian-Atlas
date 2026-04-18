@@ -4,19 +4,14 @@ import { streamChat } from '../services/ollama.js';
 import { messagesWithPrimeDirective } from '../services/intelligence/primeDirective.js';
 
 /**
- * Ollama-compatible /api/chat endpoint.
+ * Ollama-compatible /v1/ollama/chat endpoint.
  * Accepts the same JSON format the frontend expects (Ollama NDJSON streaming)
  * but routes through Groq when DISABLE_LOCAL_OLLAMA=true.
  */
 export async function registerOllamaCompatRoutes(app: FastifyInstance): Promise<void> {
-  app.post('/v1/ollama/chat', async (request, reply) => {
-    // Auth gate: userId must come from verified session (route is inside protectedApp scope)
-    const userId = request.atlasAuthUser?.databaseUserId ?? request.atlasSession?.userId;
-    if (!userId) {
-      return reply.code(401).send({ error: 'Authentication required' });
-    }
+  app.post('/v1/ollama/chat', { config: { rateLimit: { max: 5, timeWindow: '1 minute' } } }, async (request, reply) => {
+    const userId = request.atlasAuthUser!.databaseUserId;
 
-    // Guard: when Ollama is disabled, at least one cloud provider key must be set
     if (
       env.disableLocalOllama &&
       !env.groqApiKey &&

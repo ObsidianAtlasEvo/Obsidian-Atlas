@@ -53,7 +53,7 @@ export function getActiveFeatureFlags(userId: string): ActiveFeatureFlag[] {
 // A new user's profile is "unlearned" until explicit signals update it.
 // Use profile.isLearned to gate whether policy values are passed to the LLM.
 // ---------------------------------------------------------------------------
-const DEFAULTS: Omit<PolicyProfile, 'userId' | 'updatedAt'> = {
+export const DEFAULT_POLICY_PROFILE_VALUES: Omit<PolicyProfile, 'userId' | 'updatedAt'> = {
   verbosity: 'medium',
   tone: 'analytical',
   structurePreference: 'balanced',
@@ -126,16 +126,16 @@ export function getPolicyProfile(userId: string): PolicyProfile {
        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`
     ).run(
       userId,
-      DEFAULTS.verbosity,
-      DEFAULTS.tone,
-      DEFAULTS.structurePreference,
-      DEFAULTS.truthFirstStrictness,
-      DEFAULTS.writingStyleEnabled ? 1 : 0,
-      DEFAULTS.preferredComputeDepth,
-      DEFAULTS.latencyTolerance,
+      DEFAULT_POLICY_PROFILE_VALUES.verbosity,
+      DEFAULT_POLICY_PROFILE_VALUES.tone,
+      DEFAULT_POLICY_PROFILE_VALUES.structurePreference,
+      DEFAULT_POLICY_PROFILE_VALUES.truthFirstStrictness,
+      DEFAULT_POLICY_PROFILE_VALUES.writingStyleEnabled ? 1 : 0,
+      DEFAULT_POLICY_PROFILE_VALUES.preferredComputeDepth,
+      DEFAULT_POLICY_PROFILE_VALUES.latencyTolerance,
       now
     );
-    return { userId, ...DEFAULTS, updatedAt: now, isLearned: false };
+    return { userId, ...DEFAULT_POLICY_PROFILE_VALUES, updatedAt: now };
   }
 
   return rowToProfile(userId, row);

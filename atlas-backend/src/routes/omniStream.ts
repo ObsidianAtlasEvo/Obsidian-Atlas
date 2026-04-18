@@ -6,7 +6,6 @@ import { z } from 'zod';
 import { env } from '../config/env.js';
 import { touchChronosActivity } from '../services/autonomy/chronos.js';
 import { triggerEvolutionAfterOmniResponse } from '../services/autonomy/evolutionTrigger.js';
-import { attachAtlasSession } from '../services/auth/authProvider.js';
 import { getVerifiedUserEmail } from '../services/auth/requestAuth.js';
 import { getPolicyProfile } from '../services/evolution/policyStore.js';
 import { CognitiveQuotaError, assertChatQuotaAllows, recordChatTokenUsage } from '../services/governance/quotaStore.js';
@@ -74,7 +73,7 @@ function sanitizeErrorMessage(msg: string): string {
   return msg;
 }
 
-const omniBodySchema = z.object({
+export const omniBodySchema = z.object({
   userId: z.string().min(1).optional(), // AUDIT FIX: userId is now optional — session is authoritative
   requestId: z.string().uuid().optional(),
   /** 1–5: concise → deep synthesis (Section IX posture scale). Omitted → inferred from line of inquiry. */
@@ -225,7 +224,7 @@ function resolveSwarmModelFromPreferred(preferredModel: string | null): string |
  * Resonance Chamber: SSE stream with routing status → token deltas → done (+ evolution scheduled).
  */
 export function registerOmniStreamRoutes(app: FastifyInstance): void {
-  app.post('/v1/chat/omni-stream', async (request, reply) => {
+  app.post('/v1/chat/omni-stream', { config: { rateLimit: { max: 5, timeWindow: '1 minute' } } }, async (request, reply) => {
     const parsed = omniBodySchema.safeParse(request.body);
     if (!parsed.success) {
       return reply.status(400).send({ error: 'validation_error', details: parsed.error.flatten() });
@@ -243,22 +242,8 @@ export function registerOmniStreamRoutes(app: FastifyInstance): void {
     } = parsed.data;
     const traceId = randomUUID();
     const requestId = bodyRequestId ?? newGpuRequestId();
-
-    // AUDIT FIX: Auth gate — attach session BEFORE any processing.
-    // Reject unauthenticated requests with 401.
-    await attachAtlasSession(request);
-    if (!request.atlasVerifiedEmail) {
-      return reply.code(401).send({ error: 'Unauthorized — Atlas session required' }); // AUDIT FIX: P0-1 auth gate
-    }
+    const userId = request.atlasAuthUser!.databaseUserId;
     const verifiedEmail = getVerifiedUserEmail(request);
-
-    // AUDIT FIX: P0-1 — Session-derived userId is authoritative. No body or empty-string fallback.
-    const userId = request.atlasAuthUser?.databaseUserId ?? request.atlasSession?.userId;
-    if (!userId) {
-      // Auth gate earlier should have caught this, but fail hard here
-      request.log.error({ path: request.url }, 'userId could not be resolved from session — rejecting');
-      return reply.code(401).send({ error: 'Authentication required' });
-    }
 
     touchChronosActivity(userId);
 

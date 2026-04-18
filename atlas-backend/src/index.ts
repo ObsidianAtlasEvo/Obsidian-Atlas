@@ -183,7 +183,6 @@ await registerRateLimit(app);
 await registerHealthRoutes(app);
 registerInferenceQueueRoutes(app);
 registerAuthRoutes(app);
-registerOmniStreamRoutes(app);
 registerSovereigntyRoutes(app);
 // ── Governance routes — all require a valid Atlas session ─────────────────
 await app.register(async (protected_app) => {
@@ -193,6 +192,7 @@ await app.register(async (protected_app) => {
       return reply.code(401).send({ error: 'Unauthorized — Atlas session required' });
     }
   });
+  registerOmniStreamRoutes(protected_app);
   await registerOllamaCompatRoutes(protected_app);
   registerCognitiveGovernanceRoutes(protected_app);
   registerLongitudinalRoutes(protected_app);
@@ -321,7 +321,6 @@ await app.register(async (userScope) => {
 registerDegradedModeRoutes(app);
 await app.register(embeddingsRoutes);
 await app.register(modelRoutes);
-
 // POST /chat forwards to the handler registered as POST /v1/chat/omni-stream (same body, no model call here).
 app.post('/chat', async (request: FastifyRequest, reply: FastifyReply) => {
   const res = await app.inject({
