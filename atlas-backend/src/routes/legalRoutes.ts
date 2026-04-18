@@ -109,9 +109,22 @@ export function registerLegalRoutes(fastify: FastifyInstance, db: Database): voi
   });
 
   // Protected — record acceptance. Idempotent: re-POSTing same version is a no-op.
-  fastify.post('/v1/legal/accept', {
-    config: { rateLimit: { max: 20, timeWindow: '1 minute' } },
-  }, async (request: FastifyRequest, reply: FastifyReply) => {
+  fastify.post<{ Body: AcceptRequestBody }>(
+    '/v1/legal/accept',
+    {
+      config: { rateLimit: { max: 20, timeWindow: '1 minute' } },
+      schema: {
+        body: {
+          type: 'object',
+          required: ['kind', 'version'],
+          properties: {
+            kind: { type: 'string', enum: ['terms', 'privacy'] },
+            version: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+          },
+        },
+      },
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
     const session = requireSession(request, reply);
     if (!session) return;
 
@@ -151,5 +164,6 @@ export function registerLegalRoutes(fastify: FastifyInstance, db: Database): voi
     }
 
     return reply.send({ ok: true, kind: body.kind, version: body.version, acceptedAt: now });
-  });
+    },
+  );
 }
