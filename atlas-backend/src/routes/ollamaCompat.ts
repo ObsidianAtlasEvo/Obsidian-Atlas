@@ -2,6 +2,11 @@ import type { FastifyInstance } from 'fastify';
 import { attachAtlasSession } from '../services/auth/authProvider.js';
 import { messagesWithPrimeDirective } from '../services/intelligence/primeDirective.js';
 import { streamChat } from '../services/ollama.js';
+import {
+  ollamaCompatRouteLimiter,
+  requestRateLimitKey,
+  sendRateLimitExceeded,
+} from '../services/security/requestRateLimiter.js';
 import { resolveAuthenticatedRouteUserId } from './identityHardening.js';
 
 /**
@@ -11,6 +16,12 @@ import { resolveAuthenticatedRouteUserId } from './identityHardening.js';
  */
 export async function registerOllamaCompatRoutes(app: FastifyInstance): Promise<void> {
   app.post('/api/chat', { config: { rateLimit: { max: 5, timeWindow: '1 minute' } } }, async (request, reply) => {
+    try {
+      await ollamaCompatRouteLimiter.consume(requestRateLimitKey(request, 'ollama-compat'));
+    } catch (err) {
+      return sendRateLimitExceeded(reply, err);
+    }
+
     await attachAtlasSession(request);
     const userId = resolveAuthenticatedRouteUserId(
       request.atlasAuthUser?.databaseUserId,

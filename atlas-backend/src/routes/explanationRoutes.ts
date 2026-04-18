@@ -9,6 +9,11 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { attachAtlasSession } from '../services/auth/authProvider.js';
+import {
+  explanationRouteLimiter,
+  requestRateLimitKey,
+  sendRateLimitExceeded,
+} from '../services/security/requestRateLimiter.js';
 import { resolveAuthenticatedRouteUserId } from './identityHardening.js';
 
 const entrySchema = z.object({
@@ -110,6 +115,12 @@ async function tryGroqSummary(entries: NLEntry[]): Promise<string | null> {
 
 export function registerExplanationRoutes(app: FastifyInstance): void {
   app.post('/api/governance/nlsummary', { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (request, reply) => {
+    try {
+      await explanationRouteLimiter.consume(requestRateLimitKey(request, 'nlsummary'));
+    } catch (err) {
+      return sendRateLimitExceeded(reply, err);
+    }
+
     await attachAtlasSession(request);
     const userId = resolveAuthenticatedRouteUserId(
       request.atlasAuthUser?.databaseUserId,

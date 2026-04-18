@@ -14,6 +14,11 @@ import { applyOverseerLens } from '../services/governance/overseerService.js';
 import { enqueueGpuTask, newGpuRequestId } from '../services/inference/queueManager.js';
 import { runMaximumClarityTrack } from '../services/intelligence/maximumClarityPipeline.js';
 import {
+  omniStreamRouteLimiter,
+  requestRateLimitKey,
+  sendRateLimitExceeded,
+} from '../services/security/requestRateLimiter.js';
+import {
   executeLocalOllama,
   injectAtlasRoutingIntoMessages,
   resolveOmniComputeLane,
@@ -99,6 +104,12 @@ function sseWrite(raw: { write: (s: string) => boolean }, event: string, data: u
  */
 export function registerOmniStreamRoutes(app: FastifyInstance): void {
   app.post('/v1/chat/omni-stream', { config: { rateLimit: { max: 5, timeWindow: '1 minute' } } }, async (request, reply) => {
+    try {
+      await omniStreamRouteLimiter.consume(requestRateLimitKey(request, 'omni-stream'));
+    } catch (err) {
+      return sendRateLimitExceeded(reply, err);
+    }
+
     const parsed = omniBodySchema.safeParse(request.body);
     if (!parsed.success) {
       return reply.status(400).send({ error: 'validation_error', details: parsed.error.flatten() });

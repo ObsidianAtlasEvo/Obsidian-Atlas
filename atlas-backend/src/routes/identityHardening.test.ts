@@ -6,7 +6,7 @@ import Fastify from 'fastify';
 import { registerExplanationRoutes } from './explanationRoutes.js';
 import { resolveAuthenticatedRouteUserId } from './identityHardening.js';
 import { registerOllamaCompatRoutes } from './ollamaCompat.js';
-import { omniBodySchema } from './omniStream.js';
+import { omniBodySchema, registerOmniStreamRoutes } from './omniStream.js';
 
 test('resolveAuthenticatedRouteUserId rejects requests without an authenticated user id', () => {
   assert.equal(resolveAuthenticatedRouteUserId(undefined, undefined), null);
@@ -53,5 +53,80 @@ test('registerExplanationRoutes rejects unauthenticated requests', async () => {
   });
 
   assert.equal(response.statusCode, 401);
+  await app.close();
+});
+
+test('registerExplanationRoutes returns 429 after repeated requests from the same client', async () => {
+  const app = Fastify();
+  registerExplanationRoutes(app);
+
+  for (let i = 0; i < 10; i += 1) {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/governance/nlsummary',
+      headers: { 'x-forwarded-for': '198.51.100.10' },
+      payload: { entries: [] },
+    });
+    assert.equal(response.statusCode, 401);
+  }
+
+  const blocked = await app.inject({
+    method: 'POST',
+    url: '/api/governance/nlsummary',
+    headers: { 'x-forwarded-for': '198.51.100.10' },
+    payload: { entries: [] },
+  });
+
+  assert.equal(blocked.statusCode, 429);
+  await app.close();
+});
+
+test('registerOllamaCompatRoutes returns 429 after repeated requests from the same client', async () => {
+  const app = Fastify();
+  await registerOllamaCompatRoutes(app);
+
+  for (let i = 0; i < 5; i += 1) {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/chat',
+      headers: { 'x-forwarded-for': '198.51.100.20' },
+      payload: { messages: [{ role: 'user', content: 'hello' }] },
+    });
+    assert.equal(response.statusCode, 401);
+  }
+
+  const blocked = await app.inject({
+    method: 'POST',
+    url: '/api/chat',
+    headers: { 'x-forwarded-for': '198.51.100.20' },
+    payload: { messages: [{ role: 'user', content: 'hello' }] },
+  });
+
+  assert.equal(blocked.statusCode, 429);
+  await app.close();
+});
+
+test('registerOmniStreamRoutes returns 429 after repeated requests from the same client', async () => {
+  const app = Fastify();
+  registerOmniStreamRoutes(app);
+
+  for (let i = 0; i < 5; i += 1) {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/chat/omni-stream',
+      headers: { 'x-forwarded-for': '198.51.100.30' },
+      payload: { messages: [{ role: 'user', content: 'hello' }] },
+    });
+    assert.equal(response.statusCode, 401);
+  }
+
+  const blocked = await app.inject({
+    method: 'POST',
+    url: '/v1/chat/omni-stream',
+    headers: { 'x-forwarded-for': '198.51.100.30' },
+    payload: { messages: [{ role: 'user', content: 'hello' }] },
+  });
+
+  assert.equal(blocked.statusCode, 429);
   await app.close();
 });
