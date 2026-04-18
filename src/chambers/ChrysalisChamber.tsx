@@ -425,7 +425,7 @@ function ExperimentsTab({ data, onUpdate }: { data: ChrysalisModel; onUpdate: (d
             animation: 'atlas-fade-in 300ms ease both',
           }}
         >
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+          <div className="chry-grid-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
             <div>
               <label style={labelBlock}>Title</label>
               <input style={baseInput} value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="Experiment name..." required />
@@ -460,7 +460,7 @@ function ExperimentsTab({ data, onUpdate }: { data: ChrysalisModel; onUpdate: (d
           </div>
           <label style={labelBlock}>Impact</label>
           <input style={baseInput} value={form.impact} onChange={(e) => setForm({ ...form, impact: e.target.value })} placeholder="Expected or observed impact..." />
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+          <div className="chry-grid-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
             <div>
               <label style={{ ...labelBlock }}>Privacy Score: {Math.round(form.privacyScore * 100)}%</label>
               <input type="range" min={0} max={1} step={0.01} value={form.privacyScore}
@@ -607,7 +607,7 @@ function WeaknessLedgerTab({ data, onUpdate }: { data: ChrysalisModel; onUpdate:
             animation: 'atlas-fade-in 300ms ease both',
           }}
         >
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+          <div className="chry-grid-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
             <div>
               <label style={labelBlock}>Title</label>
               <input style={baseInput} value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="Weakness name..." required />
@@ -639,7 +639,7 @@ function WeaknessLedgerTab({ data, onUpdate }: { data: ChrysalisModel; onUpdate:
               </button>
             ))}
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+          <div className="chry-grid-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
             <div>
               <label style={{ ...labelBlock }}>Recurrence: {form.recurrence}</label>
               <input type="range" min={1} max={20} step={1} value={form.recurrence}
@@ -819,7 +819,7 @@ function ModelComparisonsTab({ data, onUpdate }: { data: ChrysalisModel; onUpdat
             animation: 'atlas-fade-in 300ms ease both',
           }}
         >
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+          <div className="chry-grid-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
             <div>
               <label style={labelBlock}>Architecture Name</label>
               <input style={baseInput} value={archName} onChange={(e) => setArchName(e.target.value)} placeholder="e.g. Transformer-XL" required />
@@ -829,7 +829,7 @@ function ModelComparisonsTab({ data, onUpdate }: { data: ChrysalisModel; onUpdat
               <input style={baseInput} value={archPerf} onChange={(e) => setArchPerf(e.target.value)} placeholder="e.g. 92% accuracy, 30ms p95" />
             </div>
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+          <div className="chry-grid-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
             <div>
               <label style={labelBlock}>Pros (one per line)</label>
               <textarea style={baseTextarea} value={archPros} onChange={(e) => setArchPros(e.target.value)} placeholder="Advantage 1&#10;Advantage 2..." />
@@ -839,7 +839,7 @@ function ModelComparisonsTab({ data, onUpdate }: { data: ChrysalisModel; onUpdat
               <textarea style={baseTextarea} value={archCons} onChange={(e) => setArchCons(e.target.value)} placeholder="Drawback 1&#10;Drawback 2..." />
             </div>
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+          <div className="chry-grid-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
             <div>
               <label style={{ ...labelBlock }}>Privacy Impact: {Math.round(archPrivacy * 100)}%</label>
               <input type="range" min={0} max={1} step={0.01} value={archPrivacy}
@@ -865,6 +865,7 @@ function ModelComparisonsTab({ data, onUpdate }: { data: ChrysalisModel; onUpdat
         </div>
       ) : (
         <div
+          className="chry-compare-grid"
           style={{
             display: 'grid',
             gridTemplateColumns: `repeat(${Math.min(comparison.architectures.length, 3)}, 1fr)`,
@@ -1009,6 +1010,7 @@ export default function ChrysalisChamber() {
 
   return (
     <div
+      className="chry-chamber"
       style={{
         minHeight: '100%',
         background: '#050505',
@@ -1017,6 +1019,26 @@ export default function ChrysalisChamber() {
         animation: 'atlas-fade-in 300ms ease both',
       }}
     >
+      <style>{`
+        @media (max-width: 640px) {
+          .chry-chamber { padding: 14px !important; }
+          .chry-stats { gap: 14px !important; padding: 10px 12px !important; }
+          .chry-tabs {
+            overflow-x: auto !important;
+            flex-wrap: nowrap !important;
+            -webkit-overflow-scrolling: touch;
+            scrollbar-width: none;
+          }
+          .chry-tabs::-webkit-scrollbar { display: none; }
+          .chry-tabs > button {
+            flex-shrink: 0 !important;
+            padding: 9px 12px !important;
+          }
+          .chry-grid-2 { grid-template-columns: 1fr !important; }
+          .chry-panel-pad { padding: 12px !important; }
+          .chry-compare-grid { grid-template-columns: 1fr !important; }
+        }
+      `}</style>
       {/* Header */}
       <div style={{ marginBottom: 20 }}>
         <h2 style={{ color: T.violet, fontWeight: 700, fontSize: '1.15rem', margin: '0 0 4px' }}>
@@ -1029,6 +1051,7 @@ export default function ChrysalisChamber() {
 
       {/* Stats bar */}
       <div
+        className="chry-stats"
         style={{
           display: 'flex',
           gap: 20,
@@ -1080,6 +1103,7 @@ export default function ChrysalisChamber() {
 
       {/* Tab bar */}
       <div
+        className="chry-tabs"
         style={{
           display: 'flex',
           gap: 2,

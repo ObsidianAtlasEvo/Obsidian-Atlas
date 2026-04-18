@@ -76,7 +76,7 @@ const FADE_IN: React.CSSProperties = { animation: 'atlas-fade-in 300ms ease both
 
 function StatCard({ label, value, color }: { label: string; value: string | number; color?: string }) {
   return (
-    <div style={{ ...INSET_STYLE, minWidth: 100, flex: 1 }}>
+    <div className="cc-stat" style={{ ...INSET_STYLE, minWidth: 100, flex: 1 }}>
       <div style={LABEL_STYLE}>{label}</div>
       <div style={{ fontSize: '1.55rem', fontWeight: 700, color: color ?? C.gold, marginTop: 6 }}>
         {value}
@@ -118,7 +118,7 @@ function TabBar({ active, onChange }: { active: Tab; onChange: (t: Tab) => void 
     { id: 'emergency', label: 'Emergency' },
   ];
   return (
-    <div style={{ display: 'flex', gap: 4, background: C.inset, borderRadius: 10, padding: 4, border: `1px solid ${C.borderS}` }}>
+    <div className="cc-tabs" style={{ display: 'flex', gap: 4, background: C.inset, borderRadius: 10, padding: 4, border: `1px solid ${C.borderS}` }}>
       {tabs.map(t => (
         <button
           key={t.id}
@@ -203,25 +203,25 @@ function OverviewTab({
       <div style={PANEL_STYLE}>
         <div style={{ ...LABEL_STYLE, marginBottom: 14 }}>Identity & Auth</div>
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-          <div style={{ ...INSET_STYLE, flex: 1 }}>
+          <div className="cc-inset-flex" style={{ ...INSET_STYLE, flex: 1 }}>
             <div style={LABEL_STYLE}>Role</div>
             <div style={{ color: C.gold, fontWeight: 700, fontSize: '0.9rem', marginTop: 4 }}>
               {currentUser?.role ?? '—'}
             </div>
           </div>
-          <div style={{ ...INSET_STYLE, flex: 1 }}>
+          <div className="cc-inset-flex" style={{ ...INSET_STYLE, flex: 1, minWidth: 0 }}>
             <div style={LABEL_STYLE}>UID</div>
-            <div style={{ color: C.text, fontSize: '0.82rem', marginTop: 4, fontFamily: 'monospace' }}>
+            <div className="cc-uid" style={{ color: C.text, fontSize: '0.82rem', marginTop: 4, fontFamily: 'monospace', wordBreak: 'break-all', overflowWrap: 'break-word' }}>
               {currentUser?.uid ?? '—'}
             </div>
           </div>
-          <div style={{ ...INSET_STYLE, flex: 1 }}>
+          <div className="cc-inset-flex" style={{ ...INSET_STYLE, flex: 1 }}>
             <div style={LABEL_STYLE}>Auth Status</div>
             <div style={{ color: C.success, fontWeight: 700, fontSize: '0.88rem', marginTop: 4 }}>
               {currentUser ? 'Authenticated' : 'Unauthenticated'}
             </div>
           </div>
-          <div style={{ ...INSET_STYLE, flex: 1 }}>
+          <div className="cc-inset-flex" style={{ ...INSET_STYLE, flex: 1 }}>
             <div style={LABEL_STYLE}>Session Uptime</div>
             <div style={{ color: C.muted, fontSize: '0.82rem', marginTop: 4 }}>
               {(() => {
@@ -456,7 +456,7 @@ function BugHunterTab({ bugHunter, store }: { bugHunter: any; store: any }) {
                 </div>
                 {expanded === bug.id && (
                   <div style={{ ...INSET_STYLE, margin: '4px 0 8px', ...FADE_IN }}>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 12 }}>
+                    <div className="cc-grid-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 12 }}>
                       <div>
                         <div style={LABEL_STYLE}>Description</div>
                         <div style={{ color: C.text, fontSize: '0.82rem', marginTop: 4 }}>{bug.description ?? '—'}</div>
@@ -587,7 +587,7 @@ function EmergencyTab({
         </div>
 
         {/* Details */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+        <div className="cc-grid-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
           <div style={INSET_STYLE}>
             <div style={LABEL_STYLE}>Activated At</div>
             <div style={{ color: C.text, fontSize: '0.84rem', marginTop: 4 }}>
@@ -787,7 +787,7 @@ export default function CreatorConsoleChamber() {
   }
 
   return (
-    <div style={{
+    <div className="cc-chamber" style={{
       minHeight: '100vh',
       background: C.body,
       color: C.text,
@@ -855,6 +855,28 @@ export default function CreatorConsoleChamber() {
         @keyframes atlas-fade-in {
           from { opacity: 0; transform: translateY(6px); }
           to   { opacity: 1; transform: translateY(0); }
+        }
+        @media (max-width: 640px) {
+          .cc-chamber { padding: 16px 14px !important; }
+          .cc-tabs {
+            overflow-x: auto !important;
+            flex-wrap: nowrap !important;
+            -webkit-overflow-scrolling: touch;
+            scrollbar-width: none;
+          }
+          .cc-tabs::-webkit-scrollbar { display: none; }
+          .cc-tabs > button {
+            flex: 0 0 auto !important;
+            padding: 8px 12px !important;
+          }
+          .cc-stat { min-width: 0 !important; flex: 1 1 45% !important; }
+          .cc-inset-flex { flex: 1 1 45% !important; min-width: 0 !important; }
+          .cc-uid {
+            font-size: 0.72rem !important;
+            word-break: break-all !important;
+            overflow-wrap: break-word !important;
+          }
+          .cc-grid-2 { grid-template-columns: 1fr !important; }
         }
       `}</style>
     </div>
