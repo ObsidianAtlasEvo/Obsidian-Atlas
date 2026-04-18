@@ -75,6 +75,37 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/**
+ * Retry wrapper — up to `attempts` tries with exponential backoff, skipping
+ * retry on abort / non-retryable errors. Used by the resilient fallback chain
+ * to squeeze transient provider flakes out of secondary/tertiary hops.
+ */
+async function withRetry<T>(
+  label: string,
+  attempts: number,
+  fn: () => Promise<T>,
+  baseDelayMs = 800,
+): Promise<T> {
+  let lastErr: unknown;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err;
+      const msg = err instanceof Error ? err.message : String(err);
+      // Never retry on abort
+      if (msg.includes('aborted') || msg.includes('AbortError')) throw err;
+      // Don't retry on auth / bad-request — those are configuration, not transient
+      if (msg.includes('401') || msg.includes('403') || msg.includes('400')) throw err;
+      if (i < attempts - 1) {
+        await delay(baseDelayMs * (i + 1));
+      }
+    }
+  }
+  void label;
+  throw lastErr;
+}
+
 function openAiStyleMessages(msgs: UniversalMessage[]): { role: string; content: string }[] {
   return msgs.map((m) => ({ role: m.role, content: m.content }));
 }
@@ -327,12 +358,180 @@ async function streamGeminiChatRaw(params: {
 }
 
 /**
+ * Try OpenAI → OpenRouter (Anthropic) → OpenRouter (fallback) as tertiary
+ * providers after Gemini + Groq have both failed. Returns on first success,
+ * throws if none are configured OR all configured providers fail.
+ *
+ * This is the last line of defense before the "Atlas is overloaded" message.
+ */
+async function streamTertiaryFallback(params: {
+  messages: UniversalMessage[];
+  onDelta: StreamDeltaHandler;
+  temperature?: number;
+  signal?: AbortSignal;
+  timeoutMs?: number;
+}): Promise<{ fullText: string; model: string }> {
+  const errors: string[] = [];
+
+  // Tier 1: OpenAI direct (gpt-4o-mini — fast, cheap, 128k context)
+  const openaiAuth = resolveOpenAiAuth();
+  if (openaiAuth) {
+    try {
+      return await withRetry('openai-gpt-4o-mini', 2, () =>
+        streamOpenAiCompatibleChat({
+          baseUrl: openaiAuth.base,
+          apiKey: openaiAuth.apiKey,
+          model: 'gpt-4o-mini',
+          messages: params.messages,
+          onDelta: params.onDelta,
+          temperature: params.temperature,
+          maxTokens: 2048,
+          signal: params.signal,
+          timeoutMs: params.timeoutMs,
+        }),
+      );
+    } catch (e) {
+      errors.push(`openai:${e instanceof Error ? e.message.slice(0, 80) : 'err'}`);
+    }
+  }
+
+  // Tier 2: OpenRouter (Anthropic Claude Haiku — fast, different infra than OpenAI)
+  const openrouterAuth = resolveOpenRouterAuth();
+  if (openrouterAuth) {
+    try {
+      return await withRetry('openrouter-claude-haiku', 2, () =>
+        streamOpenAiCompatibleChat({
+          baseUrl: openrouterAuth.base,
+          apiKey: openrouterAuth.apiKey,
+          model: 'anthropic/claude-3-5-haiku',
+          messages: params.messages,
+          onDelta: params.onDelta,
+          temperature: params.temperature,
+          maxTokens: 2048,
+          signal: params.signal,
+          timeoutMs: params.timeoutMs,
+          extraHeaders: {
+            'HTTP-Referer': env.openrouterReferer?.trim() || 'https://obsidianatlastech.com',
+            'X-Title': 'Obsidian Atlas',
+          },
+        }),
+      );
+    } catch (e) {
+      errors.push(`openrouter-anthropic:${e instanceof Error ? e.message.slice(0, 80) : 'err'}`);
+    }
+
+    // Tier 3: OpenRouter auto-route — last resort, picks whatever provider is healthy
+    try {
+      return await withRetry('openrouter-auto', 1, () =>
+        streamOpenAiCompatibleChat({
+          baseUrl: openrouterAuth.base,
+          apiKey: openrouterAuth.apiKey,
+          model: 'openrouter/auto',
+          messages: params.messages,
+          onDelta: params.onDelta,
+          temperature: params.temperature,
+          maxTokens: 2048,
+          signal: params.signal,
+          timeoutMs: params.timeoutMs,
+          extraHeaders: {
+            'HTTP-Referer': env.openrouterReferer?.trim() || 'https://obsidianatlastech.com',
+            'X-Title': 'Obsidian Atlas',
+          },
+        }),
+      );
+    } catch (e) {
+      errors.push(`openrouter-auto:${e instanceof Error ? e.message.slice(0, 80) : 'err'}`);
+    }
+  }
+
+  throw new Error(
+    errors.length > 0
+      ? `All tertiary fallbacks failed: ${errors.join(' | ')}`
+      : 'No tertiary fallback providers configured (set OPENAI_API_KEY and/or OPENROUTER_API_KEY)',
+  );
+}
+
+/** Non-streaming twin of streamTertiaryFallback. */
+async function completeTertiaryFallback(params: {
+  messages: UniversalMessage[];
+  temperature?: number;
+  signal?: AbortSignal;
+  timeoutMs?: number;
+}): Promise<{ text: string; model: string }> {
+  const errors: string[] = [];
+
+  const openaiAuth = resolveOpenAiAuth();
+  if (openaiAuth) {
+    try {
+      return await withRetry('openai-gpt-4o-mini-complete', 2, () =>
+        completeOpenAiCompatibleChat({
+          baseUrl: openaiAuth.base,
+          apiKey: openaiAuth.apiKey,
+          model: 'gpt-4o-mini',
+          messages: params.messages,
+          temperature: params.temperature,
+          maxTokens: 2048,
+          signal: params.signal,
+          timeoutMs: params.timeoutMs,
+        }),
+      );
+    } catch (e) {
+      errors.push(`openai:${e instanceof Error ? e.message.slice(0, 80) : 'err'}`);
+    }
+  }
+
+  const openrouterAuth = resolveOpenRouterAuth();
+  if (openrouterAuth) {
+    try {
+      return await withRetry('openrouter-claude-haiku-complete', 2, () =>
+        completeOpenAiCompatibleChat({
+          baseUrl: openrouterAuth.base,
+          apiKey: openrouterAuth.apiKey,
+          model: 'anthropic/claude-3-5-haiku',
+          messages: params.messages,
+          temperature: params.temperature,
+          maxTokens: 2048,
+          signal: params.signal,
+          timeoutMs: params.timeoutMs,
+        }),
+      );
+    } catch (e) {
+      errors.push(`openrouter-anthropic:${e instanceof Error ? e.message.slice(0, 80) : 'err'}`);
+    }
+
+    try {
+      return await withRetry('openrouter-auto-complete', 1, () =>
+        completeOpenAiCompatibleChat({
+          baseUrl: openrouterAuth.base,
+          apiKey: openrouterAuth.apiKey,
+          model: 'openrouter/auto',
+          messages: params.messages,
+          temperature: params.temperature,
+          maxTokens: 2048,
+          signal: params.signal,
+          timeoutMs: params.timeoutMs,
+        }),
+      );
+    } catch (e) {
+      errors.push(`openrouter-auto:${e instanceof Error ? e.message.slice(0, 80) : 'err'}`);
+    }
+  }
+
+  throw new Error(
+    errors.length > 0
+      ? `All tertiary fallbacks failed: ${errors.join(' | ')}`
+      : 'No tertiary fallback providers configured (set OPENAI_API_KEY and/or OPENROUTER_API_KEY)',
+  );
+}
+
+/**
  * Stream Gemini with transient-error fallback chain:
  * 1. Try requested model
  * 2. Wait 1.5s, retry same model
  * 3. Try gemini-2.0-flash (secondary)
  * 4. Fall back to Groq llama-3.3-70b-versatile
- * 5. Throw clean user-facing error
+ * 5. Fall back to OpenAI / OpenRouter tertiary chain
+ * 6. Throw clean user-facing error
  */
 export async function streamGeminiChat(params: {
   model: string;
@@ -420,10 +619,25 @@ export async function streamGeminiChat(params: {
             timeoutMs: params.timeoutMs,
           });
         } catch {
-          // Second attempt also failed — fall through to clean error
+          // Second attempt also failed — fall through to tertiary chain
         }
       }
     }
+  }
+
+  // Attempt 5: tertiary fallback chain (OpenAI → OpenRouter)
+  try {
+    return await streamTertiaryFallback({
+      messages: params.messages,
+      onDelta: params.onDelta,
+      temperature: params.temperature,
+      signal: params.signal,
+      timeoutMs: params.timeoutMs,
+    });
+  } catch (tertiaryErr) {
+    // Log for ops visibility; user still gets the clean message
+    console.warn('[universalAdapter] tertiary fallback failed:',
+      tertiaryErr instanceof Error ? tertiaryErr.message.slice(0, 200) : tertiaryErr);
   }
 
   throw new Error(TRANSIENT_USER_MESSAGE);
@@ -832,6 +1046,20 @@ export async function completeGeminiChat(params: {
         }
       }
     }
+  }
+
+  // Attempt 5: tertiary fallback chain (OpenAI → OpenRouter)
+  try {
+    return await completeTertiaryFallback({
+      messages: params.messages,
+      temperature: params.temperature,
+      signal: params.signal,
+      timeoutMs: params.timeoutMs,
+    });
+  } catch (tertiaryErr) {
+    // Log for ops visibility; user still gets the clean message
+    console.warn('[universalAdapter] tertiary fallback failed:',
+      tertiaryErr instanceof Error ? tertiaryErr.message.slice(0, 200) : tertiaryErr);
   }
 
   throw new Error(TRANSIENT_USER_MESSAGE);
