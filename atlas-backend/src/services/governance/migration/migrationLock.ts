@@ -20,28 +20,9 @@ export interface LockHandle {
 
 const LOCK_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
-/* ───────── Table bootstrap ───────── */
-
-function ensureTable(): void {
-  const db = getDb();
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS atlas_schema_migrations (
-      id TEXT PRIMARY KEY NOT NULL,
-      domain TEXT NOT NULL,
-      version TEXT NOT NULL,
-      status TEXT NOT NULL,
-      started_at TEXT,
-      completed_at TEXT,
-      error TEXT,
-      checkpoint_id TEXT,
-      lock_id TEXT,
-      lock_acquired_at TEXT,
-      lock_expires_at TEXT
-    )
-  `);
-}
-
 /* ───────── Helpers ───────── */
+// atlas_schema_migrations is created authoritatively by initSqlite() — see
+// atlas-backend/src/db/sqlite.ts. Do not redeclare here.
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -54,8 +35,6 @@ function nowIso(): string {
  * Throws if the domain is already locked by a non-expired lock.
  */
 export async function acquireLock(domain: string): Promise<LockHandle> {
-  ensureTable();
-
   if (await isLocked(domain)) {
     throw new Error(`Migration lock already held for domain "${domain}"`);
   }
@@ -87,7 +66,6 @@ export async function acquireLock(domain: string): Promise<LockHandle> {
  * Release a previously acquired lock.
  */
 export async function releaseLock(handle: LockHandle): Promise<void> {
-  ensureTable();
   const db = getDb();
   db.prepare(
     `DELETE FROM atlas_schema_migrations WHERE lock_id = ? AND domain = ?`
@@ -98,7 +76,6 @@ export async function releaseLock(handle: LockHandle): Promise<void> {
  * Check whether a domain is currently locked (non-expired).
  */
 export async function isLocked(domain: string): Promise<boolean> {
-  ensureTable();
   const db = getDb();
   const now = new Date().toISOString();
 

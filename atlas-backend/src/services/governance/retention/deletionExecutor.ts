@@ -4,7 +4,8 @@
  * Scheduled daily data retention sweep (03:00 UTC). Deletes rows past
  * their retention window while respecting legal holds:
  * - atlas_sovereign_audit: rows older than 2 years
- * - atlas_schema_migrations: completed rows older than 1 year
+ * - atlas_schema_migrations: successful rows older than 1 year (filtered by
+ *   completed_at, matching the column the governance/migration runner writes)
  * - atlas_evolution_signals: rows older than 90 days
  *
  * Idempotent by date — skips if a run already exists for the target date.
@@ -44,11 +45,14 @@ const RETENTION_RULES: RetentionRule[] = [
     maxAgeDays: 730, // 2 years
   },
   {
+    // Align with governance/migration runner: it writes status='success' and
+    // populates completed_at (not applied_at). applied_at is kept nullable on
+    // atlas_schema_migrations for legacy rows only — never written by the runner.
     table: 'atlas_schema_migrations',
-    dateColumn: 'applied_at',
+    dateColumn: 'completed_at',
     idColumn: 'id',
     maxAgeDays: 365, // 1 year
-    statusFilter: { column: 'status', value: 'completed' },
+    statusFilter: { column: 'status', value: 'success' },
   },
   {
     table: 'atlas_evolution_signals',
