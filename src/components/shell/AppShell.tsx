@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useAtlasStore } from '../../store/useAtlasStore';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { useAtlasAuth } from '../Auth/atlasAuthContext';
@@ -7,6 +7,8 @@ import { nowISO } from '../../lib/persistence';
 import { atlasAuthUrl } from '../../lib/atlasApi';
 import NavRail from './NavRail';
 import ChamberView from './ChamberView';
+import MobileSidebarDrawer from './MobileSidebarDrawer';
+import MobileTopBar from './MobileTopBar';
 import { SettingsMenu } from '../SettingsMenu';
 import type { AppState } from '../../types';
 
@@ -78,6 +80,24 @@ export default function AppShell() {
     [],
   );
 
+  // ── Mobile sidebar drawer state ──
+  // Kept here (not in the store) because it's purely a layout concern tied to
+  // the mobile shell's lifecycle — no other component needs to read or
+  // persist it. If we ever want deep-linking or cross-tab sync we can lift it
+  // into the Zustand store later.
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const hamburgerRef = useRef<HTMLButtonElement | null>(null);
+
+  // Collapse the drawer automatically when the viewport grows past the mobile
+  // breakpoint (e.g. rotation from portrait to landscape on a tablet) so the
+  // desktop layout doesn't start with a stale open overlay.
+  useEffect(() => {
+    if (!isMobile && drawerOpen) setDrawerOpen(false);
+  }, [isMobile, drawerOpen]);
+
+  const openDrawer = useCallback(() => setDrawerOpen(true), []);
+  const closeDrawer = useCallback(() => setDrawerOpen(false), []);
+
   if (isMobile) {
     return (
       <div
@@ -90,6 +110,8 @@ export default function AppShell() {
           overflow: 'hidden',
         }}
       >
+        <MobileTopBar onOpenDrawer={openDrawer} triggerRef={hamburgerRef} />
+
         <main
           style={{
             flex: 1,
@@ -112,6 +134,15 @@ export default function AppShell() {
           onSettingsClick={handleSettingsClick}
           onSignOutClick={handleSignOut}
         />
+
+        <MobileSidebarDrawer
+          open={drawerOpen}
+          onClose={closeDrawer}
+          onSettingsClick={handleSettingsClick}
+          onSignOutClick={handleSignOut}
+          returnFocusRef={hamburgerRef}
+        />
+
         <SettingsMenu state={settingsState} setState={settingsSetState} />
       </div>
     );
