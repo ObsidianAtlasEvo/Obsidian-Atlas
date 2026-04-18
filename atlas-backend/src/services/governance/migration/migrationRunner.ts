@@ -86,6 +86,25 @@ function nowIso(): string {
   return new Date().toISOString();
 }
 
+/**
+ * Returns true if a chain with the same (domain, version) has previously
+ * completed with status='success'. Used to make `runMigrations` idempotent
+ * across process restarts — without this guard, every boot would re-execute
+ * every `up()` in the chain list, which is only safe for purely idempotent
+ * chains and breaks the one-shot contract of real schema migrations.
+ */
+function isMigrationApplied(domain: string, version: string): boolean {
+  const db = getDb();
+  const row = db
+    .prepare(
+      `SELECT 1 FROM atlas_schema_migrations
+       WHERE domain = ? AND version = ? AND status = 'success'
+       LIMIT 1`,
+    )
+    .get(domain, version) as { 1?: number } | undefined;
+  return row !== undefined;
+}
+
 /* ───────── Public API ───────── */
 
 /**
@@ -100,6 +119,14 @@ export async function runMigrations(chains: MigrationChain[]): Promise<Migration
   let checkpointId: string | undefined;
 
   for (const chain of sorted) {
+    // Idempotency gate: if this (domain, version) has already run to success,
+    // skip it entirely — don't acquire a lock, don't invoke up(), don't log
+    // another lifecycle entry. The runner is called on every boot so this
+    // gate is what makes boot-time wiring safe.
+    if (isMigrationApplied(chain.domain, chain.version)) {
+      continue;
+    }
+
     let lock: LockHandle | undefined;
 
     try {
