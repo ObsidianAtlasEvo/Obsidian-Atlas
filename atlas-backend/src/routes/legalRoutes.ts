@@ -19,6 +19,7 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import type { Database } from 'better-sqlite3';
 import { currentVersionFor, type LegalKind, CURRENT_TERMS_VERSION, CURRENT_PRIVACY_VERSION } from '../config/legalVersions.js';
+import { RATE_LIMITS } from '../plugins/rateLimit.js';
 
 interface AcceptRequestBody {
   kind?: unknown;
@@ -67,15 +68,21 @@ function isValidVersion(v: unknown): v is string {
 export function registerLegalRoutes(fastify: FastifyInstance, db: Database): void {
   // Public — current required versions (no auth required so we can detect
   // staleness before or during the auth flow).
-  fastify.get('/v1/legal/versions', async (_request, reply) => {
-    return reply.send({
-      terms: CURRENT_TERMS_VERSION,
-      privacy: CURRENT_PRIVACY_VERSION,
-    });
-  });
+  fastify.get(
+    '/v1/legal/versions',
+    { config: { rateLimit: RATE_LIMITS.readUser } },
+    async (_request, reply) => {
+      return reply.send({
+        terms: CURRENT_TERMS_VERSION,
+        privacy: CURRENT_PRIVACY_VERSION,
+      });
+    },
+  );
 
   // Protected — current user's acceptance state.
-  fastify.get('/v1/legal/acceptance', async (request: FastifyRequest, reply: FastifyReply) => {
+  fastify.get('/v1/legal/acceptance', {
+    config: { rateLimit: RATE_LIMITS.readUser },
+  }, async (request: FastifyRequest, reply: FastifyReply) => {
     const session = requireSession(request, reply);
     if (!session) return;
 
@@ -103,7 +110,9 @@ export function registerLegalRoutes(fastify: FastifyInstance, db: Database): voi
   });
 
   // Protected — record acceptance. Idempotent: re-POSTing same version is a no-op.
-  fastify.post('/v1/legal/accept', async (request: FastifyRequest, reply: FastifyReply) => {
+  fastify.post('/v1/legal/accept', {
+    config: { rateLimit: RATE_LIMITS.writeUser },
+  }, async (request: FastifyRequest, reply: FastifyReply) => {
     const session = requireSession(request, reply);
     if (!session) return;
 
