@@ -102,4 +102,3 @@ bootstrap().catch((err: unknown) => {
   console.error('Failed to start Atlas Backend:', err);
   process.exit(1);
 });
-
