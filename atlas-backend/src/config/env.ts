@@ -133,6 +133,14 @@ const envSchema = z.object({
   CORS_ORIGINS: z.string().optional(),
   /** Phase 0 pgvector memory layer — per-user durable memories + conversation chunks injected into Overseer prompt. */
   MEMORY_LAYER_ENABLED: z.coerce.boolean().optional(),
+  /** Phase 0.5 memory distiller — distills conversation chunks into durable user_memories. */
+  MEMORY_DISTILLER_ENABLED: z.coerce.boolean().optional(),
+  /** Distiller tick (ms) for the background scheduler (default 15min). */
+  MEMORY_DISTILLER_TICK_MS: z.coerce.number().int().positive().optional(),
+  /** Number of users to distill per tick (default 5). */
+  MEMORY_DISTILLER_BATCH_SIZE: z.coerce.number().int().positive().optional(),
+  /** Phase 0.5 policy auto-writer — high-confidence preference memories update policy_profiles. */
+  MEMORY_POLICY_AUTO_WRITE_ENABLED: z.coerce.boolean().optional(),
 });
 
 const raw = envSchema.parse({
@@ -217,6 +225,10 @@ const raw = envSchema.parse({
   AUTH_SUCCESS_REDIRECT: process.env.AUTH_SUCCESS_REDIRECT,
   CORS_ORIGINS: process.env.CORS_ORIGINS,
   MEMORY_LAYER_ENABLED: process.env.MEMORY_LAYER_ENABLED,
+  MEMORY_DISTILLER_ENABLED: process.env.MEMORY_DISTILLER_ENABLED,
+  MEMORY_DISTILLER_TICK_MS: process.env.MEMORY_DISTILLER_TICK_MS,
+  MEMORY_DISTILLER_BATCH_SIZE: process.env.MEMORY_DISTILLER_BATCH_SIZE,
+  MEMORY_POLICY_AUTO_WRITE_ENABLED: process.env.MEMORY_POLICY_AUTO_WRITE_ENABLED,
 });
 
 // ── GPT-5.4 family model ID constants ──────────────────────────────────────
@@ -368,6 +380,10 @@ export const env = {
   authSuccessRedirect: raw.AUTH_SUCCESS_REDIRECT?.trim() || undefined,
   corsOrigins: parseCorsOrigins(raw.CORS_ORIGINS),
   memoryLayerEnabled: raw.MEMORY_LAYER_ENABLED === true,
+  memoryDistillerEnabled: raw.MEMORY_DISTILLER_ENABLED === true,
+  memoryDistillerTickMs: raw.MEMORY_DISTILLER_TICK_MS ?? 15 * 60_000,
+  memoryDistillerBatchSize: raw.MEMORY_DISTILLER_BATCH_SIZE ?? 5,
+  memoryPolicyAutoWriteEnabled: raw.MEMORY_POLICY_AUTO_WRITE_ENABLED === true,
 } as const;
 
 export type Env = typeof env;

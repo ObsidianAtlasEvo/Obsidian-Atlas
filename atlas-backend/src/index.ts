@@ -7,6 +7,7 @@ import cors from '@fastify/cors';
 import Fastify, { type FastifyReply, type FastifyRequest } from 'fastify';
 import { env } from './config/env.js';
 import { startChronosScheduler } from './services/autonomy/chronos.js';
+import { startMemoryDistillerScheduler } from './services/autonomy/memoryDistillerScheduler.js';
 import { initSemanticVectorIndex } from './db/vectorStore.js';
 import { initSqlite, getDb } from './db/sqlite.js';
 import { runBootMigrations } from './services/governance/migration/bootMigrations.js';
@@ -40,6 +41,7 @@ import { registerGapLedgerRoutes } from './routes/gapLedgerRoutes.js';
 import { registerChangeControlRoutes } from './routes/changeControlRoutes.js';
 import { registerBillingRoutes } from './routes/billingRoutes.js';
 import { registerUserPreferencesRoutes } from './routes/userPreferencesRoutes.js';
+import { registerMemoryDistillerRoutes } from './routes/memoryDistillerRoutes.js';
 import { registerLegalRoutes } from './routes/legalRoutes.js';
 import { loadPersistedJobs } from './services/inference/queueManager.js';
 
@@ -397,6 +399,7 @@ await app.register(async (userScope) => {
     };
   });
   await registerUserPreferencesRoutes(userScope, getDb());
+  await registerMemoryDistillerRoutes(userScope);
 }, { prefix: '/v1' });
 
 // ── Legal acceptance routes ──────────────────────────────────────────────
@@ -518,6 +521,13 @@ app
       app.log.info(
         { chronosTickMs: env.chronosTickMs, chronosIdleMs: env.chronosIdleMs, filterUser: env.chronosUserId ?? 'any' },
         'chronos enabled'
+      );
+    }
+    if (env.memoryDistillerEnabled) {
+      startMemoryDistillerScheduler();
+      app.log.info(
+        { tickMs: env.memoryDistillerTickMs, batchSize: env.memoryDistillerBatchSize, autoWrite: env.memoryPolicyAutoWriteEnabled },
+        'memory distiller enabled'
       );
     }
     app.log.info(
