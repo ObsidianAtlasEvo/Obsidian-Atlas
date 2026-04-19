@@ -17,9 +17,12 @@
 import { env } from '../../config/env.js';
 import { runScheduledWatcherSweep } from '../intelligence/watcherFrameworkService.js';
 import { runAndPersistFullEvalSuite } from '../intelligence/constitutionalEvalService.js';
+import { runRetentionEnforcer } from '../../workers/retentionEnforcer.js';
 
 let handle: ReturnType<typeof setInterval> | null = null;
+let retentionHandle: ReturnType<typeof setInterval> | null = null;
 let running = false;
+let retentionRunning = false;
 
 async function tick(): Promise<void> {
   if (running) return;
@@ -53,6 +56,23 @@ async function tick(): Promise<void> {
   }
 }
 
+async function retentionTick(): Promise<void> {
+  if (retentionRunning) return;
+  if (!env.retentionEnforcerEnabled) return;
+  retentionRunning = true;
+  try {
+    const report = await runRetentionEnforcer();
+    if (report.skipped) return;
+    console.info(
+      `[sovereigntyBackgroundSweeper] retention policies_run=${report.policiesRun} records_affected=${report.recordsAffected} errors=${report.errors.length}`,
+    );
+  } catch (err) {
+    console.error('[sovereigntyBackgroundSweeper] retention error:', err);
+  } finally {
+    retentionRunning = false;
+  }
+}
+
 export function startSovereigntyBackgroundSweeper(): void {
   if (handle) return;
   // Kick off one immediate pass so admins can see first events quickly, then schedule.
@@ -60,11 +80,22 @@ export function startSovereigntyBackgroundSweeper(): void {
   handle = setInterval(() => {
     tick().catch(() => {});
   }, env.sovereigntyBackgroundSweeperTickMs);
+
+  if (!retentionHandle && env.retentionEnforcerEnabled) {
+    retentionTick().catch(() => {});
+    retentionHandle = setInterval(() => {
+      retentionTick().catch(() => {});
+    }, env.retentionEnforcerTickMs);
+  }
 }
 
 export function stopSovereigntyBackgroundSweeper(): void {
   if (handle) {
     clearInterval(handle);
     handle = null;
+  }
+  if (retentionHandle) {
+    clearInterval(retentionHandle);
+    retentionHandle = null;
   }
 }

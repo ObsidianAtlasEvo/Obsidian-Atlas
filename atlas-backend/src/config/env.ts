@@ -147,6 +147,10 @@ const envSchema = z.object({
   SOVEREIGNTY_BACKGROUND_SWEEPER_TICK_MS: z.coerce.number().int().positive().optional(),
   /** Comma-separated list of user_ids the sweeper will iterate. Safety default: empty (no-op until configured). */
   SOVEREIGNTY_BACKGROUND_SWEEPER_USER_IDS: z.string().optional(),
+  /** Phase 0.99 retention enforcer — applies active retention_policies to user data. Off by default. */
+  RETENTION_ENFORCER_ENABLED: z.coerce.boolean().optional(),
+  /** Retention enforcer tick interval (ms). Defaults to 1 hour. */
+  RETENTION_ENFORCER_TICK_MS: z.coerce.number().int().positive().optional(),
 });
 
 const raw = envSchema.parse({
@@ -238,6 +242,8 @@ const raw = envSchema.parse({
   SOVEREIGNTY_BACKGROUND_SWEEPER_ENABLED: process.env.SOVEREIGNTY_BACKGROUND_SWEEPER_ENABLED,
   SOVEREIGNTY_BACKGROUND_SWEEPER_TICK_MS: process.env.SOVEREIGNTY_BACKGROUND_SWEEPER_TICK_MS,
   SOVEREIGNTY_BACKGROUND_SWEEPER_USER_IDS: process.env.SOVEREIGNTY_BACKGROUND_SWEEPER_USER_IDS,
+  RETENTION_ENFORCER_ENABLED: process.env.RETENTION_ENFORCER_ENABLED,
+  RETENTION_ENFORCER_TICK_MS: process.env.RETENTION_ENFORCER_TICK_MS,
 });
 
 // ── GPT-5.4 family model ID constants ──────────────────────────────────────
@@ -399,6 +405,8 @@ export const env = {
     .split(',')
     .map((s) => s.trim())
     .filter((s) => s.length > 0),
+  retentionEnforcerEnabled: raw.RETENTION_ENFORCER_ENABLED === true,
+  retentionEnforcerTickMs: raw.RETENTION_ENFORCER_TICK_MS ?? 60 * 60_000,
 } as const;
 
 export type Env = typeof env;
