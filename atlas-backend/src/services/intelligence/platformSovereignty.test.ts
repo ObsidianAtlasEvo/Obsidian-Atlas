@@ -18,7 +18,10 @@ import {
   runEval,
   computeConstitutionalHealth,
   formatEvalSummary,
+  classifyReleaseReadiness,
   type EvalResult,
+  type EvalType,
+  type PersistedEvalRow,
 } from './constitutionalEvalService.js';
 import {
   formatAuditSummary,
@@ -262,4 +265,83 @@ test('formatAuditSummary: groups by type', () => {
 test('formatAuditSummary: policy_mutation counted', () => {
   const s = formatAuditSummary([makeAudit('policy_mutation')]);
   assert.match(s, /policy_mutation:1/);
+});
+
+// ── classifyReleaseReadiness ─────────────────────────────────────────────────
+const ALL_EVAL_TYPES: EvalType[] = [
+  'sovereignty', 'transparency', 'truth_adherence', 'operator_fidelity',
+  'anti_drift', 'minimal_mutation', 'recall_fidelity',
+];
+
+function makeEvalRow(
+  t: EvalType,
+  passed: boolean,
+  evaluated_at = '2026-04-19T12:00:00Z',
+): PersistedEvalRow {
+  return {
+    id: `00000000-0000-4000-8000-${t.slice(0, 12).padEnd(12, '0')}`,
+    user_id: '00000000-0000-4000-8000-000000000001',
+    eval_type: t,
+    score: passed ? 0.9 : 0.2,
+    passed,
+    notes: '',
+    eval_metadata: {},
+    evaluated_at,
+    created_at: evaluated_at,
+  };
+}
+
+test('classifyReleaseReadiness: empty rows => not ready, all types blocking', () => {
+  const r = classifyReleaseReadiness([]);
+  assert.equal(r.ready, false);
+  assert.equal(r.blockingFailures.length, 7);
+});
+
+test('classifyReleaseReadiness: all 7 pass => ready', () => {
+  const rows = ALL_EVAL_TYPES.map((t) => makeEvalRow(t, true));
+  const r = classifyReleaseReadiness(rows);
+  assert.equal(r.ready, true);
+  assert.deepEqual(r.blockingFailures, []);
+});
+
+test('classifyReleaseReadiness: one type missing => blocks on that type', () => {
+  const rows = ALL_EVAL_TYPES.slice(0, 6).map((t) => makeEvalRow(t, true));
+  const r = classifyReleaseReadiness(rows);
+  assert.equal(r.ready, false);
+  assert.deepEqual(r.blockingFailures, ['recall_fidelity']);
+});
+
+test('classifyReleaseReadiness: latest-by-type wins (old fail + new pass => ready)', () => {
+  const rows = [
+    ...ALL_EVAL_TYPES.map((t) => makeEvalRow(t, true, '2026-04-19T12:00:00Z')),
+    makeEvalRow('sovereignty', false, '2026-04-18T12:00:00Z'),
+  ];
+  const r = classifyReleaseReadiness(rows);
+  assert.equal(r.ready, true);
+});
+
+test('classifyReleaseReadiness: latest-by-type wins (old pass + new fail => blocks)', () => {
+  const rows = [
+    ...ALL_EVAL_TYPES.slice(1).map((t) => makeEvalRow(t, true, '2026-04-19T12:00:00Z')),
+    makeEvalRow('sovereignty', true, '2026-04-18T12:00:00Z'),
+    makeEvalRow('sovereignty', false, '2026-04-19T13:00:00Z'),
+  ];
+  const r = classifyReleaseReadiness(rows);
+  assert.equal(r.ready, false);
+  assert.deepEqual(r.blockingFailures, ['sovereignty']);
+});
+
+test('classifyReleaseReadiness: three blocking failures reported in canonical order', () => {
+  const rows: PersistedEvalRow[] = [
+    makeEvalRow('sovereignty', false),
+    makeEvalRow('transparency', true),
+    makeEvalRow('truth_adherence', false),
+    makeEvalRow('operator_fidelity', true),
+    makeEvalRow('anti_drift', false),
+    makeEvalRow('minimal_mutation', true),
+    makeEvalRow('recall_fidelity', true),
+  ];
+  const r = classifyReleaseReadiness(rows);
+  assert.equal(r.ready, false);
+  assert.deepEqual(r.blockingFailures, ['sovereignty', 'truth_adherence', 'anti_drift']);
 });

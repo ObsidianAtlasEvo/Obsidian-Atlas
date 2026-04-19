@@ -48,6 +48,7 @@ import {
   initialStabilityScore,
   isInitiallyPolicyEligible,
 } from './memoryGovernance.js';
+import { logGovernanceEvent } from './auditGovernanceService.js';
 
 // ── Thresholds ───────────────────────────────────────────────────────────────
 
@@ -453,6 +454,34 @@ export async function persistArbitratedMemory(
         scope_key: candidate.scopeKey,
         policy_eligible: policyEligible && !isQuarantined,
       });
+
+      // Bridge to Phase 0.99 cross-phase audit log for quarantine/unresolved verdicts.
+      // Why: memory_governance_events is memory-local; audit_governance_log is the
+      // platform-wide spine surfaced by /v1/sovereignty/audit-log.
+      if (decision.verdict === 'quarantine') {
+        logGovernanceEvent(userId, 'quarantine', {
+          actor: 'memory_arbitrator',
+          target: decision.targetMemoryId ?? newId ?? undefined,
+          after_state: { new_memory_id: newId, candidate_class: candidate.memoryClass },
+          audit_metadata: {
+            reason: decision.reason,
+            similarity: decision.similarityScore,
+            candidate_provenance: candidate.provenance,
+            scope_type: candidate.scopeType,
+          },
+        }).catch(() => {});
+      } else if (decision.verdict === 'unresolved') {
+        logGovernanceEvent(userId, 'suppression', {
+          actor: 'memory_arbitrator',
+          target: decision.targetMemoryId ?? undefined,
+          after_state: { new_memory_id: newId, contradiction_status: 'unresolved' },
+          audit_metadata: {
+            reason: decision.reason,
+            similarity: decision.similarityScore,
+            candidate_provenance: candidate.provenance,
+          },
+        }).catch(() => {});
+      }
 
       // ── Contradiction log (when there's a conflict) ────────────────────────
       if (

@@ -141,6 +141,12 @@ const envSchema = z.object({
   MEMORY_DISTILLER_BATCH_SIZE: z.coerce.number().int().positive().optional(),
   /** Phase 0.5 policy auto-writer — high-confidence preference memories update policy_profiles. */
   MEMORY_POLICY_AUTO_WRITE_ENABLED: z.coerce.boolean().optional(),
+  /** Phase 0.99 sovereignty background sweeper — periodic watcher sweep + constitutional eval persistence. */
+  SOVEREIGNTY_BACKGROUND_SWEEPER_ENABLED: z.coerce.boolean().optional(),
+  /** Sweeper tick interval (ms). Defaults to 30 minutes. */
+  SOVEREIGNTY_BACKGROUND_SWEEPER_TICK_MS: z.coerce.number().int().positive().optional(),
+  /** Comma-separated list of user_ids the sweeper will iterate. Safety default: empty (no-op until configured). */
+  SOVEREIGNTY_BACKGROUND_SWEEPER_USER_IDS: z.string().optional(),
 });
 
 const raw = envSchema.parse({
@@ -229,6 +235,9 @@ const raw = envSchema.parse({
   MEMORY_DISTILLER_TICK_MS: process.env.MEMORY_DISTILLER_TICK_MS,
   MEMORY_DISTILLER_BATCH_SIZE: process.env.MEMORY_DISTILLER_BATCH_SIZE,
   MEMORY_POLICY_AUTO_WRITE_ENABLED: process.env.MEMORY_POLICY_AUTO_WRITE_ENABLED,
+  SOVEREIGNTY_BACKGROUND_SWEEPER_ENABLED: process.env.SOVEREIGNTY_BACKGROUND_SWEEPER_ENABLED,
+  SOVEREIGNTY_BACKGROUND_SWEEPER_TICK_MS: process.env.SOVEREIGNTY_BACKGROUND_SWEEPER_TICK_MS,
+  SOVEREIGNTY_BACKGROUND_SWEEPER_USER_IDS: process.env.SOVEREIGNTY_BACKGROUND_SWEEPER_USER_IDS,
 });
 
 // ── GPT-5.4 family model ID constants ──────────────────────────────────────
@@ -384,6 +393,12 @@ export const env = {
   memoryDistillerTickMs: raw.MEMORY_DISTILLER_TICK_MS ?? 15 * 60_000,
   memoryDistillerBatchSize: raw.MEMORY_DISTILLER_BATCH_SIZE ?? 5,
   memoryPolicyAutoWriteEnabled: raw.MEMORY_POLICY_AUTO_WRITE_ENABLED === true,
+  sovereigntyBackgroundSweeperEnabled: raw.SOVEREIGNTY_BACKGROUND_SWEEPER_ENABLED === true,
+  sovereigntyBackgroundSweeperTickMs: raw.SOVEREIGNTY_BACKGROUND_SWEEPER_TICK_MS ?? 30 * 60_000,
+  sovereigntyBackgroundSweeperUserIds: (raw.SOVEREIGNTY_BACKGROUND_SWEEPER_USER_IDS ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0),
 } as const;
 
 export type Env = typeof env;
