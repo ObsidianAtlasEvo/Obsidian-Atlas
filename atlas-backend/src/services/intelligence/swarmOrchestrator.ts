@@ -26,6 +26,7 @@ import {
   userTelemetryFromPolicyProfile,
 } from './telemetryTranslator.js';
 import { isLocalOllamaReachable } from './router.js';
+import { recallForOverseer, writeTurnAsync } from './memoryService.js';
 import { TIER_MODEL_ACCESS, type SubscriptionTier } from './groundwork/v4/subscriptionSchema.js';
 import {
   completeGeminiChat,
@@ -657,6 +658,11 @@ export async function executeSwarmPipeline(input: {
   // ── Swarm strategy: collect step outputs silently, then stream only the synthesis ──
   const lastUserRaw = lastUserFromClient(input.messages);
 
+  // Phase 0 memory layer — pull per-user durable memories + recent chunks to inject
+  // into the Overseer prompt. Hard-capped internally; returns '' when disabled or on
+  // any failure so the hot path is never blocked.
+  const memoryBlock = await recallForOverseer(input.userId, lastUserRaw);
+
   // Detect sovereign response mode from user text so swarm steps and synthesis
   // receive the full mode directive (e.g. truth_pressure anti-therapy-speak rules).
   const detectedMode: SovereignResponseMode = inferSovereignResponseMode(lastUserRaw);
@@ -742,7 +748,7 @@ export async function executeSwarmPipeline(input: {
     { role: 'system', content: OVERSEER_SYSTEM_PROMPT },
     {
       role: 'user',
-      content: `${modeDirective}
+      content: `${modeDirective}${memoryBlock ? `\n\n${memoryBlock}` : ''}
 
 ORIGINAL_USER_REQUEST:
 ${lastUserRaw}
@@ -777,6 +783,12 @@ Synthesize the above into a single, coherent Atlas-identity response. Do not exp
         signal,
         timeoutMs,
       });
+      void writeTurnAsync({
+        userId: input.userId,
+        userMessage: lastUserRaw,
+        assistantMessage: finalText || synth,
+        modelId: synthModel,
+      });
       return {
         fullText: finalText || synth,
         surface: 'swarm',
@@ -798,6 +810,12 @@ Synthesize the above into a single, coherent Atlas-identity response. Do not exp
         },
         signal,
         timeoutMs,
+      });
+      void writeTurnAsync({
+        userId: input.userId,
+        userMessage: lastUserRaw,
+        assistantMessage: finalText || synth,
+        modelId: synthModel,
       });
       return {
         fullText: finalText || synth,
@@ -852,6 +870,12 @@ Synthesize the above into a single, coherent Atlas-identity response. Do not exp
           } catch { /* skip malformed chunk */ }
         }
       }
+      void writeTurnAsync({
+        userId: input.userId,
+        userMessage: lastUserRaw,
+        assistantMessage: synth,
+        modelId: overseerModelId,
+      });
       return {
         fullText: synth,
         surface: 'swarm',
