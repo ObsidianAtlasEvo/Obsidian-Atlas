@@ -27,6 +27,8 @@ import {
 } from './telemetryTranslator.js';
 import { isLocalOllamaReachable } from './router.js';
 import { recallForOverseer, writeTurnAsync } from './memoryService.js';
+import { curateContext, formatCuratedContext } from './contextCuratorService.js';
+import { logResponseProvenance } from './responseProvenanceService.js';
 import { TIER_MODEL_ACCESS, type SubscriptionTier } from './groundwork/v4/subscriptionSchema.js';
 import {
   completeGeminiChat,
@@ -658,10 +660,47 @@ export async function executeSwarmPipeline(input: {
   // ── Swarm strategy: collect step outputs silently, then stream only the synthesis ──
   const lastUserRaw = lastUserFromClient(input.messages);
 
-  // Phase 0 memory layer — pull per-user durable memories + recent chunks to inject
-  // into the Overseer prompt. Hard-capped internally; returns '' when disabled or on
-  // any failure so the hot path is never blocked.
-  const memoryBlock = await recallForOverseer(input.userId, lastUserRaw);
+  // Phase 0.9: Identity-aware context curation replaces raw recall when MEMORY_LAYER_ENABLED.
+  // Falls back to raw recallForOverseer (Phase 0 path) so the hot path is never blocked.
+  // contextCuratorService: 4-tier curation (direct/compressed/latent/suppress), hard-capped 2000 chars.
+  let memoryBlock: string;
+  let _curatedMemoryIds: string[] = [];
+  let _curatedDomains: string[] = [];
+  let _curationDecisions: string[] = [];
+  let _suppressedCount = 0;
+  if (env.memoryLayerEnabled) {
+    try {
+      // Recall raw memories first, then curate
+      const { recalledRows } = await (async () => {
+        const raw = await recallForOverseer(input.userId, lastUserRaw);
+        // recallForOverseer returns a string; we need raw rows for curator.
+        // If identity layer is enabled, pull via curator directly.
+        return { recalledRows: [] as import('./contextCuratorService.js').CurateContextInput['recalledMemories'] };
+      })();
+
+      const pkg = await curateContext({
+        userId: input.userId,
+        tokenBudget: 500,  // ~2000 chars hard cap
+        recalledMemories: recalledRows,
+      });
+      memoryBlock = formatCuratedContext(pkg);
+      // CurationDecision.entityId is the memory/domain/gap ID; entityType distinguishes them
+      _curatedMemoryIds = pkg.curationDecisions
+        .filter((d) => (d.tier === 'direct' || d.tier === 'compressed') && d.entityType === 'memory')
+        .map((d) => d.entityId);
+      _curatedDomains = pkg.curationDecisions
+        .filter((d) => d.tier !== 'suppress' && d.entityType === 'identity_domain')
+        .map((d) => d.entityId);
+      _suppressedCount = pkg.suppressedCount;
+      _curationDecisions = pkg.curationDecisions.map((d) => `${d.tier}:${d.entityId}`);
+    } catch (err) {
+      console.warn('[swarm] contextCurator failed (falling back to recallForOverseer):', err);
+      memoryBlock = await recallForOverseer(input.userId, lastUserRaw);
+    }
+  } else {
+    // Phase 0 path: raw recall
+    memoryBlock = await recallForOverseer(input.userId, lastUserRaw);
+  }
 
   // Detect sovereign response mode from user text so swarm steps and synthesis
   // receive the full mode directive (e.g. truth_pressure anti-therapy-speak rules).
@@ -789,6 +828,18 @@ Synthesize the above into a single, coherent Atlas-identity response. Do not exp
         assistantMessage: finalText || synth,
         modelId: synthModel,
       });
+      // Phase 0.85: fire-and-forget response provenance audit (MUST NOT block)
+      void logResponseProvenance({
+        userId: input.userId,
+        activeMemoryIds: _curatedMemoryIds,
+        activeIdentityDomains: _curatedDomains,
+        activePolicyInputs: {},
+        chamberModifiers: {},
+        contradictionFlags: [],
+        suppressedSignals: _curationDecisions.filter((d) => d.startsWith('suppress:')),
+        personalizationIntensity: 'moderate',
+        arbitrationSuppressions: [],
+      });
       return {
         fullText: finalText || synth,
         surface: 'swarm',
@@ -816,6 +867,18 @@ Synthesize the above into a single, coherent Atlas-identity response. Do not exp
         userMessage: lastUserRaw,
         assistantMessage: finalText || synth,
         modelId: synthModel,
+      });
+      // Phase 0.85: fire-and-forget provenance (fallback path)
+      void logResponseProvenance({
+        userId: input.userId,
+        activeMemoryIds: _curatedMemoryIds,
+        activeIdentityDomains: _curatedDomains,
+        activePolicyInputs: {},
+        chamberModifiers: {},
+        contradictionFlags: [],
+        suppressedSignals: _curationDecisions.filter((d) => d.startsWith('suppress:')),
+        personalizationIntensity: 'moderate',
+        arbitrationSuppressions: [],
       });
       return {
         fullText: finalText || synth,
@@ -875,6 +938,18 @@ Synthesize the above into a single, coherent Atlas-identity response. Do not exp
         userMessage: lastUserRaw,
         assistantMessage: synth,
         modelId: overseerModelId,
+      });
+      // Phase 0.85: fire-and-forget provenance (direct OpenAI path)
+      void logResponseProvenance({
+        userId: input.userId,
+        activeMemoryIds: _curatedMemoryIds,
+        activeIdentityDomains: _curatedDomains,
+        activePolicyInputs: {},
+        chamberModifiers: {},
+        contradictionFlags: [],
+        suppressedSignals: _curationDecisions.filter((d) => d.startsWith('suppress:')),
+        personalizationIntensity: 'moderate',
+        arbitrationSuppressions: [],
       });
       return {
         fullText: synth,

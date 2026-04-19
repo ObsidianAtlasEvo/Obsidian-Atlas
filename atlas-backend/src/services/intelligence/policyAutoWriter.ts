@@ -49,6 +49,11 @@ import type { PolicyProfile } from '../../types/atlas.js';
 import type { PolicyPatch } from './memoryDistiller.js';
 import { markPolicyPatched } from './memoryDistiller.js';
 import { supabaseRest } from '../../db/supabase.js';
+import {
+  simulatePolicyMutation,
+  type SimulationInput,
+} from './policySimulationService.js';
+import type { EvidenceProfile } from './evidenceArbitrationService.js';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -211,7 +216,74 @@ export async function applyPolicyPatch(
     return null;
   }
 
+  // ── Phase 0.85: Policy Simulation Gate ────────────────────────────────────
+  // Before any field mutation, run the 7-step simulation sandbox.
+  // If outcome is 'reject', the patch is suppressed even if governance gates passed.
+  // If outcome is 'stage', we log but still defer live application.
+  // Only outcome='apply' allows proceeding to field mutation.
+  const primaryField = patch.verbosity
+    ? 'verbosity'
+    : patch.tone
+    ? 'tone'
+    : patch.structurePreference
+    ? 'structurePreference'
+    : 'truthFirstStrictness';
+
   const current = getPolicyProfile(userId);
+
+  const evidenceChain: EvidenceProfile[] = (patch.evidence ?? []).map((e, i) => ({
+    id: `pat-${i}`,
+    userId,
+    evidenceType: e.toLowerCase().includes('user') ? 'user_stated_truth' : 'assistant_inference',
+    evidenceDirectness: 'direct',
+    evidenceStrength: patch.confidence,
+    evidenceRecurrence: 1,
+    evidenceStability: 0.8,
+    evidenceConfirmationStatus: 'unconfirmed',
+    evidenceOperationalWeight: patch.confidence,
+    operationalTrustLevel: patch.confidence >= 0.85 ? 'high' : 'moderate',
+    policyEligibilityRecommendation: patch.confidence >= 0.75 ? 'apply' : 'stage',
+    identityEligibilityRecommendation: 'contextual',
+    personalizationIntensityCap: 'moderate',
+  } satisfies EvidenceProfile));
+
+  const simInput: SimulationInput = {
+    userId,
+    policyField: primaryField,
+    currentValue: (current as unknown as Record<string, unknown>)[primaryField],
+    proposedValue: (patch as unknown as Record<string, unknown>)[primaryField] ?? patch.truthFirstStrictnessDelta,
+    evidenceChain,
+    contradictionBurden: gateSummary.unresolvedConflictCount > 0
+      ? Math.min(1, gateSummary.unresolvedConflictCount * 0.25)
+      : 0,
+    correctionHistory: [],
+  };
+
+  let simResult: Awaited<ReturnType<typeof simulatePolicyMutation>> | null = null;
+  try {
+    simResult = await simulatePolicyMutation(simInput);
+    if (!simResult.shouldApplyLive) {
+      console.info(
+        `[policyAutoWriter] simulation BLOCKED patch (outcome=${simResult.outcome}, reason=${simResult.reason})`,
+      );
+      await logPolicyDecision(userId, 'rejected', patch, {
+        ...gateSummary,
+        rejectionReasons: [
+          ...gateSummary.rejectionReasons,
+          `simulation-gate: ${simResult.outcome} — ${simResult.reason}`,
+        ],
+      });
+      return null;
+    }
+    console.info(
+      `[policyAutoWriter] simulation approved patch (outcome=${simResult.outcome}, risk=${simResult.riskLevel})`,
+    );
+  } catch (simErr) {
+    // Simulation is advisory — if it throws, log and continue with prior gate approval
+    console.warn('[policyAutoWriter] policySimulationService threw (non-fatal, proceeding):', simErr);
+  }
+  // ────────────────────────────────────────────────────────────────────────────
+
   const next: Partial<Parameters<typeof updatePolicyProfile>[1]> = {};
 
   if (patch.verbosity && patch.verbosity !== current.verbosity) {
