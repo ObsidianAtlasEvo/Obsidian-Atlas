@@ -24,6 +24,11 @@
 
 import { env } from '../../config/env.js';
 import type { RecalledRow } from './memoryService.js';
+import { getClaimsForContext } from './claimGovernanceService.js';
+import {
+  buildEpistemicStatusBlock,
+  formatStatusForContext,
+} from './epistemicStatusFormatter.js';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -503,4 +508,32 @@ export function formatCuratedContext(pkg: CuratedContextPackage): string {
     return full.slice(0, 1980) + '\n…[context truncated]';
   }
   return full;
+}
+
+/**
+ * Phase 0.97 wiring: extend formatCuratedContext with an epistemic status block.
+ * Async because it must read live claim state from Supabase. Falls back to the
+ * base formatter if anything fails.
+ */
+export async function formatCuratedContextWithEpistemic(
+  userId: string,
+  pkg: CuratedContextPackage,
+): Promise<string> {
+  const base = formatCuratedContext(pkg);
+  if (!env.memoryLayerEnabled) return base;
+  try {
+    const claims = await getClaimsForContext(userId);
+    if (claims.length === 0) return base;
+    const epistemicBlock = buildEpistemicStatusBlock(claims);
+    const statusLine = formatStatusForContext(claims);
+    const addition = `\n[EPISTEMIC STATUS]\n${statusLine}\n${epistemicBlock}`;
+    const full = `${base}${addition}`;
+    if (full.length > 2400) {
+      return full.slice(0, 2380) + '\n…[context truncated]';
+    }
+    return full;
+  } catch (err) {
+    console.error('[contextCuratorService] epistemic block error:', err);
+    return base;
+  }
 }

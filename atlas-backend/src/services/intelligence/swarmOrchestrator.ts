@@ -27,8 +27,23 @@ import {
 } from './telemetryTranslator.js';
 import { isLocalOllamaReachable } from './router.js';
 import { recallForOverseer, writeTurnAsync } from './memoryService.js';
-import { curateContext, formatCuratedContext } from './contextCuratorService.js';
+import {
+  curateContext,
+  formatCuratedContextWithEpistemic,
+} from './contextCuratorService.js';
 import { logResponseProvenance } from './responseProvenanceService.js';
+import {
+  composeDirectiveState,
+  formatDirectiveSummary,
+} from './directiveCenterService.js';
+import {
+  buildHomeSurface,
+  formatHomeSummary,
+} from './homeSurfaceService.js';
+import {
+  buildTransparencyRecord,
+  logTransparencyRecord,
+} from './behaviorTransparencyService.js';
 import { TIER_MODEL_ACCESS, type SubscriptionTier } from './groundwork/v4/subscriptionSchema.js';
 import {
   completeGeminiChat,
@@ -683,7 +698,7 @@ export async function executeSwarmPipeline(input: {
         tokenBudget: 500,  // ~2000 chars hard cap
         recalledMemories: recalledRows,
       });
-      memoryBlock = formatCuratedContext(pkg);
+      memoryBlock = await formatCuratedContextWithEpistemic(input.userId, pkg);
       // CurationDecision.entityId is the memory/domain/gap ID; entityType distinguishes them
       _curatedMemoryIds = pkg.curationDecisions
         .filter((d) => (d.tier === 'direct' || d.tier === 'compressed') && d.entityType === 'memory')
@@ -701,6 +716,27 @@ export async function executeSwarmPipeline(input: {
     // Phase 0 path: raw recall
     memoryBlock = await recallForOverseer(input.userId, lastUserRaw);
   }
+
+  // Phase 0.95 + 0.98 wiring (fire-and-forget, never throws)
+  try {
+    const directiveState = await composeDirectiveState(input.userId);
+    const homeSurface = await buildHomeSurface(input.userId);
+    const directiveSummary = formatDirectiveSummary(directiveState);
+    const homeSummary = formatHomeSummary(homeSurface);
+    memoryBlock = `[DIRECTIVE STATE]\n${directiveSummary}\n\n[HOME SURFACE]\n${homeSummary}\n\n${memoryBlock}`;
+  } catch (err) {
+    console.error('[swarmOrchestrator] directive/home surface injection error:', err);
+  }
+  // Fire transparency record (fire-and-forget)
+  logTransparencyRecord(
+    input.userId,
+    buildTransparencyRecord(
+      'swarm_orchestrator_response',
+      'Standard orchestration pipeline',
+      'prime_directive',
+      'high',
+    ),
+  ).catch(() => {});
 
   // Detect sovereign response mode from user text so swarm steps and synthesis
   // receive the full mode directive (e.g. truth_pressure anti-therapy-speak rules).

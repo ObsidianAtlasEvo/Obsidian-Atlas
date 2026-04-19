@@ -54,6 +54,7 @@ import {
   type SimulationInput,
 } from './policySimulationService.js';
 import type { EvidenceProfile } from './evidenceArbitrationService.js';
+import { logGovernanceEvent } from './auditGovernanceService.js';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -340,6 +341,14 @@ export async function applyPolicyPatch(
 
   // Log to governance events.
   await logPolicyDecision(userId, 'applied', patch, gateSummary, next);
+
+  // Phase 0.99 wiring: audit governance log (fire-and-forget).
+  logGovernanceEvent(userId, 'policy_mutation', {
+    actor: 'policyAutoWriter',
+    target: 'policy_profile',
+    after_state: next as Record<string, unknown>,
+    audit_metadata: { confidence: patch.confidence, governance_version: '0.99' },
+  }).catch(() => {});
 
   return {
     applied: true,
