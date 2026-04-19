@@ -131,6 +131,8 @@ const envSchema = z.object({
   AUTH_SUCCESS_REDIRECT: z.string().optional(),
   /** Comma-separated browser origins allowed for CORS with credentials (overrides defaults). */
   CORS_ORIGINS: z.string().optional(),
+  /** Phase 0 pgvector memory layer — per-user durable memories + conversation chunks injected into Overseer prompt. */
+  MEMORY_LAYER_ENABLED: z.coerce.boolean().optional(),
 });
 
 const raw = envSchema.parse({
@@ -214,6 +216,7 @@ const raw = envSchema.parse({
   AUTH_URL: process.env.AUTH_URL,
   AUTH_SUCCESS_REDIRECT: process.env.AUTH_SUCCESS_REDIRECT,
   CORS_ORIGINS: process.env.CORS_ORIGINS,
+  MEMORY_LAYER_ENABLED: process.env.MEMORY_LAYER_ENABLED,
 });
 
 // ── GPT-5.4 family model ID constants ──────────────────────────────────────
@@ -364,6 +367,7 @@ export const env = {
   nextAuthUrl: raw.NEXTAUTH_URL?.trim() || raw.AUTH_URL?.trim() || undefined,
   authSuccessRedirect: raw.AUTH_SUCCESS_REDIRECT?.trim() || undefined,
   corsOrigins: parseCorsOrigins(raw.CORS_ORIGINS),
+  memoryLayerEnabled: raw.MEMORY_LAYER_ENABLED === true,
 } as const;
 
 export type Env = typeof env;
