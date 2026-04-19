@@ -44,6 +44,7 @@ import {
   arbitrate,
   persistArbitratedMemory,
 } from './memoryArbitrator.js';
+import { detectAndApplyCorrection } from './correctionPriorityService.js';
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -401,6 +402,26 @@ export async function distillUserMemories(userId: string): Promise<DistillerRunR
       } catch (memErr) {
         console.warn('[memoryDistiller] memory processing failed (non-fatal):', memErr);
       }
+    }
+
+    // 6b. Phase 0.8: Correction Priority — detect user corrections and demote/supersede
+    // conflicting signals immediately post-arbitration. Fire-and-forget to avoid
+    // blocking the distiller hot path on conflict resolution latency.
+    try {
+      const lastUserChunk = [...chunks].reverse().find((c) => c.role === 'user');
+      if (lastUserChunk?.content) {
+        // Build a minimal MemoryInput from the raw chunk so correctionPriorityService
+        // can apply its phrase detection + kind-based correction logic.
+        void detectAndApplyCorrection(userId, {
+          id: lastUserChunk.id,
+          kind: 'correction',
+          content: lastUserChunk.content,
+          provenance: 'user_stated',
+          importance: 0.8,
+        });
+      }
+    } catch (corrErr) {
+      console.warn('[memoryDistiller] correction detection threw (non-fatal):', corrErr);
     }
 
     // 7. Policy hint — Phase 0.75 governance gate.
