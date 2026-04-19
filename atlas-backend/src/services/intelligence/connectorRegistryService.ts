@@ -69,6 +69,24 @@ export async function registerConnector(
   }
 }
 
+export async function getConnectorById(
+  userId: string,
+  connectorId: string,
+): Promise<ConnectorRow | null> {
+  if (!env.memoryLayerEnabled) return null;
+  try {
+    const result = await supabaseRest<ConnectorRow[]>(
+      'GET',
+      `connector_registry?id=eq.${encodeURIComponent(connectorId)}&user_id=eq.${encodeURIComponent(userId)}&limit=1`,
+    );
+    if (!result.ok || !result.data || result.data.length === 0) return null;
+    return result.data[0] ?? null;
+  } catch (err) {
+    console.error('[connectorRegistryService] getConnectorById error:', err);
+    return null;
+  }
+}
+
 export async function getConnectors(userId: string): Promise<ConnectorRow[]> {
   if (!env.memoryLayerEnabled) return [];
   try {

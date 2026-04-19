@@ -110,6 +110,21 @@ import {
   resolveControl,
 } from '../services/intelligence/userSovereigntyService.js';
 
+// Phase 0.985 — Action Executor
+import {
+  approveActionContract,
+  rejectActionContract,
+  escalateActionContract,
+} from '../services/intelligence/actionExecutorService.js';
+import { dispatchContract } from '../services/intelligence/actionDispatchBroker.js';
+import { reverseContract } from '../services/intelligence/actionReversalLayer.js';
+import { ingestActionResult } from '../services/intelligence/actionResultIngestionService.js';
+
+// Phase 0.986 — Connector Outbound + Sync
+import { runIngestionCycle } from '../services/intelligence/connectorIngestionPipeline.js';
+import { runSyncHealthCheck } from '../services/intelligence/connectorSyncMonitor.js';
+import { getConnectorById } from '../services/intelligence/connectorRegistryService.js';
+
 // ── Common schemas ──────────────────────────────────────────────────────────
 
 const userIdQuery = z.object({ userId: z.string().min(1).max(120) });
@@ -360,11 +375,7 @@ export function registerSovereigntyStackRoutes(app: FastifyInstance): void {
     const contracts = await safe(() =>
       getActionContracts(parsed.data.userId, parsed.data.status as ActionStatus | undefined),
     );
-    return reply.send({
-      contracts,
-      disclaimer:
-        'Atlas does not dispatch external actions. These contracts are staged records only; execution, reversal, and result ingestion are not wired in this release.',
-    });
+    return reply.send({ contracts });
   });
 
   const actionCreateBody = z.object({
@@ -422,17 +433,13 @@ export function registerSovereigntyStackRoutes(app: FastifyInstance): void {
     return reply.send({ ok });
   });
 
-  // ── Phase 0.986: Connector Registry (registry-only — no ingestion) ──────────
+  // ── Phase 0.986: Connector Registry (live outbound + ingestion) ─────────────
 
   app.get('/v1/sovereignty/connectors', async (request, reply) => {
     const parsed = userIdQuery.safeParse(request.query);
     if (!parsed.success) return reply.code(400).send({ error: 'validation_error' });
     const connectors = await safe(() => getConnectors(parsed.data.userId));
-    return reply.send({
-      connectors,
-      disclaimer:
-        'Connector registry is a metadata-only ledger in this release. Federated ingestion, canonicalization, freshness monitoring, and cross-source resolution are not wired.',
-    });
+    return reply.send({ connectors });
   });
 
   const connectorCreateBody = z.object({
@@ -644,5 +651,122 @@ export function registerSovereigntyStackRoutes(app: FastifyInstance): void {
     if (!parsed.success) return reply.code(400).send({ error: 'validation_error' });
     await safe(() => resolveControl(parsed.data.controlId));
     return reply.send({ ok: true });
+  });
+
+  // ── Phase 0.985: Action Executor — approve / reject / dispatch / reverse ───
+
+  const actionApproveBody = z.object({
+    userId: z.string().min(1),
+    contractId: z.string().min(1),
+    tier: z.enum(['auto', 'user_confirm', 'multi_step', 'blocked']).optional(),
+    approverId: z.string().max(120).optional(),
+  });
+  app.post('/v1/sovereignty/action-contracts/:id/approve', async (request, reply) => {
+    const merged = { ...(request.body as object), contractId: (request.params as { id?: string }).id };
+    const parsed = actionApproveBody.safeParse(merged);
+    if (!parsed.success) return reply.code(400).send({ error: 'validation_error' });
+    const result = await safe(() =>
+      approveActionContract(
+        parsed.data.userId,
+        parsed.data.contractId,
+        parsed.data.tier,
+        parsed.data.approverId,
+      ),
+    );
+    return reply.send({ result });
+  });
+
+  const actionRejectBody = z.object({
+    userId: z.string().min(1),
+    contractId: z.string().min(1),
+    reason: z.string().min(1).max(500),
+  });
+  app.post('/v1/sovereignty/action-contracts/:id/reject', async (request, reply) => {
+    const merged = { ...(request.body as object), contractId: (request.params as { id?: string }).id };
+    const parsed = actionRejectBody.safeParse(merged);
+    if (!parsed.success) return reply.code(400).send({ error: 'validation_error' });
+    const result = await safe(() =>
+      rejectActionContract(parsed.data.userId, parsed.data.contractId, parsed.data.reason),
+    );
+    return reply.send({ result });
+  });
+
+  app.post('/v1/sovereignty/action-contracts/:id/escalate', async (request, reply) => {
+    const merged = { ...(request.body as object), contractId: (request.params as { id?: string }).id };
+    const parsed = actionRejectBody.safeParse(merged);
+    if (!parsed.success) return reply.code(400).send({ error: 'validation_error' });
+    const result = await safe(() =>
+      escalateActionContract(parsed.data.userId, parsed.data.contractId, parsed.data.reason),
+    );
+    return reply.send({ result });
+  });
+
+  const actionDispatchBody = z.object({
+    userId: z.string().min(1),
+    contractId: z.string().min(1),
+    ingest: z.boolean().optional(),
+  });
+  app.post('/v1/sovereignty/action-contracts/:id/dispatch', async (request, reply) => {
+    const merged = { ...(request.body as object), contractId: (request.params as { id?: string }).id };
+    const parsed = actionDispatchBody.safeParse(merged);
+    if (!parsed.success) return reply.code(400).send({ error: 'validation_error' });
+    const result = await safe(() => dispatchContract(parsed.data.userId, parsed.data.contractId));
+    if (
+      result &&
+      !('error' in (result as object)) &&
+      parsed.data.ingest !== false
+    ) {
+      const dispatch = result as Awaited<ReturnType<typeof dispatchContract>>;
+      if (dispatch.success) {
+        await safe(() =>
+          ingestActionResult(parsed.data.userId, parsed.data.contractId, dispatch),
+        );
+      }
+    }
+    return reply.send({ result });
+  });
+
+  const actionReverseBody = z.object({
+    userId: z.string().min(1),
+    contractId: z.string().min(1),
+    reason: z.string().min(1).max(500),
+  });
+  app.post('/v1/sovereignty/action-contracts/:id/reverse', async (request, reply) => {
+    const merged = { ...(request.body as object), contractId: (request.params as { id?: string }).id };
+    const parsed = actionReverseBody.safeParse(merged);
+    if (!parsed.success) return reply.code(400).send({ error: 'validation_error' });
+    const result = await safe(() =>
+      reverseContract(parsed.data.userId, parsed.data.contractId, parsed.data.reason),
+    );
+    return reply.send({ result });
+  });
+
+  // ── Phase 0.986: Connector outbound + sync health ──────────────────────────
+
+  const connectorSyncBody = z.object({
+    userId: z.string().min(1),
+    connectorId: z.string().min(1),
+  });
+  app.post('/v1/sovereignty/connectors/:id/sync', async (request, reply) => {
+    const merged = { ...(request.body as object), connectorId: (request.params as { id?: string }).id };
+    const parsed = connectorSyncBody.safeParse(merged);
+    if (!parsed.success) return reply.code(400).send({ error: 'validation_error' });
+    const connector = await safe(() =>
+      getConnectorById(parsed.data.userId, parsed.data.connectorId),
+    );
+    if (!connector || 'error' in (connector as object)) {
+      return reply.send({ result: { connectorId: parsed.data.connectorId, skipped: true, reason: 'connector_not_found' } });
+    }
+    const result = await safe(() =>
+      runIngestionCycle(parsed.data.userId, connector as NonNullable<Awaited<ReturnType<typeof getConnectorById>>>),
+    );
+    return reply.send({ result });
+  });
+
+  app.get('/v1/sovereignty/connectors/health', async (request, reply) => {
+    const parsed = userIdQuery.safeParse(request.query);
+    if (!parsed.success) return reply.code(400).send({ error: 'validation_error' });
+    const report = await safe(() => runSyncHealthCheck(parsed.data.userId));
+    return reply.send({ report });
   });
 }

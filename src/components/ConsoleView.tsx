@@ -37,6 +37,7 @@ import { ChangeControl } from './ChangeControl';
 import { AuditLogView } from './AuditLogView';
 import { BugHunter } from './BugHunter';
 import { SovereigntyControls } from './Settings/SovereigntyControls';
+import { SovereigntyDashboard } from './sovereignty/SovereigntyDashboard';
 
 interface CreatorConsoleProps {
   state: AppState;
@@ -512,6 +513,8 @@ export function ConsoleView({ state, setState }: CreatorConsoleProps) {
                   </div>
 
                   <SovereigntyControls userId={atlasTraceUserId(state)} className="max-w-3xl" />
+
+                  <SovereigntyDashboard userId={atlasTraceUserId(state)} />
 
                   <section className="space-y-6">
                     <h3 className="text-xs font-bold text-gold uppercase tracking-[0.3em] flex items-center gap-3">
