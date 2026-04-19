@@ -36,6 +36,14 @@ export interface RecalledRow {
   similarity: number;
   created_at: string;
   id: string;
+  // Phase 0.75 governance fields (present on new rows, null-safe for legacy).
+  memory_class?: string | null;
+  provenance?: string | null;
+  scope_type?: string | null;
+  scope_key?: string | null;
+  stability_score?: number | null;
+  policy_eligible?: boolean | null;
+  contradiction_status?: string | null;
 }
 
 export interface RecallOptions {
@@ -141,24 +149,31 @@ function formatRecallBlock(rows: readonly RecalledRow[]): string {
   lines.push('USER_EVOLUTION_CONTEXT (retrieved from user-specific memory):');
 
   if (memories.length > 0) {
-    lines.push('', 'Durable memories (apply these across the whole response):');
+    lines.push('', 'Durable memories (apply where relevant):');
     for (const m of memories) {
       const sim = m.similarity.toFixed(2);
-      lines.push(`- [${m.kind}] (rel=${sim}) ${truncate(m.content, 320)}`);
+      // Phase 0.75: surface scope so Overseer knows when to apply.
+      const scope = m.scope_type && m.scope_type !== 'global'
+        ? ` [scope:${m.scope_type}${m.scope_key ? `/${m.scope_key}` : ''}]`
+        : '';
+      // Phase 0.75: flag contested memories — Overseer should not blindly apply.
+      const contested = m.contradiction_status === 'unresolved' ? ' [CONTESTED-apply-with-caution]' : '';
+      const cls = m.memory_class && m.memory_class !== 'tentative' ? `/${m.memory_class}` : '';
+      lines.push(`- [${m.kind}${cls}${scope}${contested}] (rel=${sim}) ${truncate(m.content, 300)}`);
     }
   }
 
   if (chunks.length > 0) {
-    lines.push('', 'Relevant prior turns (recent conversation context):');
+    lines.push('', 'Relevant prior turns (recent context):');
     for (const c of chunks) {
       const sim = c.similarity.toFixed(2);
-      lines.push(`- [${c.kind}] (rel=${sim}) ${truncate(c.content, 280)}`);
+      lines.push(`- [${c.kind}] (rel=${sim}) ${truncate(c.content, 260)}`);
     }
   }
 
   lines.push(
     '',
-    'Honor durable memories when they conflict with defaults. Reference specific prior turns only when doing so sharpens the answer; do not quote them verbatim unless the user asks.',
+    'Apply durable memories when relevant and not contested. Scoped memories apply only within their stated scope. Do not quote prior turns verbatim unless the user asks.',
   );
   return lines.join('\n');
 }

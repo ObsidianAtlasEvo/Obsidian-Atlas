@@ -12,8 +12,8 @@ const { parseDistillerJson, distillerOutputSchema, buildDistillerUser } = __inte
 test('parseDistillerJson accepts a clean JSON object with memories + policy_hint', () => {
   const raw = JSON.stringify({
     memories: [
-      { kind: 'preference', content: 'Prefers concise, no-hedge answers.', importance: 0.85 },
-      { kind: 'fact',       content: 'Works in the Pacific Time zone.',     importance: 0.6 },
+      { kind: 'preference', content: 'Prefers concise, no-hedge answers.', importance: 0.85, confidence: 0.88 },
+      { kind: 'fact',       content: 'Works in the Pacific Time zone.',     importance: 0.6,  confidence: 0.75 },
     ],
     policy_hint: {
       verbosity: 'low',
@@ -40,7 +40,7 @@ test('parseDistillerJson strips markdown code fences', () => {
 });
 
 test('parseDistillerJson recovers from leading/trailing prose', () => {
-  const raw = 'Here is the JSON you asked for:\n{"memories": [{"kind":"goal","content":"Ship Phase 0.5 by Friday.","importance":0.9}]}\nThanks!';
+  const raw = 'Here is the JSON you asked for:\n{"memories": [{"kind":"goal","content":"Ship Phase 0.5 by Friday.","importance":0.9,"confidence":0.8}]}\nThanks!';
   const out = parseDistillerJson(raw);
   assert.ok(out);
   assert.equal(out.memories[0]?.kind, 'goal');
@@ -77,14 +77,16 @@ test('buildDistillerUser includes existing memories section when present', () =>
   const user = buildDistillerUser('[user] hi\n[assistant] hello', [
     'Prefers bullet points.',
     'Lives in Portland.',
-  ]);
+  ], true);
   assert.ok(user.includes('RECENT_CONVERSATION'));
   assert.ok(user.includes('EXISTING_DURABLE_MEMORIES'));
   assert.ok(user.includes('Prefers bullet points.'));
+  // Phase 0.75: assistant chunk warning must appear when hasAssistantChunks=true
+  assert.ok(user.includes('WARNING'));
 });
 
 test('buildDistillerUser omits existing section when empty', () => {
-  const user = buildDistillerUser('[user] hi', []);
+  const user = buildDistillerUser('[user] hi', [], false);
   assert.ok(user.includes('RECENT_CONVERSATION'));
   assert.ok(!user.includes('EXISTING_DURABLE_MEMORIES'));
 });
