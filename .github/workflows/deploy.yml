@@ -223,6 +223,14 @@ jobs:
           if [ -f "$ENV_FILE" ]; then
             set -a && source "$ENV_FILE" && set +a
             echo "      ✓ Sourced .env"
+
+            # ── Auto-inject new env vars if missing from .env ─────────────
+            # Retention Enforcer (Phase 0.99) — safe defaults, never overwrite
+            if ! grep -q "RETENTION_ENFORCER_ENABLED" "$ENV_FILE"; then
+              printf '\n# Retention Enforcer (Phase 0.99 — auto-injected by deploy)\nRETENTION_ENFORCER_ENABLED=false\nRETENTION_ENFORCER_TICK_MS=3600000\n' >> "$ENV_FILE"
+              echo "      ✓ Injected RETENTION_ENFORCER_ENABLED + RETENTION_ENFORCER_TICK_MS (disabled by default)"
+            fi
+            # ─────────────────────────────────────────────────────────────
           else
             echo "      ⚠ No .env found — using existing PM2 env"
           fi
