@@ -2,6 +2,7 @@ import { GoogleGenAI } from '@google/genai';
 import { env } from '../../config/env.js';
 import type { LlmRegistryEntry } from './llmRegistry.js';
 import { assertEntryUsable } from './llmRegistry.js'; // AUDIT FIX: P1-5 import assertEntryUsable
+import { pickKey, pickNextKey, recordKeySuccess, recordKeyFailure, isRotatableError } from '../inference/keyPoolService.js';
 
 export type UniversalMessage = { role: 'system' | 'user' | 'assistant'; content: string };
 
@@ -189,6 +190,22 @@ function resolveGroqAuth(): { base: string; apiKey: string } | null {
   return { base, apiKey };
 }
 
+/** Pool-aware Groq auth: tries env key first, then rotates through pool on 429/503. */
+async function resolveGroqAuthWithPool(): Promise<{ base: string; apiKey: string } | null> {
+  const base = (
+    env.groqBaseUrl?.trim() ||
+    env.cloudOpenAiBaseUrl?.trim() ||
+    'https://api.groq.com/openai/v1'
+  ).replace(/\/$/, '');
+  const poolKey = await pickKey('groq');
+  if (!poolKey) {
+    // Fall back to env key (original behavior)
+    const apiKey = env.groqApiKey?.trim() || env.cloudOpenAiApiKey?.trim();
+    return apiKey ? { base, apiKey } : null;
+  }
+  return { base, apiKey: poolKey.apiKey, _poolKey: poolKey } as { base: string; apiKey: string };
+}
+
 function resolveOpenRouterAuth(): { base: string; apiKey: string } | null {
   const apiKey = env.openrouterApiKey?.trim();
   if (!apiKey) return null;
@@ -196,11 +213,31 @@ function resolveOpenRouterAuth(): { base: string; apiKey: string } | null {
   return { base, apiKey };
 }
 
+async function resolveOpenRouterAuthWithPool(): Promise<{ base: string; apiKey: string } | null> {
+  const base = (env.openrouterBaseUrl?.trim() || 'https://openrouter.ai/api/v1').replace(/\/$/, '');
+  const poolKey = await pickKey('openrouter');
+  if (!poolKey) {
+    const apiKey = env.openrouterApiKey?.trim();
+    return apiKey ? { base, apiKey } : null;
+  }
+  return { base, apiKey: poolKey.apiKey, _poolKey: poolKey } as { base: string; apiKey: string };
+}
+
 function resolveOpenAiAuth(): { base: string; apiKey: string } | null {
   const apiKey = env.openaiApiKey?.trim();
   if (!apiKey) return null;
   const base = (env.openaiBaseUrl?.trim() || 'https://api.openai.com/v1').replace(/\/$/, '');
   return { base, apiKey };
+}
+
+async function resolveOpenAiAuthWithPool(): Promise<{ base: string; apiKey: string } | null> {
+  const base = (env.openaiBaseUrl?.trim() || 'https://api.openai.com/v1').replace(/\/$/, '');
+  const poolKey = await pickKey('openai');
+  if (!poolKey) {
+    const apiKey = env.openaiApiKey?.trim();
+    return apiKey ? { base, apiKey } : null;
+  }
+  return { base, apiKey: poolKey.apiKey, _poolKey: poolKey } as { base: string; apiKey: string };
 }
 
 async function streamOpenAiCompatibleChat(params: {

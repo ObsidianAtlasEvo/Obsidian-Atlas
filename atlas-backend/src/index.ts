@@ -44,6 +44,7 @@ import { registerUserPreferencesRoutes } from './routes/userPreferencesRoutes.js
 import { registerMemoryDistillerRoutes } from './routes/memoryDistillerRoutes.js';
 import { registerLegalRoutes } from './routes/legalRoutes.js';
 import { registerSovereigntyStackRoutes } from './routes/sovereigntyStackRoutes.js';
+import { registerKeyPoolAdminRoutes } from './routes/keyPoolAdminRoutes.js';
 import { startSovereigntyBackgroundSweeper } from './services/autonomy/sovereigntyBackgroundSweeper.js';
 import { loadPersistedJobs } from './services/inference/queueManager.js';
 
@@ -232,6 +233,7 @@ await app.register(async (protected_app) => {
   registerDiagnosticsReportRoutes(protected_app);
   registerExplanationRoutes(protected_app);
   registerSovereigntyStackRoutes(protected_app);
+  registerKeyPoolAdminRoutes(protected_app);
 });
 // ── Billing routes — session-based billing + Stripe webhook (raw body) ──────
 // Billing routes expect request.atlasSession (userId + email). Bridge from
