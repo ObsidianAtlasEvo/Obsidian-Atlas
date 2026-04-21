@@ -25,6 +25,14 @@ obsidianatlastech.com, www.obsidianatlastech.com {
 		Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' https://js.stripe.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://*.supabase.co wss://*.supabase.co https://api.openai.com https://api.groq.com https://api.anthropic.com https://generativelanguage.googleapis.com https://accounts.google.com https://js.stripe.com; frame-src https://js.stripe.com; object-src 'none'; base-uri 'self'"
 	}
 
+	# Direct /v1/* → backend (no prefix stripping needed — backend routes start with /v1/)
+	handle /v1/* {
+		reverse_proxy 127.0.0.1:3001 {
+			header_up -X-Atlas-Verified-Email
+			flush_interval -1
+		}
+	}
+
 	# Strip /api prefix (same as Vite: /api/v1/foo → upstream /v1/foo)
 	handle_path /api/* {
 		reverse_proxy 127.0.0.1:3001 {
