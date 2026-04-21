@@ -2,7 +2,7 @@ import { GoogleGenAI } from '@google/genai';
 import { env } from '../../config/env.js';
 import type { LlmRegistryEntry } from './llmRegistry.js';
 import { assertEntryUsable } from './llmRegistry.js'; // AUDIT FIX: P1-5 import assertEntryUsable
-import { pickKey, pickNextKey, recordKeySuccess, recordKeyFailure, isRotatableError } from '../inference/keyPoolService.js';
+import { pickKey, pickNextKey, recordKeySuccess, recordKeyFailure, isRotatableError, withKeyRotation } from '../inference/keyPoolService.js';
 
 export type UniversalMessage = { role: 'system' | 'user' | 'assistant'; content: string };
 
@@ -603,31 +603,35 @@ export async function streamGeminiChat(params: {
     }
   }
 
-  // Attempt 4: fall back to Groq (pre-truncate to stay within 12k token limit)
-  const groqAuth = resolveGroqAuth();
-  if (groqAuth) {
+  // Attempt 4: fall back to Groq with key-pool rotation (pre-truncate to stay within 12k token limit)
+  const groqBase = (
+    env.groqBaseUrl?.trim() ||
+    env.cloudOpenAiBaseUrl?.trim() ||
+    'https://api.groq.com/openai/v1'
+  ).replace(/\/$/, '');
+  try {
     const groqMessages = truncateForGroq(params.messages);
-    try {
-      return await streamOpenAiCompatibleChat({
-        baseUrl: groqAuth.base,
-        apiKey: groqAuth.apiKey,
-        model: 'llama-3.3-70b-versatile',
-        messages: groqMessages,
-        onDelta: params.onDelta,
-        temperature: params.temperature,
-        maxTokens: 2048,
-        signal: params.signal,
-        timeoutMs: params.timeoutMs,
-      });
-    } catch (groqErr) {
-      const groqMsg = groqErr instanceof Error ? groqErr.message : String(groqErr);
-      // 413 (payload too large): retry with aggressive truncation
-      if (groqMsg.includes('413') || groqMsg.includes('Request too large')) {
-        const aggressiveMessages = truncateForGroq(params.messages, true);
-        try {
+    const result = await withKeyRotation('groq', async (apiKey) => {
+      // 413 guard: try normal truncation first, then aggressive
+      try {
+        return await streamOpenAiCompatibleChat({
+          baseUrl: groqBase,
+          apiKey,
+          model: 'llama-3.3-70b-versatile',
+          messages: groqMessages,
+          onDelta: params.onDelta,
+          temperature: params.temperature,
+          maxTokens: 2048,
+          signal: params.signal,
+          timeoutMs: params.timeoutMs,
+        });
+      } catch (groqErr) {
+        const groqMsg = groqErr instanceof Error ? groqErr.message : String(groqErr);
+        if (groqMsg.includes('413') || groqMsg.includes('Request too large')) {
+          const aggressiveMessages = truncateForGroq(params.messages, true);
           return await streamOpenAiCompatibleChat({
-            baseUrl: groqAuth.base,
-            apiKey: groqAuth.apiKey,
+            baseUrl: groqBase,
+            apiKey,
             model: 'llama-3.3-70b-versatile',
             messages: aggressiveMessages,
             onDelta: params.onDelta,
@@ -636,30 +640,13 @@ export async function streamGeminiChat(params: {
             signal: params.signal,
             timeoutMs: params.timeoutMs,
           });
-        } catch {
-          // Aggressive truncation also failed — fall through to clean error
         }
+        throw groqErr;
       }
-      // 429 (rate limit): wait and retry once with same truncated messages
-      if (groqMsg.includes('429') || groqMsg.includes('Rate limit') || groqMsg.includes('Too Many Requests')) {
-        await delay(3000);
-        try {
-          return await streamOpenAiCompatibleChat({
-            baseUrl: groqAuth.base,
-            apiKey: groqAuth.apiKey,
-            model: 'llama-3.3-70b-versatile',
-            messages: groqMessages,
-            onDelta: params.onDelta,
-            temperature: params.temperature,
-            maxTokens: 2048,
-            signal: params.signal,
-            timeoutMs: params.timeoutMs,
-          });
-        } catch {
-          // Second attempt also failed — fall through to tertiary chain
-        }
-      }
-    }
+    });
+    return result;
+  } catch {
+    // withKeyRotation exhausted all keys — fall through to tertiary chain
   }
 
   // Attempt 5: tertiary fallback chain (OpenAI → OpenRouter)
@@ -771,28 +758,40 @@ export async function streamRegistryModel(params: {
 
   switch (entry.backend) {
     case 'groq': {
-      const auth = resolveGroqAuth();
-      if (!auth) {
-        // Local-first fail-safe for dev environments without Groq keys.
-        return streamOllamaChat({
-          model: env.ollamaChatModel,
-          messages,
-          onDelta,
-          signal,
-          timeoutMs,
-        });
+      const groqRegistryBase = (
+        env.groqBaseUrl?.trim() ||
+        env.cloudOpenAiBaseUrl?.trim() ||
+        'https://api.groq.com/openai/v1'
+      ).replace(/\/$/, '');
+      const groqRegistryModel = env.groqDelegateModel?.trim() || entry.apiModel;
+      // Try pool-rotation first; if pool is empty (no env key either), fall back to Ollama
+      try {
+        return await withKeyRotation('groq', (apiKey) =>
+          streamOpenAiCompatibleChat({
+            baseUrl: groqRegistryBase,
+            apiKey,
+            model: groqRegistryModel,
+            messages: truncateForGroq(messages),
+            onDelta,
+            maxTokens: 2048,
+            signal,
+            timeoutMs,
+          }),
+        );
+      } catch (registryGroqErr) {
+        // If the pool threw because all keys are exhausted, fall back to Ollama (dev safety net)
+        const errMsg = registryGroqErr instanceof Error ? registryGroqErr.message : String(registryGroqErr);
+        if (errMsg.includes('not configured') || errMsg.includes('exhausted') || errMsg.includes('cooldown')) {
+          return streamOllamaChat({
+            model: env.ollamaChatModel,
+            messages,
+            onDelta,
+            signal,
+            timeoutMs,
+          });
+        }
+        throw registryGroqErr;
       }
-      const model = env.groqDelegateModel?.trim() || entry.apiModel;
-      return streamOpenAiCompatibleChat({
-        baseUrl: auth.base,
-        apiKey: auth.apiKey,
-        model,
-        messages: truncateForGroq(messages),
-        onDelta,
-        maxTokens: 2048,
-        signal,
-        timeoutMs,
-      });
     }
     case 'openrouter': {
       const or = resolveOpenRouterAuth();
@@ -926,17 +925,23 @@ export async function completeGroqChat(params: {
   signal?: AbortSignal;
   timeoutMs?: number;
 }): Promise<{ text: string; model: string }> {
-  const auth = resolveGroqAuth();
-  if (!auth) throw new Error('Groq credentials not configured');
-  return completeOpenAiCompatibleChat({
-    baseUrl: auth.base,
-    apiKey: auth.apiKey,
-    model: params.model,
-    messages: truncateForGroq(params.messages),
-    temperature: params.temperature,
-    signal: params.signal,
-    timeoutMs: params.timeoutMs,
-  });
+  const groqCompleteBase = (
+    env.groqBaseUrl?.trim() ||
+    env.cloudOpenAiBaseUrl?.trim() ||
+    'https://api.groq.com/openai/v1'
+  ).replace(/\/$/, '');
+  const truncated = truncateForGroq(params.messages);
+  return withKeyRotation('groq', (apiKey) =>
+    completeOpenAiCompatibleChat({
+      baseUrl: groqCompleteBase,
+      apiKey,
+      model: params.model,
+      messages: truncated,
+      temperature: params.temperature,
+      signal: params.signal,
+      timeoutMs: params.timeoutMs,
+    }),
+  );
 }
 
 /** Raw non-streaming Gemini completion (no retry/fallback). */
@@ -1029,30 +1034,33 @@ export async function completeGeminiChat(params: {
     }
   }
 
-  // Attempt 4: fall back to Groq (pre-truncate to stay within 12k token limit)
-  const groqAuth = resolveGroqAuth();
-  if (groqAuth) {
+  // Attempt 4: fall back to Groq with key-pool rotation (pre-truncate to stay within 12k token limit)
+  const groqCompleteGeminiBase = (
+    env.groqBaseUrl?.trim() ||
+    env.cloudOpenAiBaseUrl?.trim() ||
+    'https://api.groq.com/openai/v1'
+  ).replace(/\/$/, '');
+  try {
     const groqMessages = truncateForGroq(params.messages);
-    try {
-      return await completeOpenAiCompatibleChat({
-        baseUrl: groqAuth.base,
-        apiKey: groqAuth.apiKey,
-        model: 'llama-3.3-70b-versatile',
-        messages: groqMessages,
-        temperature: params.temperature,
-        maxTokens: 2048,
-        signal: params.signal,
-        timeoutMs: params.timeoutMs,
-      });
-    } catch (groqErr) {
-      const groqMsg = groqErr instanceof Error ? groqErr.message : String(groqErr);
-      // 413 (payload too large): retry with aggressive truncation
-      if (groqMsg.includes('413') || groqMsg.includes('Request too large')) {
-        const aggressiveMessages = truncateForGroq(params.messages, true);
-        try {
+    const result = await withKeyRotation('groq', async (apiKey) => {
+      try {
+        return await completeOpenAiCompatibleChat({
+          baseUrl: groqCompleteGeminiBase,
+          apiKey,
+          model: 'llama-3.3-70b-versatile',
+          messages: groqMessages,
+          temperature: params.temperature,
+          maxTokens: 2048,
+          signal: params.signal,
+          timeoutMs: params.timeoutMs,
+        });
+      } catch (groqErr) {
+        const groqMsg = groqErr instanceof Error ? groqErr.message : String(groqErr);
+        if (groqMsg.includes('413') || groqMsg.includes('Request too large')) {
+          const aggressiveMessages = truncateForGroq(params.messages, true);
           return await completeOpenAiCompatibleChat({
-            baseUrl: groqAuth.base,
-            apiKey: groqAuth.apiKey,
+            baseUrl: groqCompleteGeminiBase,
+            apiKey,
             model: 'llama-3.3-70b-versatile',
             messages: aggressiveMessages,
             temperature: params.temperature,
@@ -1060,29 +1068,13 @@ export async function completeGeminiChat(params: {
             signal: params.signal,
             timeoutMs: params.timeoutMs,
           });
-        } catch {
-          // Aggressive truncation also failed
         }
+        throw groqErr;
       }
-      // 429 (rate limit): wait and retry once
-      if (groqMsg.includes('429') || groqMsg.includes('Rate limit') || groqMsg.includes('Too Many Requests')) {
-        await delay(3000);
-        try {
-          return await completeOpenAiCompatibleChat({
-            baseUrl: groqAuth.base,
-            apiKey: groqAuth.apiKey,
-            model: 'llama-3.3-70b-versatile',
-            messages: groqMessages,
-            temperature: params.temperature,
-            maxTokens: 2048,
-            signal: params.signal,
-            timeoutMs: params.timeoutMs,
-          });
-        } catch {
-          // Second attempt also failed
-        }
-      }
-    }
+    });
+    return result;
+  } catch {
+    // withKeyRotation exhausted all keys — fall through to tertiary chain
   }
 
   // Attempt 5: tertiary fallback chain (OpenAI → OpenRouter)
@@ -1111,19 +1103,25 @@ export async function streamGroqChat(params: {
   signal?: AbortSignal;
   timeoutMs?: number;
 }): Promise<{ fullText: string; model: string }> {
-  const auth = resolveGroqAuth();
-  if (!auth) throw new Error('Groq credentials not configured');
-  return streamOpenAiCompatibleChat({
-    baseUrl: auth.base,
-    apiKey: auth.apiKey,
-    model: params.model,
-    messages: truncateForGroq(params.messages),
-    onDelta: params.onDelta,
-    temperature: params.temperature,
-    maxTokens: 2048,
-    signal: params.signal,
-    timeoutMs: params.timeoutMs,
-  });
+  const groqStreamBase = (
+    env.groqBaseUrl?.trim() ||
+    env.cloudOpenAiBaseUrl?.trim() ||
+    'https://api.groq.com/openai/v1'
+  ).replace(/\/$/, '');
+  const truncated = truncateForGroq(params.messages);
+  return withKeyRotation('groq', (apiKey) =>
+    streamOpenAiCompatibleChat({
+      baseUrl: groqStreamBase,
+      apiKey,
+      model: params.model,
+      messages: truncated,
+      onDelta: params.onDelta,
+      temperature: params.temperature,
+      maxTokens: 2048,
+      signal: params.signal,
+      timeoutMs: params.timeoutMs,
+    }),
+  );
 }
 
 // ---------------------------------------------------------------------------

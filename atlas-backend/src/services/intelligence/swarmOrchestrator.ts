@@ -54,6 +54,7 @@ import {
   streamRegistryModel,
   type UniversalMessage,
 } from './universalAdapter.js';
+import { withKeyRotation, type ProviderName } from '../inference/keyPoolService.js';
 
 // ---------------------------------------------------------------------------
 // Zod: ExecutionPlan (Chief of Staff output)
@@ -330,16 +331,14 @@ OPERATIONAL LAW:
 
 You will receive ROUTING_PAYLOAD_JSON with ROUTING_METADATA, UserTelemetry, MirrorforgeSignal, and GROQ_ROUTING_DIRECTIVES. Obey it.`;
 
-function getOverseerConfig(): { base: string; apiKey: string; model: string } | null {
-  // Prefer OpenAI (gpt-5.4-nano as routing planner) if configured
+/** Sync version used only to check whether an overseer is configured (no key needed). */
+function getOverseerConfigShape(): { base: string; model: string; provider: ProviderName } | null {
   const openaiKey = env.openaiApiKey?.trim();
   if (openaiKey) {
     const base = (env.openaiBaseUrl?.trim() || 'https://api.openai.com/v1').replace(/\/$/, '');
     const model = env.openaiRouterModel?.trim() || 'gpt-5.4-nano';
-    return { base, apiKey: openaiKey, model };
+    return { base, model, provider: 'openai' };
   }
-
-  // Fallback: Groq (preserves backward compatibility when OpenAI key is absent)
   const groqKey = env.groqApiKey?.trim() || env.cloudOpenAiApiKey?.trim();
   if (!groqKey) return null;
   const base = (
@@ -348,7 +347,23 @@ function getOverseerConfig(): { base: string; apiKey: string; model: string } | 
     'https://api.groq.com/openai/v1'
   ).replace(/\/$/, '');
   const model = env.groqRouterModel?.trim() || env.cloudChatModel?.trim() || 'llama-3.3-70b-versatile';
-  return { base, apiKey: groqKey, model };
+  return { base, model, provider: 'groq' };
+}
+
+/**
+ * Pool-aware overseer config. Returns base+model+apiKey using key rotation.
+ * Prefers OpenAI; falls back to Groq. Returns null if no provider is configured.
+ */
+async function getOverseerConfig(): Promise<{ base: string; apiKey: string; model: string; provider: ProviderName } | null> {
+  const shape = getOverseerConfigShape();
+  if (!shape) return null;
+  const { pickKey } = await import('../inference/keyPoolService.js');
+  const poolKey = await pickKey(shape.provider);
+  const apiKey = poolKey?.apiKey ?? (shape.provider === 'openai'
+    ? env.openaiApiKey?.trim()
+    : env.groqApiKey?.trim() || env.cloudOpenAiApiKey?.trim());
+  if (!apiKey) return null;
+  return { ...shape, apiKey };
 }
 
 export interface PlanSwarmExecutionInput {
@@ -426,7 +441,7 @@ async function applyPostGuards(input: PlanSwarmExecutionInput, guarded: Executio
  * Core/Sovereign: OpenAI (gpt-5.4-nano or configured model) / Groq.
  */
 export async function planSwarmExecution(input: PlanSwarmExecutionInput): Promise<ExecutionPlan> {
-  const cfg = getOverseerConfig();
+  const cfg = await getOverseerConfig();
   const payload = buildChiefRoutingPayload({
     userPrompt: input.userPrompt,
     conversationSnippet: input.conversationSnippet,
@@ -507,45 +522,50 @@ export async function planSwarmExecution(input: PlanSwarmExecutionInput): Promis
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), env.omniRouterTimeoutMs);
   try {
-    const res = await fetch(`${cfg.base}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${cfg.apiKey}`,
-      },
-      body: JSON.stringify({
-        model: cfg.model,
-        temperature: 0.08,
-        max_tokens: 1024,
-        stream: false,
-        response_format: { type: 'json_object' },
-        messages: [
-          { role: 'system', content: CHIEF_OF_STAFF_SYSTEM },
-          { role: 'user', content: userContent },
-        ],
-      }),
-      signal: input.signal ?? controller.signal,
+    // Use withKeyRotation so a 429 on the first key automatically retries with the next pool key.
+    const { content: planContent } = await withKeyRotation(cfg.provider, async (apiKey) => {
+      const res = await fetch(`${cfg.base}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model: cfg.model,
+          temperature: 0.08,
+          max_tokens: 1024,
+          stream: false,
+          response_format: { type: 'json_object' },
+          messages: [
+            { role: 'system', content: CHIEF_OF_STAFF_SYSTEM },
+            { role: 'user', content: userContent },
+          ],
+        }),
+        signal: input.signal ?? controller.signal,
+      });
+
+      const rawText = await res.text();
+      if (!res.ok) {
+        // Surface HTTP errors as throwable so withKeyRotation can distinguish rotatable vs. fatal
+        throw new Error(`Groq/OpenAI ${res.status}: ${rawText.slice(0, 200)}`);
+      }
+      let data: unknown;
+      try {
+        data = rawText ? JSON.parse(rawText) : null;
+      } catch {
+        return { content: '' };
+      }
+      const obj = data as Record<string, unknown>;
+      const choices = obj?.choices;
+      if (!Array.isArray(choices) || !choices[0]) return { content: '' };
+      const msg = (choices[0] as Record<string, unknown>).message as Record<string, unknown> | undefined;
+      return { content: typeof msg?.content === 'string' ? msg.content : '' };
     });
 
-    const rawText = await res.text();
-    let data: unknown;
-    try {
-      data = rawText ? JSON.parse(rawText) : null;
-    } catch {
+    if (!planContent) {
       return { strategy: 'direct', model: FALLBACK_SWARM_MODEL_ID, reason: 'chief_non_json' };
     }
-    if (!res.ok) {
-      return { strategy: 'direct', model: FALLBACK_SWARM_MODEL_ID, reason: `chief_http_${res.status}` };
-    }
-
-    const obj = data as Record<string, unknown>;
-    const choices = obj?.choices;
-    if (!Array.isArray(choices) || !choices[0]) {
-      return { strategy: 'direct', model: FALLBACK_SWARM_MODEL_ID, reason: 'chief_missing_choices' };
-    }
-    const msg = (choices[0] as Record<string, unknown>).message as Record<string, unknown> | undefined;
-    const content = typeof msg?.content === 'string' ? msg.content : '';
-    const parsed = parseExecutionPlan(content);
+    const parsed = parseExecutionPlan(planContent);
     if (!parsed) {
       return { strategy: 'direct', model: FALLBACK_SWARM_MODEL_ID, reason: 'chief_parse_fail' };
     }
