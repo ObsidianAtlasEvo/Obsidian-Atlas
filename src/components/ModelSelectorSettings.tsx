@@ -8,8 +8,8 @@ import {
   type UserPreferences,
 } from '../lib/atlasApi';
 
-const TIER_ORDER: Record<string, number> = { free: 0, core: 1, sovereign: 2 };
-const TIER_LABELS: Record<string, string> = { free: 'Free', core: 'Core', sovereign: 'Sovereign' };
+const TIER_ORDER: Record<string, number> = { core: 0, sovereign: 1, zenith: 2 };
+const TIER_LABELS: Record<string, string> = { core: 'Core', sovereign: 'Sovereign', zenith: 'Zenith' };
 
 export function ModelSelectorSettings() {
   const [prefs, setPrefs] = useState<UserPreferences | null>(null);
@@ -66,7 +66,7 @@ export function ModelSelectorSettings() {
             {ALL_MODELS_ORDERED.map((modelId) => {
               const isAvailable = prefs.availableModels.includes(modelId);
               const name = MODEL_DISPLAY_NAMES[modelId] ?? modelId;
-              const minTier = MODEL_MIN_TIER[modelId] ?? 'free';
+              const minTier = MODEL_MIN_TIER[modelId] ?? 'core';
               const tierNum = TIER_ORDER[minTier] ?? 0;
               const userTierNum = TIER_ORDER[prefs.tier] ?? 0;
               const locked = tierNum > userTierNum;

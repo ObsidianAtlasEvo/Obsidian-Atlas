@@ -9,6 +9,7 @@ import { cn } from '../lib/utils';
 
 import { useSettingsStore, UITheme, AnimationSpeed, LanguageLevel } from '../services/state/settingsStore';
 import { ModelSelectorSettings } from './ModelSelectorSettings';
+import { PricingPlans } from './PricingPlans';
 import { LegalViewerModal } from './legal/LegalViewerModal';
 import type { LegalDocumentKind } from '../lib/legal/documents';
 
@@ -321,8 +322,18 @@ export function SettingsMenu({ state, setState }: SettingsMenuProps) {
                   </div>
                 </div>
               </div>
+
+              {/* Subscription / Pricing */}
+              <div className="mt-10 pt-8 border-t border-titanium/10">
+                <h3 className="text-sm font-bold text-gold uppercase tracking-widest flex items-center gap-2 border-b border-gold/10 pb-2 mb-4">
+                  <Zap size={16} /> Subscription
+                </h3>
+                <div className="-mx-8 -mb-8 rounded-sm overflow-hidden">
+                  <PricingPlans />
+                </div>
+              </div>
             </div>
-            
+
             <div className="p-4 border-t border-titanium/10 bg-obsidian/80 flex items-center justify-between">
               <span className="text-[10px] text-stone/40 uppercase tracking-widest font-mono">Obsidian Atlas v1.0.4</span>
               <button 

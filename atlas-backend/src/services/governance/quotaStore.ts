@@ -3,9 +3,9 @@ import { env } from '../../config/env.js';
 import type { SubscriptionTier } from '../intelligence/groundwork/v4/subscriptionSchema.js';
 
 const TIER_CHAT_LIMIT: Record<NonNullable<SubscriptionTier>, number | null> = {
-  free: 120,
-  core: 500,
-  sovereign: null, // unlimited
+  core: 120,
+  sovereign: 500,
+  zenith: null, // unlimited
 };
 
 export class CognitiveQuotaError extends Error {
@@ -79,8 +79,8 @@ export function assertChatQuotaAllows(
   userId: string,
   tier?: SubscriptionTier
 ): QuotaSnapshot {
-  // Sovereign tier = unlimited
-  if (tier === null || tier === 'sovereign') return getOrCreateDailyQuotaRow(userId);
+  // Zenith tier = unlimited
+  if (tier === null || tier === 'zenith') return getOrCreateDailyQuotaRow(userId);
 
   const limit =
     tier !== undefined && tier in TIER_CHAT_LIMIT

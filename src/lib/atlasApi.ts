@@ -134,43 +134,43 @@ export const MODEL_DISPLAY_NAMES: Record<string, string> = {
 
 /** Which tier first unlocks each model (for lock icon display). */
 export const MODEL_MIN_TIER: Record<string, string> = {
-  // Free
-  'gpt-5.4-nano':                    'free',
-  'groq/llama-3.3-70b-versatile':    'free',
-  'gemini-2.5-flash':                'free',
-  'gemini-3.1-flash-lite-preview':   'free',
-  'omnirouter':                       'free',
   // Core
-  'gpt-5.4-mini':                    'core',
+  'gpt-5.4-nano':                    'core',
+  'groq/llama-3.3-70b-versatile':    'core',
+  'gemini-2.5-flash':                'core',
+  'gemini-3.1-flash-lite-preview':   'core',
+  'omnirouter':                       'core',
   // Sovereign
-  'gpt-5.4':                         'sovereign',
-  'gpt-5.4-pro':                     'sovereign',
-  'claude-sonnet-4-6':               'sovereign',
-  'claude-opus-4-6':                 'sovereign',
+  'gpt-5.4-mini':                    'sovereign',
+  // Zenith
+  'gpt-5.4':                         'zenith',
+  'gpt-5.4-pro':                     'zenith',
+  'claude-sonnet-4-6':               'zenith',
+  'claude-opus-4-6':                 'zenith',
   // Legacy aliases
-  'groq/llama-3.1-70b-versatile':    'free',
-  'google/gemini-2.5-flash':         'free',
-  'openai/gpt-3.5-turbo':            'free',
-  'openai/gpt-4o-mini':              'core',
-  'google/gemini-2.0-flash':         'core',
-  'openai/gpt-4o':                   'sovereign',
-  'openai/o1-preview':               'sovereign',
-  'anthropic/claude-3-opus':         'sovereign',
-  'anthropic/claude-3.5-sonnet':     'sovereign',
-  'anthropic/claude-opus-4-6':       'sovereign',
-  'anthropic/claude-sonnet-4-6':     'sovereign',
+  'groq/llama-3.1-70b-versatile':    'core',
+  'google/gemini-2.5-flash':         'core',
+  'openai/gpt-3.5-turbo':            'core',
+  'openai/gpt-4o-mini':              'sovereign',
+  'google/gemini-2.0-flash':         'sovereign',
+  'openai/gpt-4o':                   'zenith',
+  'openai/o1-preview':               'zenith',
+  'anthropic/claude-3-opus':         'zenith',
+  'anthropic/claude-3.5-sonnet':     'zenith',
+  'anthropic/claude-opus-4-6':       'zenith',
+  'anthropic/claude-sonnet-4-6':     'zenith',
 };
 
 /** All known models in display order — shown in ModelSelector picker. */
 export const ALL_MODELS_ORDERED: string[] = [
-  // Free
+  // Core
   'gpt-5.4-nano',
   'groq/llama-3.3-70b-versatile',
   'gemini-2.5-flash',
   'omnirouter',
-  // Core
-  'gpt-5.4-mini',
   // Sovereign
+  'gpt-5.4-mini',
+  // Zenith
   'gpt-5.4',
   'gpt-5.4-pro',
   'claude-sonnet-4-6',
