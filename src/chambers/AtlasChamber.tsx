@@ -369,10 +369,10 @@ async function streamOmniChat(
 // ── AUDIT FIX: P0-2 — Upgrade Modal with Stripe checkout integration ─────
 
 function UpgradeModal({ onClose }: { onClose: () => void }) {
-  const [loading, setLoading] = React.useState<'core' | 'sovereign' | null>(null);
+  const [loading, setLoading] = React.useState<'sovereign' | 'zenith' | null>(null);
   const [error, setError] = React.useState<string | null>(null);
 
-  const handleCheckout = async (tier: 'core' | 'sovereign') => {
+  const handleCheckout = async (tier: 'sovereign' | 'zenith') => {
     setLoading(tier);
     setError(null);
     try {
@@ -433,7 +433,7 @@ function UpgradeModal({ onClose }: { onClose: () => void }) {
           You have used your 120 free chats for today. Your limit resets at midnight UTC.
         </p>
         <p style={{ margin: 0, color: 'rgba(226,232,240,0.5)', fontSize: '0.8rem', lineHeight: 1.6 }}>
-          Upgrade to <strong style={{ color: 'rgba(201,162,39,0.9)' }}>Atlas Core</strong> for 500 chats/day with GPT-5.4 access, or <strong style={{ color: 'rgba(201,162,39,0.9)' }}>Atlas Sovereign</strong> for unlimited chats and full model access.
+          Upgrade to <strong style={{ color: 'rgba(201,162,39,0.9)' }}>Atlas Sovereign</strong> for 500 chats/day with GPT-5.4 access, or <strong style={{ color: 'rgba(201,162,39,0.9)' }}>Atlas Zenith</strong> for unlimited chats and full model access.
         </p>
         {error && (
           <p style={{ margin: 0, color: '#ef4444', fontSize: '0.8rem' }}>{error}</p>
@@ -441,7 +441,7 @@ function UpgradeModal({ onClose }: { onClose: () => void }) {
         <div style={{ display: 'flex', gap: '10px', marginTop: '4px' }}>
           <button
             disabled={loading !== null}
-            onClick={() => handleCheckout('core')}
+            onClick={() => handleCheckout('sovereign')}
             style={{
               ...btnBase,
               background: 'rgba(201,162,39,0.15)',
@@ -450,11 +450,11 @@ function UpgradeModal({ onClose }: { onClose: () => void }) {
               opacity: loading !== null ? 0.6 : 1,
             }}
           >
-            {loading === 'core' ? 'Loading...' : 'Upgrade to Core'}
+            {loading === 'sovereign' ? 'Loading...' : 'Upgrade to Sovereign'}
           </button>
           <button
             disabled={loading !== null}
-            onClick={() => handleCheckout('sovereign')}
+            onClick={() => handleCheckout('zenith')}
             style={{
               ...btnBase,
               background: 'rgba(147,51,234,0.15)',
@@ -463,7 +463,7 @@ function UpgradeModal({ onClose }: { onClose: () => void }) {
               opacity: loading !== null ? 0.6 : 1,
             }}
           >
-            {loading === 'sovereign' ? 'Loading...' : 'Upgrade to Sovereign'}
+            {loading === 'zenith' ? 'Loading...' : 'Upgrade to Zenith'}
           </button>
         </div>
         <button

@@ -181,9 +181,9 @@ export async function attachAtlasSession(request: FastifyRequest): Promise<void>
     // Attach subscription tier for downstream quota/model-access checks
     try {
       const sub = await getSubscriptionStatus(u.databaseUserId, getDb(), u.email);
-      request.subscriptionTier = sub?.tier ?? 'free';
+      request.subscriptionTier = sub?.tier ?? 'core';
     } catch {
-      request.subscriptionTier = 'free';
+      request.subscriptionTier = 'core';
     }
   }
 }

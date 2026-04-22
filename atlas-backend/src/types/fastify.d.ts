@@ -10,7 +10,7 @@ declare module 'fastify' {
     /** Set when `getAuthenticatedUser` / `attachAtlasSession` resolves an OAuth JWT. */
     atlasAuthUser?: { databaseUserId: string; email: string } | null;
     /** Subscription tier resolved by attachAtlasSession from Stripe billing state. */
-    subscriptionTier?: 'free' | 'core' | 'sovereign';
+    subscriptionTier?: 'core' | 'sovereign' | 'zenith';
     /** Billing session bridge — populated by the billing scope preHandler. */
     atlasSession?: { userId: string; email: string };
   }

@@ -849,7 +849,7 @@ async function _swarmDispatch(opts: SwarmDispatchOpts): Promise<{ fullText: stri
     policyProfile,
     mirrorforge: input.mirrorforge,
     preferredModel: swarmHint ?? undefined,
-    userTier: input.stripeTier ?? 'free',
+    userTier: input.stripeTier ?? 'core',
   });
 
   if (swarmHint && (plan.strategy === 'direct' || plan.strategy === 'delegate')) {

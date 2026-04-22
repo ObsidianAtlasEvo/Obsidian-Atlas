@@ -69,9 +69,9 @@ function getStripeClient(): Stripe {
   });
 }
 
-function getPriceId(tier: 'core' | 'sovereign'): string {
-  if (tier === 'core') return requireEnv('STRIPE_PRICE_CORE');
+function getPriceId(tier: 'sovereign' | 'zenith'): string {
   if (tier === 'sovereign') return requireEnv('STRIPE_PRICE_SOVEREIGN');
+  if (tier === 'zenith') return requireEnv('STRIPE_PRICE_ZENITH');
   // TypeScript exhaustiveness guard
   const _exhaustive: never = tier;
   throw new Error(`Unknown tier: ${_exhaustive as string}`);
@@ -79,14 +79,14 @@ function getPriceId(tier: 'core' | 'sovereign'): string {
 
 /**
  * Resolves the SubscriptionTier from a Stripe price ID.
- * Returns 'free' if the price ID is not recognized.
+ * Returns 'core' if the price ID is not recognized.
  */
 function tierFromPriceId(priceId: string): SubscriptionTier {
-  const corePrice = process.env['STRIPE_PRICE_CORE'];
   const sovereignPrice = process.env['STRIPE_PRICE_SOVEREIGN'];
-  if (corePrice && priceId === corePrice) return 'core';
+  const zenithPrice = process.env['STRIPE_PRICE_ZENITH'];
   if (sovereignPrice && priceId === sovereignPrice) return 'sovereign';
-  return 'free';
+  if (zenithPrice && priceId === zenithPrice) return 'zenith';
+  return 'core';
 }
 
 /**
@@ -176,14 +176,14 @@ export async function createStripeCustomer(
  *
  * @param userId  Atlas internal user ID
  * @param email   User's email address
- * @param tier    Target subscription tier: 'core' | 'sovereign'
+ * @param tier    Target subscription tier: 'sovereign' | 'zenith'
  * @param db      better-sqlite3 Database instance
  * @returns       Stripe Checkout hosted URL (redirect the user here)
  */
 export async function createCheckoutSession(
   userId: string,
   email: string,
-  tier: 'core' | 'sovereign',
+  tier: 'sovereign' | 'zenith',
   db: Database
 ): Promise<string> {
   const stripe = getStripeClient();
@@ -218,7 +218,7 @@ export async function createCheckoutSession(
     success_url: successUrl,
     cancel_url: cancelUrl,
     subscription_data: {
-      trial_period_days: tier === 'core' ? 7 : 3,
+      trial_period_days: tier === 'sovereign' ? 7 : 3,
       metadata: {
         atlasUserId: userId,
         atlasTier: tier,
@@ -335,7 +335,7 @@ export async function getSubscriptionStatus(
       userId,
       stripeCustomerId: null,
       stripeSubscriptionId: null,
-      tier: 'sovereign',
+      tier: 'zenith',
       status: 'active',
       currentPeriodEnd: null,
       cancelAtPeriodEnd: false,
@@ -499,9 +499,9 @@ async function handleCheckoutSessionCompleted(
   }
 
   const tier: SubscriptionTier =
-    tierRaw === 'core' ? 'core' :
     tierRaw === 'sovereign' ? 'sovereign' :
-    'free';
+    tierRaw === 'zenith' ? 'zenith' :
+    'core';
 
   const customerId =
     typeof session.customer === 'string' ? session.customer : session.customer?.id ?? null;
@@ -596,7 +596,7 @@ async function handleSubscriptionDeleted(
     userId: existingRecord.userId,
     stripeCustomerId: customerId,
     stripeSubscriptionId: subscription.id,
-    tier: 'free',         // Immediate downgrade on deletion
+    tier: 'core',         // Immediate downgrade on deletion
     status: 'canceled',
     currentPeriodEnd: subscription.current_period_end,
     cancelAtPeriodEnd: false,
@@ -605,7 +605,7 @@ async function handleSubscriptionDeleted(
 
   console.info(
     `[Atlas/Billing] Subscription deleted for user ${existingRecord.userId}: ` +
-    'downgraded to free tier immediately.'
+    'downgraded to core tier immediately.'
   );
 }
 

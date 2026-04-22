@@ -1310,10 +1310,10 @@ export async function invokeOpenAIResponses(
 
 /**
  * Resolve the Overseer model based on user tier.
- * Free tier uses gemini-3.1-flash-lite-preview (fallback: gpt-5.4-nano); Core + Sovereign use gpt-5.4.
+ * Core tier uses gemini-3.1-flash-lite-preview (fallback: gpt-5.4-nano); Sovereign + Zenith use gpt-5.4.
  */
-export function resolveOverseerModel(tier: 'free' | 'core' | 'sovereign'): string {
-  if (tier === 'free') return env.geminiOverseerModelFree;
+export function resolveOverseerModel(tier: 'core' | 'sovereign' | 'zenith'): string {
+  if (tier === 'core') return env.geminiOverseerModelFree;
   return 'gpt-5.4';
 }
 
@@ -1385,8 +1385,8 @@ export function buildOverseerInput(params: {
 /**
  * Invoke the Overseer using the collect-then-stream pattern.
  *
- * Free tier: routes to Gemini gemini-3.1-flash-lite-preview via streamGeminiOverseerFree,
- * with gpt-5.4-nano as fallback. Core/Sovereign: routes to gpt-5.4 via OpenAI Responses API.
+ * Core tier: routes to Gemini gemini-3.1-flash-lite-preview via streamGeminiOverseerFree,
+ * with gpt-5.4-nano as fallback. Sovereign/Zenith: routes to gpt-5.4 via OpenAI Responses API.
  *
  * Returns the raw Response (SSE stream) — caller reads from response.body.
  */
@@ -1397,13 +1397,13 @@ export async function invokeOverseer(params: {
   evolutionContext?: string;
   toolOutputs?: string[];
   conversationHistory: ChatMessage[];
-  userTier: 'free' | 'core' | 'sovereign';
+  userTier: 'core' | 'sovereign' | 'zenith';
 }): Promise<Response> {
   const overseerModel = resolveOverseerModel(params.userTier);
   const overseerInput = buildOverseerInput(params);
 
-  // Free tier: try Gemini overseer first, fall back to gpt-5.4-nano
-  if (params.userTier === 'free') {
+  // Core tier: try Gemini overseer first, fall back to gpt-5.4-nano
+  if (params.userTier === 'core') {
     try {
       let fullText = '';
       const streamResult = await streamGeminiOverseerFree({

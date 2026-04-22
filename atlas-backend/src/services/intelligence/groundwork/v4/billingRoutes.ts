@@ -90,7 +90,7 @@ declare module 'fastify' {
 // ---------------------------------------------------------------------------
 
 interface CreateCheckoutSessionBody {
-  tier: 'core' | 'sovereign';
+  tier: 'sovereign' | 'zenith';
 }
 
 interface CreateCheckoutSessionReply {
@@ -170,61 +170,77 @@ export async function registerBillingRoutes(
 ): Promise<void> {
 
   // -----------------------------------------------------------------------
-  // POST /billing/create-checkout-session
+  // Shared handler for checkout-session creation.
+  // Exposed under two paths:
+  //   POST /billing/create-checkout-session    (canonical)
+  //   POST /stripe/create-checkout-session     (alias for pricing UI)
   // -----------------------------------------------------------------------
+  const checkoutSchema = {
+    body: {
+      type: 'object',
+      required: ['tier'],
+      properties: {
+        tier: { type: 'string', enum: ['sovereign', 'zenith'] },
+      },
+    },
+    response: {
+      200: {
+        type: 'object',
+        properties: { url: { type: 'string' } },
+      },
+    },
+  };
+
+  const checkoutHandler = async (
+    request: FastifyRequest<{ Body: CreateCheckoutSessionBody }>,
+    reply: FastifyReply,
+  ) => {
+    const session = requireSession(request, reply);
+    if (!session) return;
+
+    // [REPAIR 3] Sovereign Creator guard — bypass billing entirely
+    if (isSovereignOwner(session.userId, session.email)) {
+      return reply.code(403).send({
+        error: 'Sovereign Creator access is managed outside billing.'
+      });
+    }
+
+    const { tier } = request.body;
+
+    // Disallow if user already has an active subscription at or above this tier
+    const current = getTierForUser(session.userId, db, session.email);
+    if (current.status === 'active' || current.status === 'trialing') {
+      if (current.tier === tier || (current.tier === 'zenith' && tier === 'sovereign')) {
+        return reply.code(409).send({ error: 'You already have an active subscription at this tier or higher.' });
+      }
+    }
+
+    try {
+      const url = await createCheckoutSession(session.userId, session.email, tier, db);
+      return reply.code(200).send({ url });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to create checkout session.';
+      fastify.log.error({ err, userId: session.userId }, '[Atlas/Billing] create-checkout-session error');
+      return reply.code(500).send({ error: message });
+    }
+  };
+
   fastify.post<{
     Body: CreateCheckoutSessionBody;
     Reply: CreateCheckoutSessionReply | { error: string };
   }>(
     '/billing/create-checkout-session',
-    {
-      config: { rateLimit: RATE_LIMITS.writeUser },
-      schema: {
-        body: {
-          type: 'object',
-          required: ['tier'],
-          properties: {
-            tier: { type: 'string', enum: ['core', 'sovereign'] },
-          },
-        },
-        response: {
-          200: {
-            type: 'object',
-            properties: { url: { type: 'string' } },
-          },
-        },
-      },
-    },
-    async (request: FastifyRequest<{ Body: CreateCheckoutSessionBody }>, reply: FastifyReply) => {
-      const session = requireSession(request, reply);
-      if (!session) return;
+    { config: { rateLimit: RATE_LIMITS.writeUser }, schema: checkoutSchema },
+    checkoutHandler,
+  );
 
-      // [REPAIR 3] Sovereign Creator guard — bypass billing entirely
-      if (isSovereignOwner(session.userId, session.email)) {
-        return reply.code(403).send({
-          error: 'Sovereign Creator access is managed outside billing.'
-        });
-      }
-
-      const { tier } = request.body;
-
-      // Disallow if user already has an active subscription at or above this tier
-      const current = getTierForUser(session.userId, db, session.email);
-      if (current.status === 'active' || current.status === 'trialing') {
-        if (current.tier === tier || (current.tier === 'sovereign' && tier === 'core')) {
-          return reply.code(409).send({ error: 'You already have an active subscription at this tier or higher.' });
-        }
-      }
-
-      try {
-        const url = await createCheckoutSession(session.userId, session.email, tier, db);
-        return reply.code(200).send({ url });
-      } catch (err) {
-        const message = err instanceof Error ? err.message : 'Failed to create checkout session.';
-        fastify.log.error({ err, userId: session.userId }, '[Atlas/Billing] create-checkout-session error');
-        return reply.code(500).send({ error: message });
-      }
-    }
+  fastify.post<{
+    Body: CreateCheckoutSessionBody;
+    Reply: CreateCheckoutSessionReply | { error: string };
+  }>(
+    '/stripe/create-checkout-session',
+    { config: { rateLimit: RATE_LIMITS.writeUser }, schema: checkoutSchema },
+    checkoutHandler,
   );
 
   // -----------------------------------------------------------------------
@@ -364,28 +380,28 @@ export async function registerBillingRoutes(
         const record = await getSubscriptionStatus(session.userId, db, session.email);
         if (!record) {
           return reply.code(200).send({
-            tier: 'free',
+            tier: 'core',
             status: 'inactive',
             currentPeriodEnd: null,
             cancelAtPeriodEnd: false,
             gracePeriodEnd: null,
-            modelAccess: TIER_MODEL_ACCESS['free'].modelIds,
-            chatLimit: TIER_CHAT_LIMIT['free'],
+            modelAccess: TIER_MODEL_ACCESS['core'].modelIds,
+            chatLimit: TIER_CHAT_LIMIT['core'],
             usageToday: 0,
           });
         }
 
         // [v4 PATCH 3] Preserve optional chaining guard — corrupted tier values must
-        // not cause a TypeError. Fall back to free-tier model list if tier is unknown.
-        const modelAccess = TIER_MODEL_ACCESS[record.tier]?.modelIds ?? TIER_MODEL_ACCESS['free'].modelIds;
+        // not cause a TypeError. Fall back to core-tier model list if tier is unknown.
+        const modelAccess = TIER_MODEL_ACCESS[record.tier]?.modelIds ?? TIER_MODEL_ACCESS['core'].modelIds;
 
         // [v4 PATCH 3 — CRITICAL FIX] Do NOT use ?? here.
-        // TIER_CHAT_LIMIT.sovereign === null (unlimited). The ?? operator treats null as
-        // nullish and would fall through to TIER_CHAT_LIMIT['free'] (120), incorrectly
-        // limiting sovereign users. Use !== undefined to preserve the null value.
+        // TIER_CHAT_LIMIT.zenith === null (unlimited). The ?? operator treats null as
+        // nullish and would fall through to TIER_CHAT_LIMIT['core'] (120), incorrectly
+        // limiting zenith users. Use !== undefined to preserve the null value.
         const chatLimit = TIER_CHAT_LIMIT[record.tier] !== undefined
           ? TIER_CHAT_LIMIT[record.tier]
-          : TIER_CHAT_LIMIT['free'];
+          : TIER_CHAT_LIMIT['core'];
 
         const usageToday = getDailyUsage(session.userId, db);
 

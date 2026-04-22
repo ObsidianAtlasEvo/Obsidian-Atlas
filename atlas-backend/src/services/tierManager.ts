@@ -7,13 +7,13 @@
  *   - atlas-backend/src/routes/orchestrate.ts
  *
  * The v4 groundwork layer uses a SEPARATE taxonomy:
- *   free | core | sovereign  (groundwork/v4/subscriptionSchema.ts)
+ *   core | sovereign | zenith  (groundwork/v4/subscriptionSchema.ts)
  *
  * DO NOT consolidate these until Phase 3 billing is live and confirmed.
  * Planned consolidation mapping:
- *   groundwork 'free'      → tierManager 'free'
- *   groundwork 'core'      → tierManager 'sovereign'
- *   groundwork 'sovereign' → tierManager 'creator'
+ *   groundwork 'core'      → tierManager 'free'
+ *   groundwork 'sovereign' → tierManager 'sovereign'
+ *   groundwork 'zenith'    → tierManager 'creator'
  *
  * See ISSUE-03 in final_audit_and_patch_handoff.txt for full context.
  */

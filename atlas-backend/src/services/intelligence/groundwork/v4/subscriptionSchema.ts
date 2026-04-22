@@ -35,7 +35,7 @@ CREATE TABLE IF NOT EXISTS user_subscriptions (
   userId              TEXT PRIMARY KEY,
   stripeCustomerId    TEXT UNIQUE,
   stripeSubscriptionId TEXT,
-  tier                TEXT NOT NULL DEFAULT 'free',
+  tier                TEXT NOT NULL DEFAULT 'core',
   status              TEXT NOT NULL DEFAULT 'inactive',
   currentPeriodEnd    INTEGER,
   cancelAtPeriodEnd   INTEGER NOT NULL DEFAULT 0,
@@ -63,7 +63,7 @@ export function runMigration(db: Database): void {
 // Core types
 // ---------------------------------------------------------------------------
 
-export type SubscriptionTier = 'free' | 'core' | 'sovereign';
+export type SubscriptionTier = 'core' | 'sovereign' | 'zenith';
 
 export type SubscriptionStatus =
   | 'active'
@@ -78,14 +78,14 @@ export interface SubscriptionRecord {
   stripeSubscriptionId: string | null;
   tier: SubscriptionTier;
   status: SubscriptionStatus;
-  /** Unix timestamp (seconds) — end of current billing period. Null for free/sovereign bypass. */
+  /** Unix timestamp (seconds) — end of current billing period. Null for core/zenith bypass. */
   currentPeriodEnd: number | null;
   /** Whether the subscription is set to cancel at period end. */
   cancelAtPeriodEnd: boolean;
   /**
    * Unix timestamp (seconds) — end of the payment-failed grace period.
    * Null unless the subscription is in `past_due` state.
-   * Access is preserved until this timestamp; after it, the user is treated as free tier.
+   * Access is preserved until this timestamp; after it, the user is treated as core tier.
    */
   gracePeriodEnd: number | null;
   /** Unix timestamp (ms) */
@@ -115,12 +115,12 @@ export interface TierModelAccess {
  *
  * GPT-5.4 bare IDs (no `openai/` prefix) — the router resolves provider at runtime.
  *
- * Free:      gpt-5.4-nano, Groq Llama 3.3 70B, Gemini 2.5 Flash. Overseer: gemini-3.1-flash-lite-preview (fallback: gpt-5.4-nano).
- * Core:      Free models + gpt-5.4-mini, gpt-5.4 (Overseer standard).
- * Sovereign: Core models + gpt-5.4 (worker), gpt-5.4-pro, Claude Sonnet 4.6, Claude Opus 4.6.
+ * Core:      gpt-5.4-nano, Groq Llama 3.3 70B, Gemini 2.5 Flash. Overseer: gemini-3.1-flash-lite-preview (fallback: gpt-5.4-nano).
+ * Sovereign: Core models + gpt-5.4-mini, gpt-5.4 (Overseer standard).
+ * Zenith:    Sovereign models + gpt-5.4 (worker), gpt-5.4-pro, Claude Sonnet 4.6, Claude Opus 4.6.
  */
 export const TIER_MODEL_ACCESS: Record<SubscriptionTier, TierModelAccess> = {
-  free: {
+  core: {
     modelIds: [
       'gpt-5.4-nano',
       'groq/llama-3.3-70b-versatile',
@@ -129,7 +129,7 @@ export const TIER_MODEL_ACCESS: Record<SubscriptionTier, TierModelAccess> = {
     ],
     description: 'GPT-5.4 Nano, Groq Llama 3.3 70B, Gemini 2.5 Flash. Overseer: gemini-3.1-flash-lite-preview (fallback: gpt-5.4-nano).',
   },
-  core: {
+  sovereign: {
     modelIds: [
       'gpt-5.4-nano',
       'groq/llama-3.3-70b-versatile',
@@ -137,9 +137,9 @@ export const TIER_MODEL_ACCESS: Record<SubscriptionTier, TierModelAccess> = {
       'gpt-5.4-mini',
       'gpt-5.4',
     ],
-    description: 'Free models + GPT-5.4 Mini, GPT-5.4 (Overseer standard).',
+    description: 'Core models + GPT-5.4 Mini, GPT-5.4 (Overseer standard).',
   },
-  sovereign: {
+  zenith: {
     modelIds: [
       'gpt-5.4-nano',
       'groq/llama-3.3-70b-versatile',
@@ -163,9 +163,9 @@ export const TIER_MODEL_ACCESS: Record<SubscriptionTier, TierModelAccess> = {
  * Overrides the global `budgetMode` env var on a per-user basis.
  */
 export const TIER_BUDGET_MODE: Record<SubscriptionTier, 'fast' | 'balanced' | 'max-depth'> = {
-  free: 'fast',
-  core: 'balanced',
-  sovereign: 'max-depth',
+  core: 'fast',
+  sovereign: 'balanced',
+  zenith: 'max-depth',
 };
 
 // ---------------------------------------------------------------------------
@@ -174,13 +174,13 @@ export const TIER_BUDGET_MODE: Record<SubscriptionTier, 'fast' | 'balanced' | 'm
 
 /**
  * Daily chat limit per tier.
- * [REPAIR 6] null means unlimited (sovereign tier). Infinity is not valid JSON
+ * [REPAIR 6] null means unlimited (zenith tier). Infinity is not valid JSON
  * and must not be serialized. Use `=== null` to check for unlimited.
  */
 export const TIER_CHAT_LIMIT: Record<SubscriptionTier, number | null> = {
-  free: 120,
-  core: 500,
-  sovereign: null,
+  core: 120,
+  sovereign: 500,
+  zenith: null,
 };
 
 // ---------------------------------------------------------------------------
@@ -213,7 +213,7 @@ function buildSovereignBypassRecord(userId: string): SubscriptionRecord {
     userId,
     stripeCustomerId: null,
     stripeSubscriptionId: null,
-    tier: 'sovereign',
+    tier: 'zenith',
     status: 'active',
     currentPeriodEnd: null,
     cancelAtPeriodEnd: false,
@@ -241,7 +241,7 @@ interface SubscriptionRow {
 }
 
 function isValidTier(value: string): value is SubscriptionTier {
-  return value === 'free' || value === 'core' || value === 'sovereign';
+  return value === 'core' || value === 'sovereign' || value === 'zenith';
 }
 
 function isValidStatus(value: string): value is SubscriptionStatus {
@@ -259,10 +259,10 @@ function isValidStatus(value: string): value is SubscriptionStatus {
  * Falls back to safe defaults if stored values are invalid.
  */
 function rowToRecord(row: SubscriptionRow): SubscriptionRecord {
-  const tier: SubscriptionTier = isValidTier(row.tier) ? row.tier : 'free';
+  const tier: SubscriptionTier = isValidTier(row.tier) ? row.tier : 'core';
   const status: SubscriptionStatus = isValidStatus(row.status) ? row.status : 'inactive';
 
-  // Apply grace period: if payment failed and grace period has expired, treat as free
+  // Apply grace period: if payment failed and grace period has expired, treat as core
   const nowSeconds = Math.floor(Date.now() / 1000);
   let effectiveTier = tier;
   if (
@@ -270,7 +270,7 @@ function rowToRecord(row: SubscriptionRow): SubscriptionRecord {
     row.gracePeriodEnd !== null &&
     row.gracePeriodEnd < nowSeconds
   ) {
-    effectiveTier = 'free';
+    effectiveTier = 'core';
   }
 
   return {
@@ -341,13 +341,13 @@ export function getTierForUser(
   const row = stmt.get(userId);
 
   if (!row) {
-    // 3. No record → synthesize default free record
+    // 3. No record → synthesize default core record
     const now = Date.now();
     return {
       userId,
       stripeCustomerId: null,
       stripeSubscriptionId: null,
-      tier: 'free',
+      tier: 'core',
       status: 'inactive',
       currentPeriodEnd: null,
       cancelAtPeriodEnd: false,

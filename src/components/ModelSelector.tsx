@@ -8,8 +8,8 @@ import {
   type UserPreferences,
 } from '../lib/atlasApi';
 
-const TIER_ORDER: Record<string, number> = { free: 0, core: 1, sovereign: 2 };
-const TIER_LABELS: Record<string, string> = { free: 'Free', core: 'Core', sovereign: 'Sovereign' };
+const TIER_ORDER: Record<string, number> = { core: 0, sovereign: 1, zenith: 2 };
+const TIER_LABELS: Record<string, string> = { core: 'Core', sovereign: 'Sovereign', zenith: 'Zenith' };
 
 function tierUnlockLabel(modelTier: string, userTier: string): string | null {
   const mt = TIER_ORDER[modelTier] ?? 0;
@@ -93,13 +93,13 @@ export function ModelSelector({ onUpgradeClick, compact }: ModelSelectorProps) {
 
   // Group models by tier for display
   const tierGroups: { tier: string; label: string; models: string[] }[] = [
-    { tier: 'free', label: 'Free', models: [] },
     { tier: 'core', label: 'Core', models: [] },
     { tier: 'sovereign', label: 'Sovereign', models: [] },
+    { tier: 'zenith', label: 'Zenith', models: [] },
   ];
 
   for (const modelId of ALL_MODELS_ORDERED) {
-    const minTier = MODEL_MIN_TIER[modelId] ?? 'free';
+    const minTier = MODEL_MIN_TIER[modelId] ?? 'core';
     const group = tierGroups.find((g) => g.tier === minTier);
     if (group) group.models.push(modelId);
   }
@@ -199,7 +199,7 @@ export function ModelSelector({ onUpgradeClick, compact }: ModelSelectorProps) {
                 {group.models.map((modelId) => {
                   const isAvailable = prefs.availableModels.includes(modelId);
                   const isSelected = currentModel === modelId;
-                  const lockTip = tierUnlockLabel(MODEL_MIN_TIER[modelId] ?? 'free', prefs.tier);
+                  const lockTip = tierUnlockLabel(MODEL_MIN_TIER[modelId] ?? 'core', prefs.tier);
                   const name = MODEL_DISPLAY_NAMES[modelId] ?? modelId;
 
                   return (

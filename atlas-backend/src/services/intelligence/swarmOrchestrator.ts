@@ -194,8 +194,8 @@ export function enforceTierModelAccess(plan: ExecutionPlan, userTier?: Subscript
   if (allowedSet.has('groq/llama-3.3-70b-versatile')) {
     allowedSet.add('groq-llama3-70b');
   }
-  // gemini-3.1-flash-lite-preview is the free-tier Overseer — always allow it for free tier
-  if (userTier === 'free') {
+  // gemini-3.1-flash-lite-preview is the core-tier Overseer — always allow it for core tier
+  if (userTier === 'core') {
     allowedSet.add('gemini-3.1-flash-lite-preview');
   }
 
@@ -283,11 +283,11 @@ The inputs you receive come from specialist worker models. They are raw material
 
 /**
  * Resolve the correct Overseer model for the user's subscription tier.
- * Free → gpt-5.4-nano; Core + Sovereign → gpt-5.4.
+ * Core → gpt-5.4-nano; Sovereign + Zenith → gpt-5.4.
  */
 function resolveOverseerModel(tier?: string): string {
-  if (tier === 'free') return 'gpt-5.4-nano';
-  return 'gpt-5.4'; // Core + Sovereign
+  if (tier === 'core') return 'gpt-5.4-nano';
+  return 'gpt-5.4'; // Sovereign + Zenith
 }
 
 /**
@@ -379,7 +379,7 @@ export interface PlanSwarmExecutionInput {
    *  Overseer is instructed to route to this model for direct/delegate strategies
    *  unless technically inappropriate. */
   preferredModel?: string;
-  /** Subscription tier — when 'free', the Overseer routes through Gemini
+  /** Subscription tier — when 'core', the Overseer routes through Gemini
    *  (gemini-3.1-flash-lite-preview) with gpt-5.4-nano as degraded fallback. */
   userTier?: SubscriptionTier;
 }
@@ -451,7 +451,7 @@ export async function planSwarmExecution(input: PlanSwarmExecutionInput): Promis
     userTelemetryOverride: userTelemetryFromPolicyProfile(input.policyProfile),
   });
 
-  if (!cfg && input.userTier !== 'free') {
+  if (!cfg && input.userTier !== 'core') {
     return { strategy: 'direct', model: FALLBACK_SWARM_MODEL_ID, reason: 'overseer_unconfigured' };
   }
 
@@ -479,11 +479,11 @@ export async function planSwarmExecution(input: PlanSwarmExecutionInput): Promis
   /** Parse an ExecutionPlan from raw LLM text (strips fences, validates). */
   const tryParse = (raw: string): ExecutionPlan | null => parseExecutionPlan(raw);
 
-  // ── Free-tier path: Gemini primary → gpt-5.4-nano fallback ───────────────
-  if (input.userTier === 'free' && env.geminiApiKey?.trim()) {
+  // ── Core-tier path: Gemini primary → gpt-5.4-nano fallback ───────────────
+  if (input.userTier === 'core' && env.geminiApiKey?.trim()) {
     let content: string | null = null;
     try {
-      console.warn('[overseer] Free-tier routing via gemini-3.1-flash-lite-preview (PUBLIC PREVIEW)');
+      console.warn('[overseer] Core-tier routing via gemini-3.1-flash-lite-preview (PUBLIC PREVIEW)');
       const geminiResult = await completeGeminiOverseerFree({
         systemPrompt: CHIEF_OF_STAFF_SYSTEM,
         userContent,
