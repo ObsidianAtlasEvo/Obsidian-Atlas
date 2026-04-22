@@ -42,6 +42,7 @@ import { registerChangeControlRoutes } from './routes/changeControlRoutes.js';
 import { registerBillingRoutes } from './routes/billingRoutes.js';
 import { registerUserPreferencesRoutes } from './routes/userPreferencesRoutes.js';
 import { registerMemoryDistillerRoutes } from './routes/memoryDistillerRoutes.js';
+import { registerChatHistoryRoutes } from './routes/chatHistoryRoutes.js';
 import { registerLegalRoutes } from './routes/legalRoutes.js';
 import { registerSovereigntyStackRoutes } from './routes/sovereigntyStackRoutes.js';
 import { registerKeyPoolAdminRoutes } from './routes/keyPoolAdminRoutes.js';
@@ -406,6 +407,24 @@ await app.register(async (userScope) => {
   await registerUserPreferencesRoutes(userScope, getDb());
   await registerMemoryDistillerRoutes(userScope);
 }, { prefix: '/v1' });
+
+// ── Chat history sync routes — cross-device Supabase-backed persistence ──
+// Paths are declared absolutely (`/v1/chat/...`) inside the route file, so we
+// don't mount this scope under a prefix. Auth bridge is the same as user
+// preferences: verify Atlas JWT, then hydrate request.atlasSession.
+await app.register(async (chatHistoryScope) => {
+  chatHistoryScope.addHook('preHandler', async (request: FastifyRequest, reply: FastifyReply) => {
+    await attachAtlasSession(request);
+    if (!request.atlasAuthUser) {
+      return reply.code(401).send({ error: 'Unauthorized — Atlas session required' });
+    }
+    request.atlasSession = {
+      userId: request.atlasAuthUser.databaseUserId,
+      email: request.atlasAuthUser.email,
+    };
+  });
+  registerChatHistoryRoutes(chatHistoryScope);
+});
 
 // ── Legal acceptance routes ──────────────────────────────────────────────
 // GET /v1/legal/versions is public (no preHandler). POST /v1/legal/accept
