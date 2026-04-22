@@ -24,45 +24,41 @@ export type AuthenticatedAtlasUser = {
   /** Verified email — server-side routing only; do not branch on this in browser bundles. */
   email: string;
   /**
-   * Deterministic UUIDv5 derived from the Google `sub`. Use this as the `user_id`
-   * value for Supabase tables whose column is typed UUID — the raw Google `sub`
-   * is a numeric string (e.g. "118324880716026512312") and Postgres rejects it
-   * with `invalid input syntax for type uuid`.
+   * Supabase-assigned UUID, retrieved from `supabase.auth.getUser()`. Used as the
+   * `user_id` value for Supabase tables whose column is typed UUID. `null` when
+   * Supabase auth lookup fails or returns no user.
    */
-  supabaseId: string;
+  supabaseId: string | null;
 };
 
 /**
- * Namespace UUID for deriving per-user UUIDv5 identifiers from the Google `sub`.
- * Fixed at deploy time; changing it breaks all existing user_id references in
- * Supabase tables, so do not edit without a migration plan.
+ * Look up the Supabase-assigned user UUID for a given JWT via the GoTrue
+ * `/auth/v1/user` endpoint. Returns `null` on any error so callers can
+ * continue without the Supabase UUID rather than crashing.
  */
-const ATLAS_USER_UUID_NAMESPACE = '6f5a2b8c-1e4d-4a7f-9c3b-8d2e1a9f0b6c';
-
-/**
- * Derive a deterministic UUIDv5 (RFC 4122 §4.3) from a namespace UUID and a name.
- * Uses SHA-1 so it's stable across processes. Returns the canonical
- * 8-4-4-4-12 hex form.
- */
-function uuidv5FromNamespace(namespaceUuid: string, name: string): string {
-  const hex = namespaceUuid.replace(/-/g, '');
-  const nsBytes = Buffer.from(hex, 'hex');
-  const hash = createHash('sha1').update(nsBytes).update(name, 'utf8').digest();
-  const bytes = Buffer.from(hash.subarray(0, 16));
-  // Set version (5) and RFC 4122 variant bits
-  bytes[6] = (bytes[6] & 0x0f) | 0x50;
-  bytes[8] = (bytes[8] & 0x3f) | 0x80;
-  const h = bytes.toString('hex');
-  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20, 32)}`;
-}
-
-/**
- * Map a Google OAuth `sub` (numeric string) to a stable UUID usable as a
- * Supabase `user_id`. Deterministic — the same `sub` always produces the same
- * UUID, so cross-table joins remain valid.
- */
-export function googleSubToSupabaseUuid(sub: string): string {
-  return uuidv5FromNamespace(ATLAS_USER_UUID_NAMESPACE, sub);
+export async function fetchSupabaseUserId(jwt: string): Promise<string | null> {
+  const url = process.env.SUPABASE_URL;
+  const anonKey = process.env.SUPABASE_ANON_KEY ?? process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.SUPABASE_SERVICE_KEY;
+  if (!url || !anonKey) return null;
+  try {
+    const res = await fetch(`${url.replace(/\/$/, '')}/auth/v1/user`, {
+      method: 'GET',
+      headers: {
+        apikey: anonKey,
+        Authorization: `Bearer ${jwt}`,
+      },
+    });
+    if (!res.ok) {
+      console.warn(`[AUTH] supabase.auth.getUser failed: ${res.status}`);
+      return null;
+    }
+    const data = (await res.json()) as { id?: unknown };
+    return typeof data.id === 'string' ? data.id : null;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(`[AUTH] supabase.auth.getUser threw: ${msg}`);
+    return null;
+  }
 }
 
 export function jwtKeyMaterial(): Uint8Array {
@@ -173,7 +169,8 @@ export async function verifyAtlasSessionJwt(token: string): Promise<Authenticate
     const emailRaw = payload.email;
     const email = typeof emailRaw === 'string' ? emailRaw : '';
     if (!sub || !email) return null;
-    return { databaseUserId: sub, email, supabaseId: googleSubToSupabaseUuid(sub) };
+    const supabaseId = await fetchSupabaseUserId(token);
+    return { databaseUserId: sub, email, supabaseId };
   } catch (err) {
     console.error('[AUTH] JWT verification failed — key material unavailable or token invalid:', err);
     return null;

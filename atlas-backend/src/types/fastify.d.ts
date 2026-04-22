@@ -12,11 +12,11 @@ declare module 'fastify' {
       databaseUserId: string;
       email: string;
       /**
-       * UUID-shaped identifier for Supabase tables whose `user_id` column is typed
-       * UUID. The raw Google `sub` is a numeric string and is rejected by Postgres
-       * UUID validation, so we deterministically derive a UUIDv5 from it.
+       * Supabase-assigned user UUID, fetched via `supabase.auth.getUser()` at
+       * JWT verification time. `null` when Supabase lookup fails or is not
+       * configured.
        */
-      supabaseId: string;
+      supabaseId: string | null;
     } | null;
     /** Subscription tier resolved by attachAtlasSession from Stripe billing state. */
     subscriptionTier?: 'core' | 'sovereign' | 'zenith';
