@@ -632,6 +632,13 @@ export async function executeSwarmPipeline(input: {
   timeoutMs?: number;
   /** User subscription tier — determines Overseer model (free → gpt-5.4-nano, else gpt-5.4). */
   userTier?: string;
+  /**
+   * V1.0 — pre-built curated context block from the conductor’s Stage 4.
+   * When present, replaces the inline contextCuratorService call so the
+   * conductor owns the single context assembly point for both execution paths.
+   * When absent, falls back to existing inline curation (backward compat).
+   */
+  curatedContextBlock?: string;
 }): Promise<{ fullText: string; surface: string; model: string }> {
   const prepared = messagesWithPrimeDirective(input.userId, input.messages);
   const baseMessages = delegatorMessagesToUniversal(prepared);
@@ -705,17 +712,25 @@ export async function executeSwarmPipeline(input: {
   let _suppressedCount = 0;
   if (env.memoryLayerEnabled) {
     try {
-      // Recall raw memories first, then curate
-      const { recalledRows } = await (async () => {
-        const raw = await recallForOverseer(input.userId, lastUserRaw);
-        // recallForOverseer returns a string; we need raw rows for curator.
-        // If identity layer is enabled, pull via curator directly.
-        return { recalledRows: [] as import('./contextCuratorService.js').CurateContextInput['recalledMemories'] };
+      // V1.0: if conductor pre-built the curated block, use it directly.
+      // This means context assembly happened at Stage 4 with full posture/chamber/topic context.
+      // Otherwise fall through to the inline curation path (backward compat).
+      if (input.curatedContextBlock?.trim()) {
+        memoryBlock = input.curatedContextBlock;
+      } else {
+      // Inline curation path: use recallRawRows() to get rows for the curator.
+      const recalledRows = await (async () => {
+        try {
+          const { recallRawRows } = await import('./memoryService.js');
+          return await recallRawRows(input.userId, lastUserRaw);
+        } catch {
+          return [] as import('./contextCuratorService.js').CurateContextInput['recalledMemories'];
+        }
       })();
 
       const pkg = await curateContext({
         userId: input.userId,
-        tokenBudget: 500,  // ~2000 chars hard cap
+        tokenBudget: 500,
         recalledMemories: recalledRows,
       });
       memoryBlock = await formatCuratedContextWithEpistemic(input.userId, pkg);
@@ -728,6 +743,7 @@ export async function executeSwarmPipeline(input: {
         .map((d) => d.entityId);
       _suppressedCount = pkg.suppressedCount;
       _curationDecisions = pkg.curationDecisions.map((d) => `${d.tier}:${d.entityId}`);
+      } // end else (inline curation path)
     } catch (err) {
       console.warn('[swarm] contextCurator failed (falling back to recallForOverseer):', err);
       memoryBlock = await recallForOverseer(input.userId, lastUserRaw);

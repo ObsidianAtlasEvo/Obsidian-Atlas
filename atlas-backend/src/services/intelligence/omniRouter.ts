@@ -259,6 +259,13 @@ export async function executeLocalOllama(input: {
   signal?: AbortSignal;
   timeoutMs?: number;
   routing?: OmniRoutingResolution;
+  /**
+   * V1.0 — pre-built curated context block from Stage 4 of the conductor.
+   * When present, replaces the direct memoryVault top-K pull so context
+   * assembly is governed by contextCuratorService (tier-aware, token-budgeted).
+   * Falls back to the direct vault pull when absent (transition period).
+   */
+  curatedContextBlock?: string;
 }): Promise<StreamingOmniResult> {
   const adapter = new LocalOllamaAdapter();
   const rawLast =
@@ -277,14 +284,20 @@ export async function executeLocalOllama(input: {
     postureEpistemicContract(routing.posture, routing.mode),
   ].join('\n');
 
-  const k = memoryVaultTopK(routing.posture);
+  // V1.0: prefer conductor-supplied curated context block (Stage 4).
+  // Falls back to direct memoryVault pull when block is absent (transition period).
   let vaultBlock = '';
-  if (k > 0) {
-    const recalled = await retrieveRelevantMemories(input.userId, lastUser, k);
-    if (recalled.length > 0) {
-      vaultBlock = `\n\n[SEMANTIC_MEMORY_VAULT_RECALL — inferred embedding match; not verified fact]\n${recalled
-        .map((m, i) => `(${i + 1}) [${m.type}] relevance=${m.relevance.toFixed(3)} :: ${m.content}`)
-        .join('\n')}`;
+  if (input.curatedContextBlock?.trim()) {
+    vaultBlock = `\n\n${input.curatedContextBlock.trim()}`;
+  } else {
+    const k = memoryVaultTopK(routing.posture);
+    if (k > 0) {
+      const recalled = await retrieveRelevantMemories(input.userId, lastUser, k);
+      if (recalled.length > 0) {
+        vaultBlock = `\n\n[SEMANTIC_MEMORY_VAULT_RECALL — inferred embedding match; not verified fact]\n${recalled
+          .map((m, i) => `(${i + 1}) [${m.type}] relevance=${m.relevance.toFixed(3)} :: ${m.content}`)
+          .join('\n')}`;
+      }
     }
   }
 
