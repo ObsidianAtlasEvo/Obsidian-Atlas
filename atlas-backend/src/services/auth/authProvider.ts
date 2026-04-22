@@ -23,7 +23,47 @@ export type AuthenticatedAtlasUser = {
   databaseUserId: string;
   /** Verified email — server-side routing only; do not branch on this in browser bundles. */
   email: string;
+  /**
+   * Deterministic UUIDv5 derived from the Google `sub`. Use this as the `user_id`
+   * value for Supabase tables whose column is typed UUID — the raw Google `sub`
+   * is a numeric string (e.g. "118324880716026512312") and Postgres rejects it
+   * with `invalid input syntax for type uuid`.
+   */
+  supabaseId: string;
 };
+
+/**
+ * Namespace UUID for deriving per-user UUIDv5 identifiers from the Google `sub`.
+ * Fixed at deploy time; changing it breaks all existing user_id references in
+ * Supabase tables, so do not edit without a migration plan.
+ */
+const ATLAS_USER_UUID_NAMESPACE = '6f5a2b8c-1e4d-4a7f-9c3b-8d2e1a9f0b6c';
+
+/**
+ * Derive a deterministic UUIDv5 (RFC 4122 §4.3) from a namespace UUID and a name.
+ * Uses SHA-1 so it's stable across processes. Returns the canonical
+ * 8-4-4-4-12 hex form.
+ */
+function uuidv5FromNamespace(namespaceUuid: string, name: string): string {
+  const hex = namespaceUuid.replace(/-/g, '');
+  const nsBytes = Buffer.from(hex, 'hex');
+  const hash = createHash('sha1').update(nsBytes).update(name, 'utf8').digest();
+  const bytes = Buffer.from(hash.subarray(0, 16));
+  // Set version (5) and RFC 4122 variant bits
+  bytes[6] = (bytes[6] & 0x0f) | 0x50;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const h = bytes.toString('hex');
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20, 32)}`;
+}
+
+/**
+ * Map a Google OAuth `sub` (numeric string) to a stable UUID usable as a
+ * Supabase `user_id`. Deterministic — the same `sub` always produces the same
+ * UUID, so cross-table joins remain valid.
+ */
+export function googleSubToSupabaseUuid(sub: string): string {
+  return uuidv5FromNamespace(ATLAS_USER_UUID_NAMESPACE, sub);
+}
 
 export function jwtKeyMaterial(): Uint8Array {
   const secret = env.authSecret?.trim();
@@ -133,7 +173,7 @@ export async function verifyAtlasSessionJwt(token: string): Promise<Authenticate
     const emailRaw = payload.email;
     const email = typeof emailRaw === 'string' ? emailRaw : '';
     if (!sub || !email) return null;
-    return { databaseUserId: sub, email };
+    return { databaseUserId: sub, email, supabaseId: googleSubToSupabaseUuid(sub) };
   } catch (err) {
     console.error('[AUTH] JWT verification failed — key material unavailable or token invalid:', err);
     return null;

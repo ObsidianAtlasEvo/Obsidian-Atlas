@@ -192,7 +192,7 @@ export function degradedStateHash(degraded: {
  * number. Increment whenever a schema migration ships.
  * Phase F replaces this with a real artifact fingerprint service.
  */
-const CURRENT_DOCTRINE_VERSION = '016';
+const CURRENT_DOCTRINE_VERSION = '017';
 
 export function getCurrentDoctrineVersionHash(): string {
   return CURRENT_DOCTRINE_VERSION;

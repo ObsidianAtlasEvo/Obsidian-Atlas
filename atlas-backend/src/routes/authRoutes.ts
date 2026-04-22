@@ -6,6 +6,7 @@ import {
   buildGoogleAuthorizationUrl,
   exchangeGoogleAuthorizationCode,
   fetchGoogleUserProfile,
+  googleSubToSupabaseUuid,
   isGoogleAuthConfigured,
   newOAuthState,
   signAtlasSessionJwt,
@@ -105,6 +106,7 @@ export function registerAuthRoutes(app: FastifyInstance): void {
       const jwt = await signAtlasSessionJwt({
         databaseUserId: profile.sub,
         email: emailNorm,
+        supabaseId: googleSubToSupabaseUuid(profile.sub),
       });
       reply.setCookie(ATLAS_SESSION_COOKIE, jwt, sessionCookieOptions());
       return reply.redirect(authSuccessRedirectLocation());

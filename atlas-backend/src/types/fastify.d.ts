@@ -8,7 +8,16 @@ declare module 'fastify' {
      */
     atlasVerifiedEmail?: string | null;
     /** Set when `getAuthenticatedUser` / `attachAtlasSession` resolves an OAuth JWT. */
-    atlasAuthUser?: { databaseUserId: string; email: string } | null;
+    atlasAuthUser?: {
+      databaseUserId: string;
+      email: string;
+      /**
+       * UUID-shaped identifier for Supabase tables whose `user_id` column is typed
+       * UUID. The raw Google `sub` is a numeric string and is rejected by Postgres
+       * UUID validation, so we deterministically derive a UUIDv5 from it.
+       */
+      supabaseId: string;
+    } | null;
     /** Subscription tier resolved by attachAtlasSession from Stripe billing state. */
     subscriptionTier?: 'core' | 'sovereign' | 'zenith';
     /** Billing session bridge — populated by the billing scope preHandler. */

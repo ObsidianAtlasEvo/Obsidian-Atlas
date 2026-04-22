@@ -354,6 +354,9 @@ export function recordKeySuccess(key: PoolKey): void {
   if (!key.id.startsWith('env:')) {
     void supabaseUpsert('provider_key_pool', {
       id: key.id,
+      // provider is NOT NULL; PostgREST merge-duplicates falls through to INSERT
+      // when the row is absent (race / new key), so the provider must be present.
+      provider: key.provider,
       consecutive_failures: 0,
       cooldown_until: null,
       last_success_at: new Date().toISOString(),
@@ -392,6 +395,7 @@ export function recordKeyFailure(
   if (!key.id.startsWith('env:')) {
     void supabaseUpsert('provider_key_pool', {
       id: key.id,
+      provider: key.provider,
       consecutive_failures: key.consecutiveFailures,
       cooldown_until: shouldCooldown ? new Date(key.cooldownUntil).toISOString() : null,
       last_failure_at: new Date().toISOString(),
@@ -475,7 +479,7 @@ export async function addKeyToPool(params: {
 // ---------------------------------------------------------------------------
 
 export async function deactivateKey(keyId: string, provider: ProviderName): Promise<void> {
-  await supabaseUpsert('provider_key_pool', { id: keyId, is_active: false });
+  await supabaseUpsert('provider_key_pool', { id: keyId, provider, is_active: false });
   await supabaseInsert('provider_key_events', {
     key_id: keyId,
     provider,
@@ -586,13 +590,18 @@ export async function withKeyRotation<T>(
     }
 
     console.info(`[keyPool] Rotating "${provider}": ${firstKey.label} → ${nextKey.label}`);
-    void supabaseInsert('provider_key_events', {
-      key_id: firstKey.id,
-      provider,
-      event_type: 'rotation',
-      error_code: extractErrorCode(err),
-      rotated_to: nextKey.id.startsWith('env:') ? null : nextKey.id,
-    });
+    // provider_key_events.key_id is a UUID column. Env-sourced keys have ids like
+    // "env:groq" which Postgres rejects, so only record rotation events when the
+    // rotated-from key is a real DB key; null rotated_to when the target is env.
+    if (!firstKey.id.startsWith('env:')) {
+      void supabaseInsert('provider_key_events', {
+        key_id: firstKey.id,
+        provider,
+        event_type: 'rotation',
+        error_code: extractErrorCode(err),
+        rotated_to: nextKey.id.startsWith('env:') ? null : nextKey.id,
+      });
+    }
 
     try {
       const result = await fn(nextKey.apiKey);
