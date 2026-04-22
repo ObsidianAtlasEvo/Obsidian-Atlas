@@ -48,6 +48,7 @@ import { registerSovereigntyStackRoutes } from './routes/sovereigntyStackRoutes.
 import { registerKeyPoolAdminRoutes } from './routes/keyPoolAdminRoutes.js';
 import { startSovereigntyBackgroundSweeper } from './services/autonomy/sovereigntyBackgroundSweeper.js';
 import { loadPersistedJobs } from './services/inference/queueManager.js';
+import { clearStaleCooldownsOnStartup } from './services/inference/keyPoolService.js';
 
 // ---------------------------------------------------------------------------
 // Validate critical env vars BEFORE anything else touches secrets or DB.
@@ -113,6 +114,12 @@ if (isGoogleAuthConfigured()) {
     process.exit(1);
   }
 }
+
+// Clear any in-process key-pool cooldowns that persisted from a prior run (e.g. TPD limits
+// that reset overnight while the process was still running).
+await clearStaleCooldownsOnStartup().catch((err) =>
+  console.warn('[atlas] Key-pool startup cooldown clear failed (non-fatal):', err),
+);
 
 // Rehydrate inference queue — mark any stale pending/in_progress jobs from prior run.
 const recoveredJobs = await loadPersistedJobs().catch((err) => {
