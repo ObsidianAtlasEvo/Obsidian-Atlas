@@ -23,7 +23,43 @@ export type AuthenticatedAtlasUser = {
   databaseUserId: string;
   /** Verified email — server-side routing only; do not branch on this in browser bundles. */
   email: string;
+  /**
+   * Supabase-assigned UUID, retrieved from `supabase.auth.getUser()`. Used as the
+   * `user_id` value for Supabase tables whose column is typed UUID. `null` when
+   * Supabase auth lookup fails or returns no user.
+   */
+  supabaseId: string | null;
 };
+
+/**
+ * Look up the Supabase-assigned user UUID for a given JWT via the GoTrue
+ * `/auth/v1/user` endpoint. Returns `null` on any error so callers can
+ * continue without the Supabase UUID rather than crashing.
+ */
+export async function fetchSupabaseUserId(jwt: string): Promise<string | null> {
+  const url = process.env.SUPABASE_URL;
+  const anonKey = process.env.SUPABASE_ANON_KEY ?? process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.SUPABASE_SERVICE_KEY;
+  if (!url || !anonKey) return null;
+  try {
+    const res = await fetch(`${url.replace(/\/$/, '')}/auth/v1/user`, {
+      method: 'GET',
+      headers: {
+        apikey: anonKey,
+        Authorization: `Bearer ${jwt}`,
+      },
+    });
+    if (!res.ok) {
+      console.warn(`[AUTH] supabase.auth.getUser failed: ${res.status}`);
+      return null;
+    }
+    const data = (await res.json()) as { id?: unknown };
+    return typeof data.id === 'string' ? data.id : null;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(`[AUTH] supabase.auth.getUser threw: ${msg}`);
+    return null;
+  }
+}
 
 export function jwtKeyMaterial(): Uint8Array {
   const secret = env.authSecret?.trim();
@@ -133,7 +169,8 @@ export async function verifyAtlasSessionJwt(token: string): Promise<Authenticate
     const emailRaw = payload.email;
     const email = typeof emailRaw === 'string' ? emailRaw : '';
     if (!sub || !email) return null;
-    return { databaseUserId: sub, email };
+    const supabaseId = await fetchSupabaseUserId(token);
+    return { databaseUserId: sub, email, supabaseId };
   } catch (err) {
     console.error('[AUTH] JWT verification failed — key material unavailable or token invalid:', err);
     return null;

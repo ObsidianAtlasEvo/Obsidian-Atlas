@@ -193,6 +193,7 @@ export function registerOmniStreamRoutes(app: FastifyInstance): void {
 
     const requestId = bodyRequestId ?? newGpuRequestId();
     const userId = request.atlasAuthUser!.databaseUserId;
+    const supabaseUserId = request.atlasAuthUser!.supabaseId;
     const verifiedEmail = getVerifiedUserEmail(request);
     touchChronosActivity(userId);
 
@@ -254,6 +255,7 @@ export function registerOmniStreamRoutes(app: FastifyInstance): void {
     try {
       const result = await conductRequest({
         userId,
+        supabaseUserId,
         verifiedEmail,
         stripeTier,
         requestId,

@@ -8,7 +8,16 @@ declare module 'fastify' {
      */
     atlasVerifiedEmail?: string | null;
     /** Set when `getAuthenticatedUser` / `attachAtlasSession` resolves an OAuth JWT. */
-    atlasAuthUser?: { databaseUserId: string; email: string } | null;
+    atlasAuthUser?: {
+      databaseUserId: string;
+      email: string;
+      /**
+       * Supabase-assigned user UUID, fetched via `supabase.auth.getUser()` at
+       * JWT verification time. `null` when Supabase lookup fails or is not
+       * configured.
+       */
+      supabaseId: string | null;
+    } | null;
     /** Subscription tier resolved by attachAtlasSession from Stripe billing state. */
     subscriptionTier?: 'core' | 'sovereign' | 'zenith';
     /** Billing session bridge — populated by the billing scope preHandler. */

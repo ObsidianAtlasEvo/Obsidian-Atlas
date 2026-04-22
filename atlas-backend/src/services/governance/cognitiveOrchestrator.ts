@@ -186,6 +186,15 @@ export function dispatchCognitiveCommand(cmd: CognitiveCommand): OrchestratorDis
 export interface ConductorInput {
   /** Verified database user ID (from atlasAuthUser — never from body). */
   userId: string;
+  /**
+   * Supabase-assigned user UUID from `supabase.auth.getUser()`. Used as the
+   * `user_id` value for Supabase tables whose column is typed UUID
+   * (orchestration_traces, artifact_state_fingerprints). Distinct from
+   * `userId`, which remains the raw Google `sub` for all other internal
+   * accounting. `null` when Supabase lookup failed — callers skip UUID-scoped
+   * writes in that case.
+   */
+  supabaseUserId: string | null;
   /** Verified OAuth email (from requestAuth). Null → public_swarm path. */
   verifiedEmail: string | null | undefined;
   /** Resolved Stripe subscription tier. */
@@ -340,7 +349,9 @@ export async function conductRequest(input: ConductorInput): Promise<ConductorRe
   // Fire-and-forget fetch of previous fingerprint — non-blocking; null on failure.
   const artifactManifest = buildArtifactManifestFromInput(input.attachments);
   const currentArtifactFp = computeArtifactFingerprint(artifactManifest);
-  const previousArtifactFpStr = await getLatestArtifactFingerprint(input.userId).catch(() => null);
+  const previousArtifactFpStr = input.supabaseUserId
+    ? await getLatestArtifactFingerprint(input.supabaseUserId).catch(() => null)
+    : null;
 
   // Phase D — degradedModePolicy: resolve stage-aware execution policy from live oracle.
   // This gates Stage 4 memory assembly, Stage 7 overseer, and synthesis class cap.
@@ -797,16 +808,20 @@ export async function conductRequest(input: ConductorInput): Promise<ConductorRe
   onSseEvent('trace', orchestrationTrace);
 
   // Phase F — orchestrationTraceService: persist trace for operator audit.
-  void persistOrchestrationTrace(input.userId, orchestrationTrace).catch(() => {});
+  // Both of the following tables have user_id typed UUID in Supabase, so we pass
+  // the derived Supabase UUID (not the raw Google `sub`).
+  if (input.supabaseUserId) {
+    void persistOrchestrationTrace(input.supabaseUserId, orchestrationTrace).catch(() => {});
 
-  // Phase F — artifactStateFingerprintService: persist artifact fingerprint.
-  void persistArtifactFingerprint(
-    input.userId,
-    input.requestId,
-    traceId,
-    currentArtifactFp,
-    previousArtifactFpStr,
-  ).catch(() => {});
+    // Phase F — artifactStateFingerprintService: persist artifact fingerprint.
+    void persistArtifactFingerprint(
+      input.supabaseUserId,
+      input.requestId,
+      traceId,
+      currentArtifactFp,
+      previousArtifactFpStr,
+    ).catch(() => {});
+  }
 
   return {
     traceId,
