@@ -44,6 +44,7 @@
 import { env } from '../../config/env.js';
 import { redisSafeGet, redisSafeSet, redisSafeDel } from '../infrastructure/redisClient.js';
 import type { AtlasChamber, DoctrineBundleId, SensitivityClass } from '../../types/requestProfile.js';
+import { detectMembranePivot } from './membranePivotDetector.js';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -78,6 +79,12 @@ export interface MembraneRecord {
   resolvedAt: string;
   /** Number of turns that have consumed this membrane without invalidation. */
   hitCount: number;
+  /** Phase E: first 500 chars of the prompt that generated this membrane. */
+  originPromptSnippet?: string;
+  /** Phase E: routing mode at assembly time (for pivot detection). */
+  originMode?: string;
+  /** Phase E: gravity (posture) at assembly time (for pivot detection). */
+  originGravity?: number;
 }
 
 export interface MembraneValidationResult {
@@ -99,6 +106,12 @@ export interface MembraneWriteInput {
   policyProfileVersion: string;
   degradedStateHash: string;
   artifactFingerprint?: string;
+  /** Phase E: origin prompt snippet for pivot detection. */
+  originPromptSnippet?: string;
+  /** Phase E: routing mode at assembly time. */
+  originMode?: string;
+  /** Phase E: gravity at assembly time. */
+  originGravity?: number;
 }
 
 export interface MembraneValidateInput {
@@ -111,6 +124,12 @@ export interface MembraneValidateInput {
   currentDegradedStateHash: string;
   forceRefresh?: boolean;
   currentArtifactFingerprint?: string;
+  /** Phase E: current prompt for pivot detection. */
+  currentPrompt?: string;
+  /** Phase E: current routing mode for pivot detection. */
+  currentMode?: string;
+  /** Phase E: current gravity for pivot detection. */
+  currentGravity?: number;
 }
 
 // ── Key construction ───────────────────────────────────────────────────────
@@ -205,6 +224,12 @@ export function checkMembraneValidity(
     currentDegradedStateHash: string;
     forceRefresh: boolean;
     currentArtifactFingerprint?: string;
+    /** Phase E: current prompt for pivot detection. */
+    currentPrompt?: string;
+    /** Phase E: current routing mode for pivot detection. */
+    currentMode?: string;
+    /** Phase E: current gravity for pivot detection. */
+    currentGravity?: number;
   },
 ): string | undefined {
   if (opts.forceRefresh) return 'explicit_force_refresh';
@@ -235,6 +260,22 @@ export function checkMembraneValidity(
     record.artifactFingerprint !== opts.currentArtifactFingerprint
   ) {
     return 'artifact_fingerprint_change';
+  }
+
+  // Phase E — pivot detection: check for semantic intent shift.
+  if (opts.currentPrompt) {
+    const pivotResult = detectMembranePivot({
+      currentPrompt: opts.currentPrompt,
+      cachedOriginPromptSnippet: record.originPromptSnippet,
+      currentMode: opts.currentMode,
+      cachedMode: record.originMode,
+      currentGravity: opts.currentGravity ?? 3,
+      cachedGravity: record.originGravity,
+      currentChamber: opts.currentChamber,
+    });
+    if (pivotResult.isPivot) {
+      return pivotResult.reason;
+    }
   }
 
   return undefined; // valid
@@ -274,6 +315,9 @@ export async function validateSessionMembrane(
     currentDegradedStateHash: opts.currentDegradedStateHash,
     forceRefresh: opts.forceRefresh ?? false,
     currentArtifactFingerprint: opts.currentArtifactFingerprint,
+    currentPrompt: opts.currentPrompt,
+    currentMode: opts.currentMode,
+    currentGravity: opts.currentGravity,
   });
 
   if (invalidReason) {
@@ -320,6 +364,10 @@ export async function writeSessionMembrane(input: MembraneWriteInput): Promise<b
     chamber: input.chamber,
     resolvedAt: new Date().toISOString(),
     hitCount: 0,
+    // Phase E: store origin context for pivot detection on subsequent turns.
+    originPromptSnippet: input.originPromptSnippet?.slice(0, 500),
+    originMode: input.originMode,
+    originGravity: input.originGravity,
   };
 
   return redisSafeSet(key, record, env.membraneTtlSeconds);

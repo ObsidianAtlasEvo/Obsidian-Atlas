@@ -86,6 +86,19 @@ import {
   describeSlice,
 } from './contextSlicePlanner.js';
 import { cartographAsymmetries } from './asymmetryCartographerService.js';
+import {
+  resolveLivePolicy,
+  applySynthesisCap,
+  describePolicy,
+  type StagePolicy,
+} from './degraded/degradedModePolicy.js';
+import { persistOrchestrationTrace } from './orchestrationTraceService.js';
+import {
+  computeArtifactFingerprint,
+  persistArtifactFingerprint,
+  getLatestArtifactFingerprint,
+  buildArtifactManifestFromInput,
+} from './artifactStateFingerprintService.js';
 import { enqueueGpuTask } from '../inference/queueManager.js';
 import { getRegistryEntry, mapModelRegistryIdToSwarm } from '../intelligence/llmRegistry.js';
 import type { MirrorforgeState } from '../intelligence/telemetryTranslator.js';
@@ -196,6 +209,14 @@ export interface ConductorInput {
   chamber?: AtlasChamber;
   /** Request abort signal. */
   signal?: AbortSignal;
+  /** Phase F: optional attachment metadata for artifact fingerprinting. */
+  attachments?: Array<{
+    id?: string;
+    name?: string;
+    type?: string;
+    modifiedAt?: string;
+    size?: number;
+  }> | null;
   /** SSE stream emitters — conductor drives all stream events. */
   onDelta: (text: string) => void;
   onSseEvent: (event: string, data: unknown) => void;
@@ -240,6 +261,10 @@ export interface ConductorTrace {
     budgetTokens: number;
     estimatedTokens: number;
   };
+  /** Phase D: degraded mode policy applied at Stage 0. */
+  degradedMode?: string;
+  /** Phase D: whether memory assembly was gated by policy. */
+  memoryAssemblyGated?: boolean;
 }
 
 export interface ConductorResult {
@@ -308,12 +333,55 @@ export async function conductRequest(input: ConductorInput): Promise<ConductorRe
   };
   // Stable discriminators computed once — used for membrane key, trace, and invalidation.
   const redisAvailable = !!(env.upstashRedisUrl && env.upstashRedisToken);
-  const doctrineVersionHash = '016'; // mirrors getCurrentDoctrineVersionHash()
+  const doctrineVersionHash = '017'; // mirrors getCurrentDoctrineVersionHash()
   const currentDegradedHash = computeDegradedStateHash(degraded);
+
+  // Phase F: compute artifact fingerprint and fetch previous for membrane gate.
+  // Fire-and-forget fetch of previous fingerprint — non-blocking; null on failure.
+  const artifactManifest = buildArtifactManifestFromInput(input.attachments);
+  const currentArtifactFp = computeArtifactFingerprint(artifactManifest);
+  const previousArtifactFpStr = await getLatestArtifactFingerprint(input.userId).catch(() => null);
+
+  // Phase D — degradedModePolicy: resolve stage-aware execution policy from live oracle.
+  // This gates Stage 4 memory assembly, Stage 7 overseer, and synthesis class cap.
+  const stagePolicy: StagePolicy = resolveLivePolicy();
+  onSseEvent('status', stagePolicy.mode !== 'NOMINAL'
+    ? { phase: 'degraded', message: stagePolicy.degradedReason ?? 'Atlas operating in degraded mode', mode: stagePolicy.mode }
+    : { phase: 'nominal', message: 'Atlas systems nominal', mode: 'NOMINAL' },
+  );
+
+  // OFFLINE guard — reject at admission before any work is done.
+  if (stagePolicy.rejectAtAdmission) {
+    onSseEvent('error', { message: stagePolicy.degradedReason ?? 'Atlas is offline', code: 'ATLAS_OFFLINE' });
+    return {
+      traceId,
+      requestId: input.requestId,
+      profile: null as unknown as RequestProfile,
+      fullText: stagePolicy.degradedReason ?? 'Atlas is temporarily offline.',
+      surface: 'degraded',
+      model: 'none',
+      overseerResult: null,
+      partial: false,
+      orchestrationTrace: {
+        traceId,
+        requestId: input.requestId,
+        redisAvailable: false,
+        membranePath: 'skipped',
+        membraneInvalidationReason: 'offline',
+        doctrineVersionHash: '017',
+        sensitivityClass: 'low',
+        policyProfileVersion: '',
+        degradedStateHash: currentDegradedHash,
+        highestStageReached: 0,
+        stageDurationsMs: {},
+      },
+    };
+  }
+
   // Checkpoint created at admission — fire-and-forget; conductor proceeds regardless.
   void createCheckpoint(input.userId, input.requestId).catch(() => {});
   void advanceCheckpoint(input.userId, input.requestId, 0, {
-    summary: `degraded_snapshot redis:${redisAvailable}`,
+    summary: `degraded_snapshot redis:${redisAvailable} policy:${describePolicy(stagePolicy)}`,
     durationMs: Date.now() - s0,
     completedAt: new Date().toISOString(),
   }).catch(() => {});
@@ -384,9 +452,9 @@ export async function conductRequest(input: ConductorInput): Promise<ConductorRe
     requiredDoctrineBundle: resolveDoctrineBundles(routing.mode, routing.posture),
     allowedNamespaces: ['global', ...(chamber !== 'unknown' ? [chamber] : [])],
     swarmEligible: lane === 'public_swarm',
-    membraneEligible: degraded.memoryLayerEnabled,
+    membraneEligible: stagePolicy.membraneEnabled && degraded.memoryLayerEnabled,
     sensitivityClass: resolveSensitivityClass(isSovOwner, routing.mode, routing.posture),
-    preferredSynthesisClass: capabilityResolution.resolvedClass,
+    preferredSynthesisClass: applySynthesisCap(capabilityResolution.resolvedClass, stagePolicy),
     traceId,
     resolvedAt: new Date().toISOString(),
   } satisfies RequestProfile);
@@ -437,7 +505,9 @@ export async function conductRequest(input: ConductorInput): Promise<ConductorRe
   // Both local and swarm execution paths consume curatedContextBlock.
   const s4 = stageStart();
   let curatedContextBlock = '';
-  if (degraded.memoryLayerEnabled && profile.sensitivityClass !== 'low') {
+  // Phase D gate: stagePolicy.memoryAssemblyEnabled enforces degraded-mode skip.
+  // Also requires memoryLayerEnabled env flag and non-low sensitivity.
+  if (stagePolicy.memoryAssemblyEnabled && degraded.memoryLayerEnabled && profile.sensitivityClass !== 'low') {
     // Membrane check: performed after profile is frozen.
     // Hit → skip full Stage 4; miss → assemble then write membrane.
     const membraneResult = await validateSessionMembrane({
@@ -449,6 +519,12 @@ export async function conductRequest(input: ConductorInput): Promise<ConductorRe
       currentPolicyProfileVersion: policyProfileVersion,
       currentDegradedStateHash: currentDegradedHash,
       forceRefresh: false,
+      // Phase E: pass pivot detection context.
+      currentPrompt: userPrompt,
+      currentMode: routing.mode,
+      currentGravity: routing.posture,
+      // Phase F: artifact fingerprint for membrane invalidation.
+      currentArtifactFingerprint: currentArtifactFp.fingerprint,
     });
 
     if (membraneResult.hit && membraneResult.record) {
@@ -487,6 +563,12 @@ export async function conductRequest(input: ConductorInput): Promise<ConductorRe
           sensitivityClass: profile.sensitivityClass,
           policyProfileVersion,
           degradedStateHash: currentDegradedHash,
+          // Phase E: store origin context for future pivot detection.
+          originPromptSnippet: userPrompt,
+          originMode: routing.mode,
+          originGravity: routing.posture,
+          // Phase F: artifact fingerprint for subsequent membrane invalidation.
+          artifactFingerprint: currentArtifactFp.fingerprint,
         }).catch(() => {});
       } catch (err) {
         // Non-fatal — execution proceeds without curated context
@@ -646,8 +728,9 @@ export async function conductRequest(input: ConductorInput): Promise<ConductorRe
 
   // ── Stage 7: Post-response quality + Overseer annotation ─────────────────
   // Overseer is post-hoc, never blocks delivery. 5s race timeout.
+  // Phase D gate: stagePolicy.overseerEnabled skips Stage 7 in DEGRADED_2+.
   let overseerResult: OverseerResult | null = null;
-  try {
+  if (stagePolicy.overseerEnabled) try {
     overseerResult = await Promise.race([
       applyOverseerLens(input.userId, dispatchResult.fullText, {
         query: userPrompt,
@@ -708,8 +791,22 @@ export async function conductRequest(input: ConductorInput): Promise<ConductorRe
       budgetTokens: sliceResult.budgetTokens,
       estimatedTokens: sliceResult.estimatedTokens,
     },
+    degradedMode: stagePolicy.mode,
+    memoryAssemblyGated: !stagePolicy.memoryAssemblyEnabled,
   };
   onSseEvent('trace', orchestrationTrace);
+
+  // Phase F — orchestrationTraceService: persist trace for operator audit.
+  void persistOrchestrationTrace(input.userId, orchestrationTrace).catch(() => {});
+
+  // Phase F — artifactStateFingerprintService: persist artifact fingerprint.
+  void persistArtifactFingerprint(
+    input.userId,
+    input.requestId,
+    traceId,
+    currentArtifactFp,
+    previousArtifactFpStr,
+  ).catch(() => {});
 
   return {
     traceId,
