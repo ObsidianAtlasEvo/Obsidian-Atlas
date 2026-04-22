@@ -138,6 +138,66 @@ export async function recallForOverseer(
 }
 
 /**
+ * V1.0 Sovereign Execution Framework — Stage 4 context assembly.
+ *
+ * Same retrieval logic as recallForOverseer() but returns the raw RecalledRow[]
+ * so the conductor can pass them directly into contextCuratorService.curateContext().
+ * Reference-count bumping is preserved.
+ *
+ * Returns an empty array (never throws) when:
+ *   - feature flag is off
+ *   - userId / queryText missing
+ *   - Supabase not configured
+ *   - embedding failed
+ *   - RPC returned nothing
+ */
+export async function recallRawRows(
+  userId: string | undefined,
+  queryText: string,
+  opts: RecallOptions = {},
+): Promise<RecalledRow[]> {
+  if (!env.memoryLayerEnabled) return [];
+  if (!userId || !queryText.trim()) return [];
+  if (!process.env.SUPABASE_URL) return [];
+
+  const timeoutMs = opts.timeoutMs ?? 2500;
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const vec = await embed768(queryText, controller.signal);
+    if (!vec) return [];
+
+    const rpcRes = await supabaseRest<RecalledRow[]>(
+      'POST',
+      'rpc/atlas_recall_memories',
+      {
+        p_user_id: userId,
+        p_query_embed: vec,
+        p_memory_k: opts.memoryK ?? 8,
+        p_chunk_k: opts.chunkK ?? 4,
+        p_chunk_days: opts.chunkDays ?? 30,
+      },
+    );
+
+    if (!rpcRes.ok || !Array.isArray(rpcRes.data) || rpcRes.data.length === 0) {
+      return [];
+    }
+
+    const memoryHits = rpcRes.data.filter((r) => r.source === 'memory');
+    if (memoryHits.length > 0) {
+      void bumpMemoryReferences(memoryHits.map((m) => m.id)).catch(() => {});
+    }
+
+    return rpcRes.data;
+  } catch {
+    return [];
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+/**
  * Render recalled rows as an LLM-friendly block. Memories first (durable
  * signal), then conversation snippets (recent signal).
  */
