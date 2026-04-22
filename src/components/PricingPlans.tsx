@@ -34,7 +34,7 @@ const PLANS: Plan[] = [
   {
     id: 'sovereign',
     name: 'Sovereign',
-    price: '$19',
+    price: '$12',
     cadence: '/month',
     tagline: 'For daily thinkers who demand precision.',
     features: [
@@ -50,7 +50,7 @@ const PLANS: Plan[] = [
   {
     id: 'zenith',
     name: 'Zenith',
-    price: '$49',
+    price: '$39',
     cadence: '/month',
     tagline: 'Unlimited depth. Frontier minds.',
     features: [

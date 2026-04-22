@@ -17,10 +17,11 @@
  * Chamber metadata lives in `./chamberCatalog`.
  */
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useAtlasStore } from '../../store/useAtlasStore';
 import { useNavStore } from '../../store/useNavStore';
 import { ModelSelector } from '../ModelSelector';
+import { getUserPreferences } from '../../lib/atlasApi';
 import {
   PRIMARY_CHAMBERS,
   SECTIONS,
@@ -67,6 +68,19 @@ export default function NavRail({
   const togglePinChamber = useNavStore((s) => s.togglePinChamber);
   const labsExpanded = useNavStore((s) => s.labsExpanded);
   const setLabsExpanded = useNavStore((s) => s.setLabsExpanded);
+
+  const [userTier, setUserTier] = useState<string | null>(null);
+  useEffect(() => {
+    if (isMobile) return;
+    let cancelled = false;
+    void getUserPreferences().then((p) => {
+      if (!cancelled && p) setUserTier(p.tier);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [isMobile]);
+  const showUpgrade = userTier === 'core';
 
   // ── Mobile bottom tab bar ────────────────────────────────────────────
   if (isMobile) {
@@ -505,6 +519,40 @@ export default function NavRail({
           )}
         </div>
 
+        {showUpgrade && (
+          <button
+            onClick={onSettingsClick}
+            title="Upgrade Plan"
+            aria-label="Upgrade Plan"
+            style={upgradeButtonStyle(expanded)}
+            onMouseEnter={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.background = 'rgba(201,162,39,0.12)';
+              (e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(201,162,39,0.55)';
+              (e.currentTarget as HTMLButtonElement).style.color = 'rgba(201,162,39,1)';
+            }}
+            onMouseLeave={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.background = 'rgba(201,162,39,0.06)';
+              (e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(201,162,39,0.3)';
+              (e.currentTarget as HTMLButtonElement).style.color = 'rgba(201,162,39,0.85)';
+            }}
+          >
+            <svg
+              width="13"
+              height="13"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+            </svg>
+            {expanded && <span>Upgrade Plan</span>}
+          </button>
+        )}
+
         <div
           style={{
             display: 'flex',
@@ -721,6 +769,28 @@ const kbdStyle: React.CSSProperties = {
   borderRadius: 3,
   background: 'rgba(26,16,60,0.4)',
 };
+
+function upgradeButtonStyle(expanded: boolean): React.CSSProperties {
+  return {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: expanded ? 'flex-start' : 'center',
+    gap: 8,
+    width: '100%',
+    padding: expanded ? '6px 10px' : '6px',
+    background: 'rgba(201,162,39,0.06)',
+    border: '1px solid rgba(201,162,39,0.3)',
+    borderRadius: 4,
+    cursor: 'pointer',
+    color: 'rgba(201,162,39,0.85)',
+    fontSize: '0.7rem',
+    fontFamily: 'inherit',
+    fontWeight: 500,
+    letterSpacing: '0.06em',
+    textTransform: 'uppercase',
+    transition: 'all 140ms ease',
+  };
+}
 
 function footerButtonStyle(expanded: boolean, danger: boolean): React.CSSProperties {
   return {
