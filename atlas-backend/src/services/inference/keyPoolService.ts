@@ -28,6 +28,27 @@ import { env } from '../../config/env.js';
 /** How long a failing key is excluded from rotation (ms). Default: 5 minutes. */
 const COOLDOWN_MS = 5 * 60 * 1_000;
 
+/**
+ * Extended cooldown for daily-quota (TPD) exhaustion — key is cooled until
+ * 00:05 UTC the next day (5-minute buffer after midnight reset).
+ */
+function tpdCooldownUntil(): number {
+  const now = new Date();
+  const nextMidnightUtc = new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1, 0, 5, 0),
+  );
+  return nextMidnightUtc.getTime();
+}
+
+/** Returns true if the error indicates a daily token quota (TPD) exhaustion. */
+function isTpdError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return (
+    (msg.includes('tokens per day') || msg.includes('TPD')) &&
+    msg.includes('429')
+  );
+}
+
 /** Failures within this window trigger cooldown. */
 const CONSECUTIVE_FAILURE_THRESHOLD = 2;
 
@@ -336,7 +357,8 @@ export function recordKeySuccess(key: PoolKey): void {
       consecutive_failures: 0,
       cooldown_until: null,
       last_success_at: new Date().toISOString(),
-      total_requests: 'total_requests + 1', // NOTE: handled via RPC in full impl; approximated here
+      // total_requests increment is handled server-side via a Postgres trigger; omit here to
+      // avoid sending a raw SQL expression string that PostgREST would reject with a 400.
     });
     void supabaseInsert('provider_key_events', {
       key_id: key.id,
@@ -352,11 +374,18 @@ export function recordKeyFailure(
 ): void {
   key.consecutiveFailures += 1;
 
-  const shouldCooldown = key.consecutiveFailures >= CONSECUTIVE_FAILURE_THRESHOLD;
+  // TPD errors (daily quota exhaustion) need a much longer cooldown than per-minute rate limits.
+  // Applying a 5-minute cooldown to a TPD error causes an infinite retry loop until midnight.
+  const isTpd = isTpdError({ message: update.errorMsg ?? '' });
+  const shouldCooldown = isTpd || key.consecutiveFailures >= CONSECUTIVE_FAILURE_THRESHOLD;
+
   if (shouldCooldown) {
-    key.cooldownUntil = Date.now() + COOLDOWN_MS;
+    key.cooldownUntil = isTpd ? tpdCooldownUntil() : Date.now() + COOLDOWN_MS;
+    const cooldownDesc = isTpd
+      ? `until midnight UTC (TPD exhaustion)`
+      : `for ${COOLDOWN_MS / 1000}s`;
     console.warn(
-      `[keyPool] Key "${key.label}" (${key.provider}) entering cooldown for ${COOLDOWN_MS / 1000}s after ${key.consecutiveFailures} consecutive failures`,
+      `[keyPool] Key "${key.label}" (${key.provider}) entering cooldown ${cooldownDesc} after ${key.consecutiveFailures} consecutive failures`,
     );
   }
 
@@ -588,4 +617,46 @@ function extractErrorCode(err: unknown): string {
   if (msg.includes('RESOURCE_EXHAUSTED')) return 'RESOURCE_EXHAUSTED';
   if (msg.includes('quota') || msg.includes('Quota')) return 'QUOTA';
   return 'unknown';
+}
+
+// ---------------------------------------------------------------------------
+// Startup: clear stale in-process cooldowns
+// ---------------------------------------------------------------------------
+
+/**
+ * Called once at server startup (index.ts). Clears any in-process cooldown state
+ * that was persisted from before the process last started (e.g. TPD limits that
+ * reset overnight while the process was running). Supabase is the source of truth —
+ * the pool cache is simply evicted so the next request reloads fresh state.
+ *
+ * Also resets any DB-side cooldown_until values that are now in the past, so
+ * that the Supabase SELECT picks them up as available on the next cache fill.
+ */
+export async function clearStaleCooldownsOnStartup(): Promise<void> {
+  // Evict the entire in-process cache — next request reloads from Supabase.
+  poolCache.clear();
+
+  // Reset any DB keys whose cooldown_until has already passed.
+  const url = process.env['SUPABASE_URL'];
+  const key = process.env['SUPABASE_SERVICE_ROLE_KEY'] ?? process.env['SUPABASE_SERVICE_KEY'];
+  if (!url || !key) return;
+  try {
+    await fetch(
+      `${url}/rest/v1/provider_key_pool?cooldown_until=lt.${new Date().toISOString()}&is_active=eq.true`,
+      {
+        method: 'PATCH',
+        headers: {
+          apikey: key,
+          Authorization: `Bearer ${key}`,
+          'Content-Type': 'application/json',
+          Prefer: 'return=minimal',
+        },
+        body: JSON.stringify({ cooldown_until: null, consecutive_failures: 0 }),
+        signal: AbortSignal.timeout(5_000),
+      },
+    );
+    console.info('[keyPool] Startup: stale cooldowns cleared from provider_key_pool');
+  } catch (err) {
+    console.warn('[keyPool] Startup: could not clear stale cooldowns from Supabase:', err);
+  }
 }
