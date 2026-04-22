@@ -6,6 +6,7 @@ import { useAtlasAuth } from '../Auth/atlasAuthContext';
 import { SOVEREIGN_CREATOR_EMAIL } from '../../config/sovereignCreator';
 import { nowISO } from '../../lib/persistence';
 import { atlasAuthUrl } from '../../lib/atlasApi';
+import { syncChatHistoryOnLogin } from '../../lib/chatSync';
 import NavRail from './NavRail';
 import ChamberView from './ChamberView';
 import MobileSidebarDrawer from './MobileSidebarDrawer';
@@ -44,7 +45,13 @@ export default function AppShell() {
       privacySettings: { dataMinimization: true, memorySovereignty: true },
     };
     setCurrentUser(profile);
-    void hydrateUserData(atlasSession.databaseUserId);
+    void hydrateUserData(atlasSession.databaseUserId).then(() => {
+      // Fire-and-forget: chat history sync pulls remote threads/messages from
+      // Supabase so the user's conversations follow them across devices. Any
+      // error is swallowed inside syncChatHistoryOnLogin so the shell never
+      // blocks on hydration.
+      void syncChatHistoryOnLogin(atlasSession.databaseUserId);
+    });
   }, [atlasSession, setCurrentUser, hydrateUserData]);
 
   const handleSettingsClick = useCallback(() => {

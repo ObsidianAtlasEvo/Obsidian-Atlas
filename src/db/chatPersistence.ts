@@ -15,6 +15,7 @@ import type {
   PromptHistoryRecord,
 } from './atlasEntities';
 import { TERMINAL_CHAT_STATES } from './atlasEntities';
+import { deleteThreadRemote, postMessage, postThread } from '../lib/chatSync';
 
 function threadId(): string {
   return `t-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
@@ -39,6 +40,7 @@ export async function createThread(
     messageCount: 0,
   };
   await atlasIntelligenceDb.chatThreads.add(record);
+  postThread(record);
   return record;
 }
 
@@ -71,6 +73,8 @@ export async function updateThread(
     .where('threadId')
     .equals(tId)
     .modify({ ...patch, updatedAt: Date.now() });
+  const updated = await atlasIntelligenceDb.chatThreads.where('threadId').equals(tId).first();
+  if (updated) postThread(updated);
 }
 
 export async function deleteThread(tId: string): Promise<void> {
@@ -82,6 +86,7 @@ export async function deleteThread(tId: string): Promise<void> {
       await atlasIntelligenceDb.chatThreads.where('threadId').equals(tId).delete();
     },
   );
+  deleteThreadRemote(tId);
 }
 
 // ── Message CRUD ─────────────────────────────────────────────────────────
@@ -91,6 +96,7 @@ export async function appendMessage(
 ): Promise<number> {
   const id = await atlasIntelligenceDb.chatMessages.add(msg as ChatMessageRecord);
   await updateThread(msg.threadId, { messageCount: await messageCount(msg.threadId) });
+  postMessage(msg as ChatMessageRecord);
   return id;
 }
 
@@ -148,6 +154,8 @@ export async function finalizeMessage(
     updatedAt: Date.now(),
     ...meta,
   });
+  const final = await atlasIntelligenceDb.chatMessages.get(messageId);
+  if (final) postMessage(final);
 }
 
 // ── Hydration: recover after refresh ─────────────────────────────────────
