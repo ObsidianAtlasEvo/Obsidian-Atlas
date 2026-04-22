@@ -62,6 +62,20 @@ import {
 } from '../intelligence/contextCuratorService.js';
 import { recallRawRows } from '../intelligence/memoryService.js';
 import { applyOverseerLens, type OverseerResult } from './overseerService.js';
+import {
+  validateSessionMembrane,
+  writeSessionMembrane,
+  shortHash,
+  contextFingerprint,
+  degradedStateHash as computeDegradedStateHash,
+} from './sessionMembraneService.js';
+import {
+  createCheckpoint,
+  advanceCheckpoint,
+  persistProfileSnapshot,
+  persistCuratedContextHash,
+  deleteCheckpoint,
+} from './requestCheckpointService.js';
 import { enqueueGpuTask } from '../inference/queueManager.js';
 import { getRegistryEntry, mapModelRegistryIdToSwarm } from '../intelligence/llmRegistry.js';
 import type { MirrorforgeState } from '../intelligence/telemetryTranslator.js';
@@ -177,6 +191,34 @@ export interface ConductorInput {
   onSseEvent: (event: string, data: unknown) => void;
 }
 
+/**
+ * Per-request orchestration trace — emitted on the `trace` SSE event
+ * and returned in ConductorResult for operator observability.
+ * Never user-facing; intended for telemetry, debugging, and Phase C tuning.
+ */
+export interface ConductorTrace {
+  traceId: string;
+  requestId: string;
+  /** Whether Upstash Redis is configured for this request. */
+  redisAvailable: boolean;
+  /** Whether the membrane cache was hit, missed, or not attempted. */
+  membranePath: 'hit' | 'miss' | 'skipped';
+  /** Reason string for membrane outcome (e.g. 'cache_hit', 'cache_miss', 'chamber_switch', 'redis_unavailable'). */
+  membraneInvalidationReason: string;
+  /** Doctrine version hash at request time. */
+  doctrineVersionHash: string;
+  /** Sensitivity class resolved for this request. */
+  sensitivityClass: string;
+  /** PolicyProfile.updatedAt at request time. */
+  policyProfileVersion: string;
+  /** Hash of degraded flags at request time (groq/ollama/memory). */
+  degradedStateHash: string;
+  /** Highest conductor stage index reached. */
+  highestStageReached: number;
+  /** Per-stage wall-clock durations in milliseconds. */
+  stageDurationsMs: Partial<Record<string, number>>;
+}
+
 export interface ConductorResult {
   traceId: string;
   requestId: string;
@@ -186,6 +228,8 @@ export interface ConductorResult {
   model: string;
   overseerResult: OverseerResult | null;
   partial: boolean;
+  /** Orchestration trace for operator observability. Always present. */
+  orchestrationTrace: ConductorTrace;
 }
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
@@ -223,33 +267,67 @@ export async function conductRequest(input: ConductorInput): Promise<ConductorRe
   const { onSseEvent, onDelta } = input;
   let fullText = '';
   const streamingOnDelta = (t: string) => { fullText += t; onDelta(t); };
+  const stageStart = () => Date.now();
+  // Trace accumulator — emitted as SSE `trace` event at Stage 8.
+  const stageDurationsMs: Partial<Record<string, number>> = {};
+  let highestStageReached = 0;
+  const markStage = (stage: number, durationMs: number) => {
+    stageDurationsMs[`stage${stage}`] = durationMs;
+    if (stage > highestStageReached) highestStageReached = stage;
+  };
 
-  // ── Stage 0: Degraded state snapshot ─────────────────────────────────────
+  // ── Stage 0: Degraded state snapshot ─────────────────────────────────────────
+  const s0 = stageStart();
   const degraded = {
     groqUnavailable: !env.groqApiKey?.trim() && !env.cloudOpenAiApiKey?.trim(),
     localOllamaDisabled: env.disableLocalOllama ?? false,
     memoryLayerEnabled: env.memoryLayerEnabled ?? false,
   };
+  // Stable discriminators computed once — used for membrane key, trace, and invalidation.
+  const redisAvailable = !!(env.upstashRedisUrl && env.upstashRedisToken);
+  const doctrineVersionHash = '016'; // mirrors getCurrentDoctrineVersionHash()
+  const currentDegradedHash = computeDegradedStateHash(degraded);
+  // Checkpoint created at admission — fire-and-forget; conductor proceeds regardless.
+  void createCheckpoint(input.userId, input.requestId).catch(() => {});
+  void advanceCheckpoint(input.userId, input.requestId, 0, {
+    summary: `degraded_snapshot redis:${redisAvailable}`,
+    durationMs: Date.now() - s0,
+    completedAt: new Date().toISOString(),
+  }).catch(() => {});
+  markStage(0, Date.now() - s0);
 
-  // ── Stage 1: Compute lane resolution ─────────────────────────────────────
+  // ── Stage 1: Compute lane resolution ─────────────────────────────────────────
+  const s1 = stageStart();
   const lane = degraded.localOllamaDisabled
     ? 'public_swarm' as const
     : resolveOmniComputeLane(input.verifiedEmail);
 
   const isSovOwner = isSovereignOwnerEmail(input.verifiedEmail);
+  void advanceCheckpoint(input.userId, input.requestId, 1, {
+    summary: `lane:${lane}`,
+    durationMs: Date.now() - s1,
+    completedAt: new Date().toISOString(),
+  }).catch(() => {});
 
-  // ── Stage 2: Mode + posture resolution ───────────────────────────────────
+  // ── Stage 2: Mode + posture resolution ─────────────────────────────────────────
+  const s2 = stageStart();
   const userPrompt = lastUserContent(input.messages);
 
   const routing: OmniRoutingResolution = resolveOmniRouting(userPrompt, {
     posture: input.posture,
     sovereignResponseMode: input.sovereignResponseMode,
   });
+  void advanceCheckpoint(input.userId, input.requestId, 2, {
+    summary: `mode:${routing.mode} posture:${routing.posture}`,
+    durationMs: Date.now() - s2,
+    completedAt: new Date().toISOString(),
+  }).catch(() => {});
 
-  // ── Stage 3: Request preparation ─────────────────────────────────────────
+  // ── Stage 3: Request preparation + Membrane validation ───────────────────────
+  const s3 = stageStart();
   const chamber: AtlasChamber = input.chamber ?? 'unknown';
 
-  const profile: RequestProfile = {
+  const profile: RequestProfile = Object.freeze({
     userId: input.userId,
     verifiedEmail: input.verifiedEmail ?? null,
     isSovereignOwner: isSovOwner,
@@ -270,7 +348,10 @@ export async function conductRequest(input: ConductorInput): Promise<ConductorRe
     }),
     traceId,
     resolvedAt: new Date().toISOString(),
-  };
+  } satisfies RequestProfile);
+
+  // Persist immutable profile snapshot (fire-and-forget — non-blocking).
+  void persistProfileSnapshot(input.userId, input.requestId, profile).catch(() => {});
 
   const messagesWithRouting = injectAtlasRoutingIntoMessages(input.messages, routing);
 
@@ -295,35 +376,96 @@ export async function conductRequest(input: ConductorInput): Promise<ConductorRe
     chamber,
   });
 
-  // ── Stage 4: Context assembly ─────────────────────────────────────────────
+  // Membrane key components (derived after profile is frozen at Stage 3).
+  const sessionId = input.requestId; // requestId is the SSE correlation ID = session turn key
+  const intentHash = shortHash(routing.mode + routing.posture.toString());
+  // policyProfileVersion: immutable after policyProfile is resolved above.
+  const policyProfileVersion = policyProfile.updatedAt;
+  let membranePath: 'hit' | 'miss' | 'skipped' = 'skipped';
+  let membraneInvalidationReason = 'memory_layer_disabled';
+
+  void advanceCheckpoint(input.userId, input.requestId, 3, {
+    summary: `chamber:${chamber} intentHash:${intentHash}`,
+    durationMs: Date.now() - s3,
+    completedAt: new Date().toISOString(),
+  }).catch(() => {});
+
+  // ── Stage 4: Context assembly (membrane-gated) ──────────────────────────────
   // ROUTING PRECEDES CONTEXT. This is the law.
   // contextCuratorService is the single governed context transform.
   // Both local and swarm execution paths consume curatedContextBlock.
+  const s4 = stageStart();
   let curatedContextBlock = '';
   if (degraded.memoryLayerEnabled && profile.sensitivityClass !== 'low') {
-    try {
-      const rawRows = await recallRawRows(input.userId, userPrompt, {
-        memoryK: profile.gravity >= 4 ? 10 : profile.gravity >= 2 ? 6 : 4,
-        chunkK: profile.gravity >= 3 ? 4 : 2,
-      });
+    // Membrane check: performed after profile is frozen.
+    // Hit → skip full Stage 4; miss → assemble then write membrane.
+    const membraneResult = await validateSessionMembrane({
+      userId: input.userId,
+      sessionId,
+      chamber,
+      intentHash,
+      currentSensitivityClass: profile.sensitivityClass,
+      currentPolicyProfileVersion: policyProfileVersion,
+      currentDegradedStateHash: currentDegradedHash,
+      forceRefresh: false,
+    });
 
-      const pkg = await curateContext({
-        userId: input.userId,
-        chamber: chamber !== 'unknown' ? chamber : undefined,
-        topic: userPrompt.slice(0, 300),
-        tokenBudget: profile.gravity <= 1 ? 200 : 500,
-        recalledMemories: rawRows,
-      });
+    if (membraneResult.hit && membraneResult.record) {
+      curatedContextBlock = membraneResult.record.curatedContextBlock;
+      membranePath = 'hit';
+      membraneInvalidationReason = membraneResult.invalidationReason;
+      onSseEvent('membrane', { hit: true, chamber, intentHash });
+    } else {
+      membranePath = 'miss';
+      membraneInvalidationReason = membraneResult.invalidationReason;
+      try {
+        const rawRows = await recallRawRows(input.userId, userPrompt, {
+          memoryK: profile.gravity >= 4 ? 10 : profile.gravity >= 2 ? 6 : 4,
+          chunkK: profile.gravity >= 3 ? 4 : 2,
+        });
 
-      curatedContextBlock = await formatCuratedContextWithEpistemic(input.userId, pkg);
-    } catch (err) {
-      // Non-fatal — execution proceeds without curated context
-      console.warn('[cognitiveOrchestrator] Stage 4 context assembly failed:', err);
+        const pkg = await curateContext({
+          userId: input.userId,
+          chamber: chamber !== 'unknown' ? chamber : undefined,
+          topic: userPrompt.slice(0, 300),
+          tokenBudget: profile.gravity <= 1 ? 200 : 500,
+          recalledMemories: rawRows,
+        });
+
+        curatedContextBlock = await formatCuratedContextWithEpistemic(input.userId, pkg);
+
+        // Write membrane after assembly — fire-and-forget, non-blocking.
+        void writeSessionMembrane({
+          userId: input.userId,
+          sessionId,
+          chamber,
+          intentHash,
+          doctrineVersionHash,
+          curatedContextBlock,
+          doctrineBundleIds: [...profile.requiredDoctrineBundle],
+          sensitivityClass: profile.sensitivityClass,
+          policyProfileVersion,
+          degradedStateHash: currentDegradedHash,
+        }).catch(() => {});
+      } catch (err) {
+        // Non-fatal — execution proceeds without curated context
+        console.warn('[cognitiveOrchestrator] Stage 4 context assembly failed:', err);
+      }
     }
   }
 
+  // Persist curated context hash after Stage 4 — fire-and-forget.
+  const ctxHash = contextFingerprint(curatedContextBlock);
+  void persistCuratedContextHash(input.userId, input.requestId, ctxHash).catch(() => {});
+  void advanceCheckpoint(input.userId, input.requestId, 4, {
+    summary: `membrane:${membranePath} ctxHash:${ctxHash}`,
+    durationMs: Date.now() - s4,
+    completedAt: new Date().toISOString(),
+  }).catch(() => {});
+
   // ── Stage 5: Execution planning + Stage 6: Dispatch ──────────────────────
   // Kept together because planning is synchronous with dispatch in current arch.
+  const s56 = stageStart();
 
   let dispatchResult: { fullText: string; surface: string; model: string };
 
@@ -438,6 +580,17 @@ export async function conductRequest(input: ConductorInput): Promise<ConductorRe
     });
   }
 
+  void advanceCheckpoint(input.userId, input.requestId, 5, {
+    summary: `plan:dispatch_complete`,
+    durationMs: Date.now() - s56,
+    completedAt: new Date().toISOString(),
+  }).catch(() => {});
+  void advanceCheckpoint(input.userId, input.requestId, 6, {
+    summary: `surface:${dispatchResult.surface} model:${dispatchResult.model}`,
+    durationMs: Date.now() - s56,
+    completedAt: new Date().toISOString(),
+  }).catch(() => {});
+
   // ── Stage 7: Post-response quality + Overseer annotation ─────────────────
   // Overseer is post-hoc, never blocks delivery. 5s race timeout.
   let overseerResult: OverseerResult | null = null;
@@ -456,8 +609,33 @@ export async function conductRequest(input: ConductorInput): Promise<ConductorRe
     console.error('[cognitiveOrchestrator] Stage 7 Overseer failed:', err);
   }
 
+  void advanceCheckpoint(input.userId, input.requestId, 7, {
+    summary: `overseer:${overseerResult ? 'applied' : 'skipped'}`,
+    durationMs: OVERSEER_TIMEOUT_MS,
+    completedAt: new Date().toISOString(),
+  }).catch(() => {});
+  // deleteCheckpoint marks request as cleanly completed (fire-and-forget).
+  void deleteCheckpoint(input.userId, input.requestId).catch(() => {});
+
   // ── Stage 8: Async aftermath — caller's responsibility ────────────────────
   // triggerEvolutionAfterOmniResponse is called by omniStream.ts after conductRequest returns.
+
+  // Emit orchestration trace SSE event — operator/telemetry layer only.
+  // Not user-facing; carries full request observability data.
+  const orchestrationTrace: ConductorTrace = {
+    traceId,
+    requestId: input.requestId,
+    redisAvailable,
+    membranePath,
+    membraneInvalidationReason,
+    doctrineVersionHash,
+    sensitivityClass: profile.sensitivityClass,
+    policyProfileVersion,
+    degradedStateHash: currentDegradedHash,
+    highestStageReached,
+    stageDurationsMs,
+  };
+  onSseEvent('trace', orchestrationTrace);
 
   return {
     traceId,
@@ -468,6 +646,7 @@ export async function conductRequest(input: ConductorInput): Promise<ConductorRe
     model: dispatchResult.model,
     overseerResult,
     partial: false,
+    orchestrationTrace,
   };
 }
 
