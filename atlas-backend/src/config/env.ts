@@ -151,6 +151,15 @@ const envSchema = z.object({
   RETENTION_ENFORCER_ENABLED: z.coerce.boolean().optional(),
   /** Retention enforcer tick interval (ms). Defaults to 1 hour. */
   RETENTION_ENFORCER_TICK_MS: z.coerce.number().int().positive().optional(),
+  // ── V1.0 Phase B — Session Membrane + Request Checkpoint (Upstash Redis) ──
+  /** Upstash Redis REST URL. When absent, membrane/checkpoint features no-op gracefully. */
+  UPSTASH_REDIS_URL: z.string().url().optional(),
+  /** Upstash Redis REST token. Required when UPSTASH_REDIS_URL is set. */
+  UPSTASH_REDIS_TOKEN: z.string().optional(),
+  /** Session membrane TTL in seconds (default: 30 min). */
+  MEMBRANE_TTL_SECONDS: z.coerce.number().int().positive().optional(),
+  /** Request checkpoint TTL in seconds (default: 10 min). */
+  CHECKPOINT_TTL_SECONDS: z.coerce.number().int().positive().optional(),
 });
 
 const raw = envSchema.parse({
@@ -244,6 +253,10 @@ const raw = envSchema.parse({
   SOVEREIGNTY_BACKGROUND_SWEEPER_USER_IDS: process.env.SOVEREIGNTY_BACKGROUND_SWEEPER_USER_IDS,
   RETENTION_ENFORCER_ENABLED: process.env.RETENTION_ENFORCER_ENABLED,
   RETENTION_ENFORCER_TICK_MS: process.env.RETENTION_ENFORCER_TICK_MS,
+  UPSTASH_REDIS_URL: process.env.UPSTASH_REDIS_URL,
+  UPSTASH_REDIS_TOKEN: process.env.UPSTASH_REDIS_TOKEN,
+  MEMBRANE_TTL_SECONDS: process.env.MEMBRANE_TTL_SECONDS,
+  CHECKPOINT_TTL_SECONDS: process.env.CHECKPOINT_TTL_SECONDS,
 });
 
 // ── GPT-5.4 family model ID constants ──────────────────────────────────────
@@ -407,6 +420,11 @@ export const env = {
     .filter((s) => s.length > 0),
   retentionEnforcerEnabled: raw.RETENTION_ENFORCER_ENABLED === true,
   retentionEnforcerTickMs: raw.RETENTION_ENFORCER_TICK_MS ?? 60 * 60_000,
+  // ── V1.0 Phase B — Redis membrane + checkpoint ─────────────────────────────────────────────
+  upstashRedisUrl:    raw.UPSTASH_REDIS_URL?.trim() || undefined,
+  upstashRedisToken:  raw.UPSTASH_REDIS_TOKEN?.trim() || undefined,
+  membraneTtlSeconds:    raw.MEMBRANE_TTL_SECONDS ?? 30 * 60,
+  checkpointTtlSeconds:  raw.CHECKPOINT_TTL_SECONDS ?? 10 * 60,
 } as const;
 
 export type Env = typeof env;
