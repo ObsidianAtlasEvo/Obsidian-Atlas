@@ -76,6 +76,16 @@ import {
   persistCuratedContextHash,
   deleteCheckpoint,
 } from './requestCheckpointService.js';
+import {
+  resolveCapability,
+  describeCapabilityResolution,
+  type CapabilityEnvSnapshot,
+} from './capabilityRouter.js';
+import {
+  sliceContextForLane,
+  describeSlice,
+} from './contextSlicePlanner.js';
+import { cartographAsymmetries } from './asymmetryCartographerService.js';
 import { enqueueGpuTask } from '../inference/queueManager.js';
 import { getRegistryEntry, mapModelRegistryIdToSwarm } from '../intelligence/llmRegistry.js';
 import type { MirrorforgeState } from '../intelligence/telemetryTranslator.js';
@@ -217,6 +227,19 @@ export interface ConductorTrace {
   highestStageReached: number;
   /** Per-stage wall-clock durations in milliseconds. */
   stageDurationsMs: Partial<Record<string, number>>;
+  /** Phase C: capability resolution result (synthesis class after downgrade check). */
+  capabilityResolution?: {
+    requested: string;
+    resolved: string;
+    downgraded: boolean;
+    reason: string;
+  };
+  /** Phase C: context slice result (token budget applied at Stage 4.5). */
+  contextSlice?: {
+    sliced: boolean;
+    budgetTokens: number;
+    estimatedTokens: number;
+  };
 }
 
 export interface ConductorResult {
@@ -327,6 +350,30 @@ export async function conductRequest(input: ConductorInput): Promise<ConductorRe
   const s3 = stageStart();
   const chamber: AtlasChamber = input.chamber ?? 'unknown';
 
+  // Phase C — capabilityRouter: validate that the desired synthesis class is
+  // executable given current credentials and degraded state before profile freeze.
+  const desiredSynthesisClass = resolveSynthesisClass({
+    isSovereignOwner: isSovOwner,
+    localAvailable: lane === 'sovereign_local',
+    maximumClarity: input.maximumClarity ?? false,
+    consensusMode: input.consensusMode ?? false,
+    gravity: routing.posture,
+  });
+  const capabilityEnv: CapabilityEnvSnapshot = {
+    groqApiKey: env.groqApiKey,
+    cloudOpenAiApiKey: env.cloudOpenAiApiKey,
+    geminiApiKey: env.geminiApiKey,
+    tavilyApiKey: env.tavilyApiKey,
+    disableLocalOllama: env.disableLocalOllama,
+  };
+  const capabilityResolution = resolveCapability(desiredSynthesisClass, degraded, capabilityEnv);
+  if (capabilityResolution.downgraded) {
+    console.warn(
+      '[cognitiveOrchestrator] Stage 3 capability downgrade:',
+      describeCapabilityResolution(capabilityResolution),
+    );
+  }
+
   const profile: RequestProfile = Object.freeze({
     userId: input.userId,
     verifiedEmail: input.verifiedEmail ?? null,
@@ -339,13 +386,7 @@ export async function conductRequest(input: ConductorInput): Promise<ConductorRe
     swarmEligible: lane === 'public_swarm',
     membraneEligible: degraded.memoryLayerEnabled,
     sensitivityClass: resolveSensitivityClass(isSovOwner, routing.mode, routing.posture),
-    preferredSynthesisClass: resolveSynthesisClass({
-      isSovereignOwner: isSovOwner,
-      localAvailable: lane === 'sovereign_local',
-      maximumClarity: input.maximumClarity ?? false,
-      consensusMode: input.consensusMode ?? false,
-      gravity: routing.posture,
-    }),
+    preferredSynthesisClass: capabilityResolution.resolvedClass,
     traceId,
     resolvedAt: new Date().toISOString(),
   } satisfies RequestProfile);
@@ -464,7 +505,19 @@ export async function conductRequest(input: ConductorInput): Promise<ConductorRe
   }).catch(() => {});
 
   // ── Stage 5: Execution planning + Stage 6: Dispatch ──────────────────────
-  // Kept together because planning is synchronous with dispatch in current arch.
+  // Phase C — contextSlicePlanner: trim context payload to lane-appropriate token budget.
+  // Reduces prompt token spend on cost-optimised lanes (fast_cloud, consensus, deep_research).
+  // Synchronous, <1 ms, non-blocking. Returns original block unchanged if already within budget.
+  const sliceResult = sliceContextForLane(curatedContextBlock, profile);
+  const dispatchContextBlock = sliceResult.slicedBlock;
+  onSseEvent('context_slice', {
+    sliced: sliceResult.sliced,
+    budgetTokens: sliceResult.budgetTokens,
+    estimatedTokens: sliceResult.estimatedTokens,
+    description: describeSlice(sliceResult),
+  });
+
+    // Kept together because planning is synchronous with dispatch in current arch.
   const s56 = stageStart();
 
   let dispatchResult: { fullText: string; surface: string; model: string };
@@ -497,7 +550,7 @@ export async function conductRequest(input: ConductorInput): Promise<ConductorRe
         onDelta: streamingOnDelta,
         routing,
         signal: input.signal,
-        curatedContextBlock,
+        curatedContextBlock: dispatchContextBlock,
         timeoutMs: input.maximumClarity
           ? Math.max(env.omniLocalTimeoutMs, 300_000)
           : env.omniLocalTimeoutMs,
@@ -513,7 +566,7 @@ export async function conductRequest(input: ConductorInput): Promise<ConductorRe
       });
       dispatchResult = await _swarmDispatch({
         input, messagesWithRouting, conversationSnippet, routing,
-        profile, policyProfile, curatedContextBlock,
+        profile, policyProfile, curatedContextBlock: dispatchContextBlock,
         rationale: 'sovereign_local_fallback',
         onSseEvent, onDelta: streamingOnDelta,
       });
@@ -559,7 +612,7 @@ export async function conductRequest(input: ConductorInput): Promise<ConductorRe
     dispatchResult = await executeGroqGeminiDualConsensus({
       userId: input.userId,
       clientMessages: messagesWithRouting,
-      evidenceBlock: curatedContextBlock,
+      evidenceBlock: dispatchContextBlock,
       onDelta: streamingOnDelta,
       onSwarmTicker: (evt) => onSseEvent('swarm_ticker', evt),
       timeoutMs: 240_000,
@@ -574,7 +627,7 @@ export async function conductRequest(input: ConductorInput): Promise<ConductorRe
     });
     dispatchResult = await _swarmDispatch({
       input, messagesWithRouting, conversationSnippet, routing,
-      profile, policyProfile, curatedContextBlock,
+      profile, policyProfile, curatedContextBlock: dispatchContextBlock,
       rationale: 'standard_swarm_route',
       onSseEvent, onDelta: streamingOnDelta,
     });
@@ -620,7 +673,17 @@ export async function conductRequest(input: ConductorInput): Promise<ConductorRe
   // ── Stage 8: Async aftermath — caller's responsibility ────────────────────
   // triggerEvolutionAfterOmniResponse is called by omniStream.ts after conductRequest returns.
 
-  // Emit orchestration trace SSE event — operator/telemetry layer only.
+  // Phase C — asymmetryCartographerService: detect leverage asymmetries in the
+  // response and persist to asymmetry_ledgers. Always fire-and-forget, never blocks.
+  void cartographAsymmetries({
+    userId: input.userId,
+    userPrompt,
+    responseText: dispatchResult.fullText,
+    chamber,
+    intent: routing.mode,
+  }).catch(() => {});
+
+    // Emit orchestration trace SSE event — operator/telemetry layer only.
   // Not user-facing; carries full request observability data.
   const orchestrationTrace: ConductorTrace = {
     traceId,
@@ -634,6 +697,17 @@ export async function conductRequest(input: ConductorInput): Promise<ConductorRe
     degradedStateHash: currentDegradedHash,
     highestStageReached,
     stageDurationsMs,
+    capabilityResolution: {
+      requested: desiredSynthesisClass,
+      resolved: capabilityResolution.resolvedClass,
+      downgraded: capabilityResolution.downgraded,
+      reason: capabilityResolution.reason,
+    },
+    contextSlice: {
+      sliced: sliceResult.sliced,
+      budgetTokens: sliceResult.budgetTokens,
+      estimatedTokens: sliceResult.estimatedTokens,
+    },
   };
   onSseEvent('trace', orchestrationTrace);
 
