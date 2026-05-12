@@ -40,15 +40,29 @@ export interface ConstitutionalMetadata {
   violations: ConstitutionalViolation[];
 }
 
+export interface WorkstreamSuggestedLog {
+  type: 'decision';
+  text: string;
+  workstream_id: string | null;
+}
+
+export interface WorkstreamMetadata {
+  active: boolean;
+  workstream_ids: string[];
+  suggested_log?: WorkstreamSuggestedLog;
+}
+
 export interface ParsedMessageMetadata {
-  /** Cleaned response text with both metadata blocks removed. */
+  /** Cleaned response text with all metadata blocks removed. */
   cleanText: string;
   epistemic: EpistemicMetadata | null;
   constitutional: ConstitutionalMetadata | null;
+  workstream: WorkstreamMetadata | null;
 }
 
 const EPISTEMIC_RE = /<!--ATLAS_EPISTEMIC_CLAIMS:([\s\S]*?)-->/;
 const CONSTITUTIONAL_RE = /<!--ATLAS_CONSTITUTIONAL:([\s\S]*?)-->/;
+const WORKSTREAM_RE = /<!--ATLAS_WORKSTREAM:([\s\S]*?)-->/;
 
 function safeParse<T>(raw: string): T | null {
   try {
@@ -61,6 +75,7 @@ function safeParse<T>(raw: string): T | null {
 export function parseMessageMetadata(text: string): ParsedMessageMetadata {
   let epistemic: EpistemicMetadata | null = null;
   let constitutional: ConstitutionalMetadata | null = null;
+  let workstream: WorkstreamMetadata | null = null;
 
   const epMatch = text.match(EPISTEMIC_RE);
   if (epMatch && epMatch[1]) {
@@ -72,12 +87,18 @@ export function parseMessageMetadata(text: string): ParsedMessageMetadata {
     constitutional = safeParse<ConstitutionalMetadata>(cMatch[1].trim());
   }
 
+  const wsMatch = text.match(WORKSTREAM_RE);
+  if (wsMatch && wsMatch[1]) {
+    workstream = safeParse<WorkstreamMetadata>(wsMatch[1].trim());
+  }
+
   const cleanText = text
     .replace(EPISTEMIC_RE, '')
     .replace(CONSTITUTIONAL_RE, '')
+    .replace(WORKSTREAM_RE, '')
     .trimEnd();
 
-  return { cleanText, epistemic, constitutional };
+  return { cleanText, epistemic, constitutional, workstream };
 }
 
 export const CLAIM_COLORS: Record<ClaimClassification, { fg: string; bg: string; border: string; label: string }> = {

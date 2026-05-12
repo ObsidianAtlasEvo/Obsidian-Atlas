@@ -89,6 +89,13 @@ import {
 } from './contextSlicePlanner.js';
 import { cartographAsymmetries } from './asymmetryCartographerService.js';
 import {
+  buildWorkstreamContext,
+  formatWorkstreamContextBlock,
+  isWorkstreamRelevant,
+  buildWorkstreamMetadataBlock,
+  type WorkstreamContextBlock,
+} from './workstreamContextInjector.js';
+import {
   resolveLivePolicy,
   applySynthesisCap,
   describePolicy,
@@ -596,11 +603,26 @@ export async function conductRequest(input: ConductorInput): Promise<ConductorRe
     }
   }
 
+  // Workstream ambient injection — only for strategic/planning conversations.
+  // Specialist service; never throws; null when user has no active workstreams.
+  let workstreamContext: WorkstreamContextBlock | null = null;
+  if (isWorkstreamRelevant(userPrompt, routing)) {
+    workstreamContext = await buildWorkstreamContext(
+      input.supabaseUserId ?? input.userId,
+    );
+    if (workstreamContext?.has_active_workstreams) {
+      const block = formatWorkstreamContextBlock(workstreamContext);
+      curatedContextBlock = curatedContextBlock
+        ? `${curatedContextBlock}\n\n${block}`
+        : block;
+    }
+  }
+
   // Persist curated context hash after Stage 4 — fire-and-forget.
   const ctxHash = contextFingerprint(curatedContextBlock);
   void persistCuratedContextHash(input.userId, input.requestId, ctxHash).catch(() => {});
   void advanceCheckpoint(input.userId, input.requestId, 4, {
-    summary: `membrane:${membranePath} ctxHash:${ctxHash}`,
+    summary: `membrane:${membranePath} ctxHash:${ctxHash} ws:${workstreamContext?.workstreams.length ?? 0}`,
     durationMs: Date.now() - s4,
     completedAt: new Date().toISOString(),
   }).catch(() => {});
@@ -846,9 +868,17 @@ export async function conductRequest(input: ConductorInput): Promise<ConductorRe
         })}-->`,
       );
     }
+    if (workstreamContext?.has_active_workstreams) {
+      const wsMeta = buildWorkstreamMetadataBlock(workstreamContext, dispatchResult.fullText);
+      metadataBlocks.push(`<!--ATLAS_WORKSTREAM:${JSON.stringify(wsMeta)}-->`);
+    }
     if (metadataBlocks.length > 0) {
       dispatchResult.fullText = `${dispatchResult.fullText}\n\n${metadataBlocks.join('\n')}`;
     }
+  } else if (workstreamContext?.has_active_workstreams) {
+    // No supabaseUserId — still emit workstream metadata so the frontend can react.
+    const wsMeta = buildWorkstreamMetadataBlock(workstreamContext, dispatchResult.fullText);
+    dispatchResult.fullText = `${dispatchResult.fullText}\n\n<!--ATLAS_WORKSTREAM:${JSON.stringify(wsMeta)}-->`;
   }
 
     // Emit orchestration trace SSE event — operator/telemetry layer only.
