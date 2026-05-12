@@ -192,9 +192,9 @@ function MessageBubble({ msg, isLast }: { msg: ChatMessage; isLast: boolean }) {
     );
   }
 
-  const { cleanText, epistemic, constitutional } = msg.content
+  const { cleanText, epistemic, constitutional, workstream } = msg.content
     ? parseMessageMetadata(msg.content)
-    : { cleanText: '', epistemic: null, constitutional: null };
+    : { cleanText: '', epistemic: null, constitutional: null, workstream: null };
 
   return (
     <div style={{ marginBottom: 20, animation: 'atlas-fade-in 200ms ease both' }}>
@@ -224,6 +224,68 @@ function MessageBubble({ msg, isLast }: { msg: ChatMessage; isLast: boolean }) {
       </div>
       {!msg.isStreaming && !msg.error && (
         <EpistemicMap epistemic={epistemic} constitutional={constitutional} />
+      )}
+      {!msg.isStreaming && !msg.error && workstream?.active && (
+        <WorkstreamIndicator workstream={workstream} />
+      )}
+    </div>
+  );
+}
+
+function WorkstreamIndicator({ workstream }: { workstream: NonNullable<ReturnType<typeof parseMessageMetadata>['workstream']> }) {
+  const [expanded, setExpanded] = useState(false);
+  const suggested = workstream.suggested_log;
+  return (
+    <div style={{ paddingLeft: 28, marginTop: 8 }}>
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 6,
+          fontSize: '0.65rem',
+          letterSpacing: '0.08em',
+          textTransform: 'uppercase',
+          color: 'rgba(201,168,76,0.85)',
+          background: 'rgba(201,168,76,0.06)',
+          border: '1px solid rgba(201,168,76,0.25)',
+          borderRadius: 999,
+          padding: '3px 10px',
+          cursor: 'pointer',
+        }}
+        title="Workstream context was injected into this response"
+      >
+        <span aria-hidden>📋</span>
+        Workstream context active
+      </button>
+      {expanded && (
+        <div
+          style={{
+            marginTop: 6,
+            padding: '8px 12px',
+            background: 'rgba(201,168,76,0.04)',
+            border: '1px solid rgba(201,168,76,0.18)',
+            borderRadius: 6,
+            fontSize: '0.72rem',
+            color: 'rgba(226,232,240,0.7)',
+            lineHeight: 1.5,
+          }}
+        >
+          <div>
+            {workstream.workstream_ids.length} workstream{workstream.workstream_ids.length === 1 ? '' : 's'} informed this response.
+          </div>
+          {suggested && (
+            <div style={{ marginTop: 6 }}>
+              <div style={{ color: 'rgba(201,168,76,0.85)', fontSize: '0.68rem', marginBottom: 4 }}>
+                Suggested decision to log:
+              </div>
+              <div style={{ fontStyle: 'italic', color: 'rgba(226,232,240,0.8)' }}>
+                "{suggested.text}"
+              </div>
+            </div>
+          )}
+        </div>
       )}
     </div>
   );
