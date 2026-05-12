@@ -62,7 +62,6 @@ import {
   getTimelineEvents,
   groupTimelineEvents,
 } from '../services/intelligence/timelineSurfaceService.js';
-import { getTransparencyLog } from '../services/intelligence/behaviorTransparencyService.js';
 import {
   buildCognitionMap,
   getLatestMap,
@@ -208,13 +207,6 @@ export function registerSovereigntyStackRoutes(app: FastifyInstance): void {
       return reply.send({ events, grouped: groupTimelineEvents(events) });
     }
     return reply.send({ events: [], grouped: {} });
-  });
-
-  app.get('/v1/sovereignty/transparency-log', async (request, reply) => {
-    const parsed = userIdQuery.safeParse(request.query);
-    if (!parsed.success) return reply.code(400).send({ error: 'validation_error' });
-    const log = await safe(() => getTransparencyLog(parsed.data.userId));
-    return reply.send({ log });
   });
 
   const cognitionMapQuery = z.object({
