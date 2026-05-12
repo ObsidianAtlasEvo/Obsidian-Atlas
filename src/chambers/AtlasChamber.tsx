@@ -5,6 +5,8 @@ import { buildAtlasSystemPrompt } from '../lib/atlasPrompt';
 import { generateId, nowISO } from '../lib/persistence';
 import { useChatRequestState, type ChatRequestStatus } from '../hooks/useChatRequestState';
 import { ModelSelector } from '../components/ModelSelector';
+import { EpistemicMap } from '../components/EpistemicMap';
+import { parseMessageMetadata } from '../lib/epistemicMetadata';
 import type { UserQuestion, AnswerDepthTier, InquiryStyle } from '@/types';
 
 // ── Types ─────────────────────────────────────────────────────────────────
@@ -190,6 +192,10 @@ function MessageBubble({ msg, isLast }: { msg: ChatMessage; isLast: boolean }) {
     );
   }
 
+  const { cleanText, epistemic, constitutional } = msg.content
+    ? parseMessageMetadata(msg.content)
+    : { cleanText: '', epistemic: null, constitutional: null };
+
   return (
     <div style={{ marginBottom: 20, animation: 'atlas-fade-in 200ms ease both' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
@@ -210,12 +216,15 @@ function MessageBubble({ msg, isLast }: { msg: ChatMessage; isLast: boolean }) {
           </div>
         ) : (
           <div className="atlas-prose">
-            {msg.content ? renderContent(msg.content) : (
+            {cleanText ? renderContent(cleanText) : (
               <span style={{ color: 'rgba(226,232,240,0.25)', fontStyle: 'italic' }}>Thinking…</span>
             )}
           </div>
         )}
       </div>
+      {!msg.isStreaming && !msg.error && (
+        <EpistemicMap epistemic={epistemic} constitutional={constitutional} />
+      )}
     </div>
   );
 }
