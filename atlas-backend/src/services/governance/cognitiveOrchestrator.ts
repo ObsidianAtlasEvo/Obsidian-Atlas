@@ -62,6 +62,8 @@ import {
 } from '../intelligence/contextCuratorService.js';
 import { recallRawRows } from '../intelligence/memoryService.js';
 import { applyOverseerLens, type OverseerResult } from './overseerService.js';
+import { tagResponse, type EpistemicTaggingResult } from './epistemicTaggerService.js';
+import { checkResponse as runConstitutionalCheck, type ConstitutionalCheckResult } from './constitutionalComplianceService.js';
 import {
   validateSessionMembrane,
   writeSessionMembrane,
@@ -287,6 +289,10 @@ export interface ConductorResult {
   partial: boolean;
   /** Orchestration trace for operator observability. Always present. */
   orchestrationTrace: ConductorTrace;
+  /** Epistemic claim tagging (post-synthesis). Null when skipped. */
+  epistemicResult: EpistemicTaggingResult | null;
+  /** Per-turn constitutional compliance result. Null only on hard failure. */
+  constitutionalResult: ConstitutionalCheckResult | null;
 }
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
@@ -386,6 +392,8 @@ export async function conductRequest(input: ConductorInput): Promise<ConductorRe
         highestStageReached: 0,
         stageDurationsMs: {},
       },
+      epistemicResult: null,
+      constitutionalResult: null,
     };
   }
 
@@ -777,6 +785,72 @@ export async function conductRequest(input: ConductorInput): Promise<ConductorRe
     intent: routing.mode,
   }).catch(() => {});
 
+  // ── Post-synthesis governance pass ──────────────────────────────────────
+  //   - epistemicTaggerService (5s timeout, fails open)
+  //   - constitutionalComplianceService (4s timeout, fails open)
+  // Run in PARALLEL via Promise.allSettled — neither blocks the other, and
+  // any failure degrades to a null result rather than throwing.
+  // Both keyed on supabaseUserId (UUID, FK to auth.users). If we don't have
+  // one (anonymous / unconfigured Supabase), skip both passes entirely.
+  let epistemicResult: EpistemicTaggingResult | null = null;
+  let constitutionalResult: ConstitutionalCheckResult | null = null;
+
+  if (input.supabaseUserId) {
+    const contextSummary = `chamber=${chamber} intent=${routing.mode} prompt="${userPrompt.slice(0, 200)}"`;
+
+    const [epistemicSettled, constitutionalSettled] = await Promise.allSettled([
+      tagResponse({
+        responseText: dispatchResult.fullText,
+        contextSummary,
+        userId: input.supabaseUserId,
+        sessionId: input.requestId,
+        responseId: traceId,
+      }),
+      runConstitutionalCheck({
+        responseText: dispatchResult.fullText,
+        userId: input.supabaseUserId,
+        sessionId: input.requestId,
+        responseId: traceId,
+      }),
+    ]);
+
+    if (epistemicSettled.status === 'fulfilled') {
+      epistemicResult = epistemicSettled.value;
+    } else {
+      console.warn('[cognitiveOrchestrator] Epistemic tagger rejected:', epistemicSettled.reason);
+    }
+
+    if (constitutionalSettled.status === 'fulfilled') {
+      constitutionalResult = constitutionalSettled.value;
+    } else {
+      console.warn('[cognitiveOrchestrator] Constitutional check rejected:', constitutionalSettled.reason);
+    }
+
+    // Append the two metadata blocks to the response so the frontend can
+    // parse them. HTML comment delimiters render as invisible in markdown.
+    const metadataBlocks: string[] = [];
+    if (epistemicResult && epistemicResult.claims.length > 0) {
+      metadataBlocks.push(
+        `<!--ATLAS_EPISTEMIC_CLAIMS:${JSON.stringify({
+          claims: epistemicResult.claims,
+          overall_uncertainty: epistemicResult.overall_uncertainty,
+        })}-->`,
+      );
+    }
+    if (constitutionalResult) {
+      metadataBlocks.push(
+        `<!--ATLAS_CONSTITUTIONAL:${JSON.stringify({
+          passed: constitutionalResult.passed,
+          compliance_score: constitutionalResult.compliance_score,
+          violations: constitutionalResult.violations,
+        })}-->`,
+      );
+    }
+    if (metadataBlocks.length > 0) {
+      dispatchResult.fullText = `${dispatchResult.fullText}\n\n${metadataBlocks.join('\n')}`;
+    }
+  }
+
     // Emit orchestration trace SSE event — operator/telemetry layer only.
   // Not user-facing; carries full request observability data.
   const orchestrationTrace: ConductorTrace = {
@@ -833,6 +907,8 @@ export async function conductRequest(input: ConductorInput): Promise<ConductorRe
     overseerResult,
     partial: false,
     orchestrationTrace,
+    epistemicResult,
+    constitutionalResult,
   };
 }
 
