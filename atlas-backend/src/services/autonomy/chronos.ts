@@ -12,7 +12,7 @@ import { getPolicyProfile } from '../evolution/policyStore.js';
 import { listRecentEvolutionGaps } from '../evolution/gapStore.js';
 import { getDb } from '../../db/sqlite.js';
 import type { ModelProvider } from '../model/modelProvider.js';
-import { createGroqModelProvider } from '../model/groqModelProvider.js';
+import { createBackgroundModelProvider } from '../model/backgroundModelProvider.js';
 import { appendAutonomyLog } from './autonomyLog.js';
 
 // ---------------------------------------------------------------------------
@@ -333,7 +333,8 @@ async function dispatchChronosAction(userId: string, decision: string): Promise<
     switch (decision) {
       case 'refine_policy': {
         const { scheduleEvolutionRun } = await import('../evolution/evolutionPipeline.js');
-        const { createGroqModelProvider: createModel } = await import('../model/groqModelProvider.js');
+        // Background work — route to Gemini/OpenAI; Groq reserved for user-facing chat.
+        const { createBackgroundModelProvider: createModel } = await import('../model/backgroundModelProvider.js');
         scheduleEvolutionRun({
           traceId: `chronos-${Date.now()}`,
           userId,
@@ -348,7 +349,7 @@ async function dispatchChronosAction(userId: string, decision: string): Promise<
       }
       case 'synthesize_graph': {
         const { scheduleEvolutionRun: scheduleRun } = await import('../evolution/evolutionPipeline.js');
-        const { createGroqModelProvider: createModel2 } = await import('../model/groqModelProvider.js');
+        const { createBackgroundModelProvider: createModel2 } = await import('../model/backgroundModelProvider.js');
         const graphCtx = buildGovernanceContextForChronos(userId);
         scheduleRun({
           traceId: `chronos-graph-${Date.now()}`,
@@ -367,7 +368,7 @@ async function dispatchChronosAction(userId: string, decision: string): Promise<
       }
       case 'deep_research': {
         const { scheduleEvolutionRun: scheduleDeep } = await import('../evolution/evolutionPipeline.js');
-        const { createGroqModelProvider: createModel3 } = await import('../model/groqModelProvider.js');
+        const { createBackgroundModelProvider: createModel3 } = await import('../model/backgroundModelProvider.js');
         const researchCtx = buildGovernanceContextForChronos(userId);
         // Fire Tavily research if API key is configured
         const { env: envCfg } = await import('../../config/env.js');
@@ -435,8 +436,15 @@ async function chronosTick(model: ModelProvider): Promise<void> {
   await Promise.allSettled(batch.map((uid) => processUserTick(model, uid)));
 }
 
-/** Start interval worker; no overlap thanks to chronosInFlight + idle gate. */
-export function startChronosScheduler(model: ModelProvider = createGroqModelProvider()): void {
+/**
+ * Start interval worker; no overlap thanks to chronosInFlight + idle gate.
+ *
+ * Default provider is the background provider (Gemini → OpenAI). Groq is
+ * explicitly excluded here because its free-tier daily token budget must
+ * remain available for user-facing chat. Callers may still pass an explicit
+ * `model` to override for testing.
+ */
+export function startChronosScheduler(model: ModelProvider = createBackgroundModelProvider()): void {
   if (schedulerHandle) return;
   schedulerHandle = setInterval(() => {
     void chronosTick(model);

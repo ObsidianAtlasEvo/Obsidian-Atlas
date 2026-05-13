@@ -332,6 +332,10 @@ OPERATIONAL LAW:
 You will receive ROUTING_PAYLOAD_JSON with ROUTING_METADATA, UserTelemetry, MirrorforgeSignal, and GROQ_ROUTING_DIRECTIVES. Obey it.`;
 
 /** Sync version used only to check whether an overseer is configured (no key needed). */
+// Chief-of-Staff routing uses Gemini/OpenAI — Groq is intentionally excluded
+// here so its 100k TPD free-tier budget remains available for user-facing
+// generation. Gemini Flash is preferred (generous free tier, low latency on
+// short structured-JSON outputs); OpenAI nano is the fallback.
 function getOverseerConfigShape(): { base: string; model: string; provider: ProviderName } | null {
   const openaiKey = env.openaiApiKey?.trim();
   if (openaiKey) {
@@ -339,15 +343,7 @@ function getOverseerConfigShape(): { base: string; model: string; provider: Prov
     const model = env.openaiRouterModel?.trim() || 'gpt-5.4-nano';
     return { base, model, provider: 'openai' };
   }
-  const groqKey = env.groqApiKey?.trim() || env.cloudOpenAiApiKey?.trim();
-  if (!groqKey) return null;
-  const base = (
-    env.groqBaseUrl?.trim() ||
-    env.cloudOpenAiBaseUrl?.trim() ||
-    'https://api.groq.com/openai/v1'
-  ).replace(/\/$/, '');
-  const model = env.groqRouterModel?.trim() || env.cloudChatModel?.trim() || 'llama-3.3-70b-versatile';
-  return { base, model, provider: 'groq' };
+  return null;
 }
 
 /**
@@ -479,11 +475,15 @@ export async function planSwarmExecution(input: PlanSwarmExecutionInput): Promis
   /** Parse an ExecutionPlan from raw LLM text (strips fences, validates). */
   const tryParse = (raw: string): ExecutionPlan | null => parseExecutionPlan(raw);
 
-  // ── Core-tier path: Gemini primary → gpt-5.4-nano fallback ───────────────
-  if (input.userTier === 'core' && env.geminiApiKey?.trim()) {
+  // ── Gemini-first path for ALL tiers (Groq reserved for user generation) ──
+  // Chief-of-Staff routing is a short structured-JSON call — Gemini Flash is
+  // ideal here. We keep gpt-5.4-nano as the fallback. Groq is never used.
+  if (env.geminiApiKey?.trim()) {
     let content: string | null = null;
     try {
-      console.warn('[overseer] Core-tier routing via gemini-3.1-flash-lite-preview (PUBLIC PREVIEW)');
+      console.warn(
+        `[overseer] routing via gemini (${env.geminiOverseerModelFree}) — Groq reserved for user-facing generation`,
+      );
       const geminiResult = await completeGeminiOverseerFree({
         systemPrompt: CHIEF_OF_STAFF_SYSTEM,
         userContent,
