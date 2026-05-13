@@ -1,12 +1,65 @@
 import { randomUUID } from 'node:crypto';
 import { getDb } from '../../db/sqlite.js';
+import { supabaseRest } from '../../db/supabase.js';
 import type { UnfinishedKind, UnfinishedStatus } from '../../types/longitudinal.js';
 import { unfinishedKindSchema, unfinishedStatusSchema } from '../../types/longitudinal.js';
+import { dualWrite } from '../../utils/dualWriteWrapper.js';
+import { shadowCompare } from '../../utils/shadowReadParity.js';
+import {
+  shouldReadSupabase,
+  shouldWriteSupabase,
+  storeFlags,
+} from '../../utils/storeFlags.js';
+import { deterministicUuid } from '../../utils/uuidMapping.js';
 import { computePatternFingerprint } from './evolutionTimelineService.js';
 import { recordGovernanceAudit } from './governanceAudit.js';
+import {
+  mapStatusToPostgres,
+  postgresRowToSqlite,
+  sqliteRowToPostgres,
+  type PostgresUnfinishedRow,
+} from './unfinishedBusinessMapping.js';
 
 function nowIso(): string {
   return new Date().toISOString();
+}
+
+const PG_TABLE = 'unfinished_business';
+const SESSION_START_LATENCY_BUDGET_MS = 250;
+
+async function pgInsertRow(row: PostgresUnfinishedRow): Promise<void> {
+  const res = await supabaseRest('POST', PG_TABLE, { ...row });
+  if (!res.ok) throw new Error(`pg insert failed status=${res.status}`);
+}
+
+async function pgPatchRow(id: string, patch: Record<string, unknown>): Promise<void> {
+  const res = await supabaseRest(
+    'PATCH',
+    `${PG_TABLE}?id=eq.${encodeURIComponent(id)}`,
+    patch,
+  );
+  if (!res.ok) throw new Error(`pg patch failed status=${res.status}`);
+}
+
+async function pgFetchOpenRanked(userId: string, limit: number): Promise<UnfinishedRow[]> {
+  const path =
+    `${PG_TABLE}?select=*` +
+    `&user_id=eq.${encodeURIComponent(userId)}` +
+    `&status=eq.open` +
+    `&order=composite_score.desc,urgency_score.desc,updated_at.desc` +
+    `&limit=${limit}`;
+  const res = await supabaseRest<PostgresUnfinishedRow[]>('GET', path);
+  if (!res.ok || !res.data) throw new Error(`pg list failed status=${res.status}`);
+  return res.data.map((r) => postgresRowToSqlite(r));
+}
+
+async function timedPgFetch(
+  userId: string,
+  limit: number,
+): Promise<{ rows: UnfinishedRow[]; ms: number }> {
+  const t0 = Date.now();
+  const rows = await pgFetchOpenRanked(userId, limit);
+  return { rows, ms: Date.now() - t0 };
 }
 
 export function computeUnfinishedCompositeScore(input: {
@@ -110,7 +163,17 @@ export function createUnfinishedItem(input: {
     payload: { kind: input.kind, composite },
   });
 
-  return db.prepare(`SELECT * FROM unfinished_business_items WHERE id = ?`).get(id) as UnfinishedRow;
+  const row = db.prepare(`SELECT * FROM unfinished_business_items WHERE id = ?`).get(id) as UnfinishedRow;
+
+  const mode = storeFlags.unfinishedBusiness();
+  if (shouldWriteSupabase(mode)) {
+    const pgRow = sqliteRowToPostgres(row);
+    void dualWrite(async () => undefined, () => pgInsertRow(pgRow), {
+      table: PG_TABLE,
+      mode,
+    });
+  }
+  return row;
 }
 
 export function bumpRecurrence(userId: string, itemId: string, delta = 0.15): void {
@@ -130,6 +193,16 @@ export function bumpRecurrence(userId: string, itemId: string, delta = 0.15): vo
   db.prepare(
     `UPDATE unfinished_business_items SET recurrence_score = ?, composite_score = ?, updated_at = ? WHERE id = ?`
   ).run(rec, composite, ts, itemId);
+
+  const mode = storeFlags.unfinishedBusiness();
+  if (shouldWriteSupabase(mode)) {
+    const pgId = deterministicUuid('unfinished_business_items', itemId);
+    void dualWrite(
+      async () => undefined,
+      () => pgPatchRow(pgId, { recurrence_score: rec, composite_score: composite, updated_at: ts }),
+      { table: PG_TABLE, mode },
+    );
+  }
 }
 
 export function recordUnfinishedSurfaced(userId: string, itemId: string): void {
@@ -141,9 +214,21 @@ export function recordUnfinishedSurfaced(userId: string, itemId: string): void {
     )
     .run(ts, ts, itemId, userId).changes;
   if (!n) throw new Error('unfinished_not_found');
+
+  const mode = storeFlags.unfinishedBusiness();
+  if (shouldWriteSupabase(mode)) {
+    const pgId = deterministicUuid('unfinished_business_items', itemId);
+    // PG side mirrors last_surfaced_at / updated_at; surfaced_count is recomputed
+    // from SQLite on the eventual full cutover.
+    void dualWrite(
+      async () => undefined,
+      () => pgPatchRow(pgId, { last_surfaced_at: ts, updated_at: ts }),
+      { table: PG_TABLE, mode },
+    );
+  }
 }
 
-export function listOpenUnfinishedRanked(userId: string, limit = 30): UnfinishedRow[] {
+function listOpenUnfinishedRankedSqlite(userId: string, limit: number): UnfinishedRow[] {
   const db = getDb();
   return db
     .prepare(
@@ -153,6 +238,87 @@ export function listOpenUnfinishedRanked(userId: string, limit = 30): Unfinished
        LIMIT ?`
     )
     .all(userId, limit) as UnfinishedRow[];
+}
+
+export function listOpenUnfinishedRanked(userId: string, limit = 30): UnfinishedRow[] {
+  return listOpenUnfinishedRankedSqlite(userId, limit);
+}
+
+const READ_LATENCY: { p50: number; p95: number; samples: number[] } = {
+  p50: 0,
+  p95: 0,
+  samples: [],
+};
+const LATENCY_WINDOW = 100;
+
+function recordReadLatency(ms: number): void {
+  READ_LATENCY.samples.push(ms);
+  if (READ_LATENCY.samples.length > LATENCY_WINDOW) READ_LATENCY.samples.shift();
+  const sorted = [...READ_LATENCY.samples].sort((a, b) => a - b);
+  const p50idx = Math.floor(sorted.length * 0.5);
+  const p95idx = Math.floor(sorted.length * 0.95);
+  READ_LATENCY.p50 = sorted[p50idx] ?? 0;
+  READ_LATENCY.p95 = sorted[p95idx] ?? sorted[sorted.length - 1] ?? 0;
+}
+
+/** Observability hook — current rolling P50/P95 of Postgres reads. */
+export function getReadLatencyStats(): { p50: number; p95: number; n: number } {
+  return { p50: READ_LATENCY.p50, p95: READ_LATENCY.p95, n: READ_LATENCY.samples.length };
+}
+
+/** Test/internal hook — feed synthetic latency samples (used by latency test). */
+export function _recordReadLatencyForTesting(ms: number): void {
+  recordReadLatency(ms);
+}
+
+/** Test/internal hook — reset the rolling latency window. */
+export function _resetReadLatencyForTesting(): void {
+  READ_LATENCY.p50 = 0;
+  READ_LATENCY.p95 = 0;
+  READ_LATENCY.samples = [];
+}
+
+/** Hot-path latency budget for session-start reads (ms). */
+export const SESSION_START_READ_BUDGET_MS = SESSION_START_LATENCY_BUDGET_MS;
+
+/**
+ * Async variant that honors the store-mode contract end-to-end:
+ *   - sqlite:   read SQLite
+ *   - dual:     read SQLite (canonical), shadow-compare Postgres, record latency
+ *   - supabase: read Postgres, record latency
+ */
+export async function listOpenUnfinishedRankedAsync(
+  userId: string,
+  limit = 30,
+): Promise<UnfinishedRow[]> {
+  const mode = storeFlags.unfinishedBusiness();
+
+  if (shouldReadSupabase(mode)) {
+    const { rows, ms } = await timedPgFetch(userId, limit);
+    recordReadLatency(ms);
+    if (ms > SESSION_START_LATENCY_BUDGET_MS) {
+      console.warn(`[unfinished_business] slow PG read user=${userId} ms=${ms}`);
+    }
+    return rows;
+  }
+
+  const sqliteRows = listOpenUnfinishedRankedSqlite(userId, limit);
+  if (mode === 'dual') {
+    await shadowCompare(
+      sqliteRows,
+      async () => {
+        const { rows, ms } = await timedPgFetch(userId, limit);
+        recordReadLatency(ms);
+        return rows;
+      },
+      {
+        table: PG_TABLE,
+        key: `${userId}:limit=${limit}`,
+        equals: (a, b) => a.length === b.length && a.every((r, i) => r.id === b[i]?.id),
+      },
+    );
+  }
+  return sqliteRows;
 }
 
 export function resolveUnfinishedItem(
@@ -165,11 +331,12 @@ export function resolveUnfinishedItem(
   if (status === 'open') throw new Error('use_defer_or_resolve');
   const db = getDb();
   const ts = nowIso();
+  const resolvedAt = status === 'resolved' || status === 'archived' ? ts : null;
   const n = db
     .prepare(
       `UPDATE unfinished_business_items SET status = ?, resolution_note = ?, resolved_at = ?, updated_at = ? WHERE id = ? AND user_id = ?`
     )
-    .run(status, resolutionNote.trim(), status === 'resolved' || status === 'archived' ? ts : null, ts, itemId, userId)
+    .run(status, resolutionNote.trim(), resolvedAt, ts, itemId, userId)
     .changes;
   if (!n) throw new Error('unfinished_not_found');
   recordGovernanceAudit({
@@ -179,6 +346,22 @@ export function resolveUnfinishedItem(
     entityId: itemId,
     payload: { status },
   });
+
+  const mode = storeFlags.unfinishedBusiness();
+  if (shouldWriteSupabase(mode)) {
+    const pgId = deterministicUuid('unfinished_business_items', itemId);
+    void dualWrite(
+      async () => undefined,
+      () =>
+        pgPatchRow(pgId, {
+          status: mapStatusToPostgres(status),
+          resolution_note: resolutionNote.trim(),
+          resolved_at: resolvedAt,
+          updated_at: ts,
+        }),
+      { table: PG_TABLE, mode },
+    );
+  }
 }
 
 /** Items with same fingerprint — recurring open loops under different wording. */
