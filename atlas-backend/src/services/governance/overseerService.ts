@@ -1,21 +1,30 @@
 /**
  * OverseerService — The Atlas Overseer.
  *
- * Every AI response passes through a 4-step LLM synthesis pipeline before reaching the user:
- *   Step 1 — Multi-model synthesis: combine all model outputs into one cohesive answer,
- *             cross-reference for truth, resolve disagreements with confidence assessments.
- *   Step 2 — Completeness check: identify gaps and fill them with supplementary information.
- *   Step 3 — User lens translation: rewrite through the user's evolved vocabulary level,
- *             depth preference, domain expertise, tone, and structural style.
- *   Step 4 — Constitutional check: enforce truth-first, strip sycophancy, flag violations.
+ * Six-stage pipeline (post Wave-3E cutover, spec § 1):
+ *   Stage 0 — Intent router  → RouterDecision (mode, condensed, overrides)
+ *   Stage 1 — Multi-model synthesis (mode-aware system prompt)
+ *   Stage 2 — Completeness audit (mode-aware gap fill)
+ *   Stage 3 — Personalization layer (4 Supabase channels) — REPLACES user-lens
+ *   Stage 4 — Constitutional sycophancy / brevity check (unchanged)
+ *   Stage 5 — Gap detector (appends one `> Continues:` or `> Next:` line)
  *
- * Graceful degradation: if Groq is unavailable, falls back to returning the raw response
- * with sycophancy flags appended — response delivery is never blocked.
+ * Graceful degradation: every new stage is wrapped so that on failure the
+ * pipeline passes the prior stage's output through unchanged. The pipeline
+ * cannot fail closed.
+ *
+ * Emergency kill switch: `ATLAS_SHAPE_V2_DISABLE=1` routes through the legacy
+ * 4-step path. Not user-facing; ops-only fire extinguisher (spec § 10).
  */
 
 import { env } from '../../config/env.js';
 import { getPolicyProfile } from '../evolution/policyStore.js';
 import { getDb } from '../../db/sqlite.js';
+import { routeIntent } from '../responseShape/intentRouter.js';
+import { buildModeSystemPrompt, resolveSections } from '../responseShape/modeLibrary.js';
+import { translate as personalizedTranslate } from '../responseShape/personalizationLayer.js';
+import { detectAndAppend as detectGaps } from '../responseShape/gapDetector.js';
+import type { ChatTurn, RouterDecision } from '../responseShape/types.js';
 
 // ---------------------------------------------------------------------------
 // Public interfaces
@@ -33,6 +42,14 @@ export interface OverseerContext {
   userId: string;
   conversationId?: string;
   modelOutputs?: ModelOutput[];
+  /** Recent turns (excluding current trailing user turn). Wave-3E plumbing. */
+  recentTurns?: ChatTurn[];
+}
+
+export interface OverseerGapOutcome {
+  appendedLine?: string;
+  unfinishedBusinessIdCreated?: string;
+  unfinishedBusinessIdTouched?: string;
 }
 
 export interface OverseerResult {
@@ -42,6 +59,12 @@ export interface OverseerResult {
   constitutionalFlags: string[];
   wasPersonalized: boolean;
   degraded: boolean;
+  /** RouterDecision used for this response (null on legacy / error paths). */
+  routerDecision: RouterDecision | null;
+  /** Channel names that fired in personalization (empty on legacy / error paths). */
+  personalizationApplied: string[];
+  /** Telemetry from the gap detector (Stage 5). */
+  gapDetectorOutcome: OverseerGapOutcome;
 }
 
 // ---------------------------------------------------------------------------
@@ -108,7 +131,8 @@ async function groqCall(
 async function synthesizeOutputs(
   query: string,
   modelOutputs: ModelOutput[],
-  rawResponse: string
+  rawResponse: string,
+  modePromptFragment = ''
 ): Promise<{ synthesized: string; notes: string }> {
   if (modelOutputs.length === 0) {
     // Single-model path — still run through synthesis for quality normalization
@@ -122,7 +146,8 @@ async function synthesizeOutputs(
     )
     .join('\n\n---\n\n');
 
-  const system = `You are the Atlas Overseer synthesis engine.
+  const modeBlock = modePromptFragment ? `${modePromptFragment}\n\n` : '';
+  const system = `${modeBlock}You are the Atlas Overseer synthesis engine.
 Your task: combine multiple AI model outputs into one authoritative, accurate answer.
 Rules:
 - Cross-reference all outputs for factual consistency
@@ -155,9 +180,11 @@ Rules:
 
 async function fillGaps(
   query: string,
-  synthesized: string
+  synthesized: string,
+  modePromptFragment = ''
 ): Promise<{ filled: string; gaps: string[] }> {
-  const system = `You are the Atlas completeness auditor.
+  const modeBlock = modePromptFragment ? `${modePromptFragment}\n\n` : '';
+  const system = `${modeBlock}You are the Atlas completeness auditor.
 Given the user's question and the synthesized answer so far, identify any meaningful gaps:
 - Missing context, definitions, or background the user likely needs
 - Logical steps that were skipped
@@ -190,10 +217,12 @@ Rules:
 }
 
 // ---------------------------------------------------------------------------
-// Step 3 — User lens translation
+// LEGACY Step 3 — User lens translation (kept ONLY for ATLAS_SHAPE_V2_DISABLE=1
+// fire-extinguisher path, spec § 10). Wave 3E retires the canonical path in
+// favor of personalizationLayer.translate(). Do not invoke this from new code.
 // ---------------------------------------------------------------------------
 
-async function applyUserLens(
+async function applyUserLensLegacy(
   userId: string,
   query: string,
   answer: string
@@ -316,7 +345,9 @@ function recordTraining(
   userId: string,
   query: string,
   finalResponse: string,
-  flags: string[]
+  flags: string[],
+  routerDecision: RouterDecision | null = null,
+  personalizationApplied: string[] = []
 ): void {
   try {
     const db = getDb();
@@ -329,10 +360,46 @@ function recordTraining(
       degraded INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     )`);
+    // Wave-3E cutover: extend with response-shape telemetry columns.
+    // ALTER TABLE … ADD COLUMN IF NOT EXISTS is idempotent across reboots.
+    try {
+      db.exec(
+        `ALTER TABLE overseer_training_records ADD COLUMN router_decision TEXT`
+      );
+    } catch {
+      /* column already exists */
+    }
+    try {
+      db.exec(
+        `ALTER TABLE overseer_training_records ADD COLUMN personalization_applied TEXT`
+      );
+    } catch {
+      /* column already exists */
+    }
+    let routerJson = '';
+    let personalizationJson = '';
+    try {
+      routerJson = routerDecision ? JSON.stringify(routerDecision) : '';
+    } catch {
+      routerJson = '';
+    }
+    try {
+      personalizationJson = JSON.stringify(personalizationApplied);
+    } catch {
+      personalizationJson = '[]';
+    }
     db.prepare(
-      `INSERT INTO overseer_training_records (user_id, query, response, constitutional_flags)
-       VALUES (?, ?, ?, ?)`
-    ).run(userId, query.slice(0, 500), finalResponse.slice(0, 3000), JSON.stringify(flags));
+      `INSERT INTO overseer_training_records
+         (user_id, query, response, constitutional_flags, router_decision, personalization_applied)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    ).run(
+      userId,
+      query.slice(0, 500),
+      finalResponse.slice(0, 3000),
+      JSON.stringify(flags),
+      routerJson,
+      personalizationJson
+    );
   } catch {
     // Non-fatal
   }
@@ -341,6 +408,8 @@ function recordTraining(
 // ---------------------------------------------------------------------------
 // Main entry point
 // ---------------------------------------------------------------------------
+
+const EMPTY_GAP_OUTCOME: OverseerGapOutcome = {};
 
 export async function applyOverseerLens(
   userId: string,
@@ -363,7 +432,7 @@ export async function applyOverseerLens(
       flags.length > 0
         ? `\n\n---\n*[Overseer: degraded mode — ${flags.join('; ')}]*`
         : '';
-    recordTraining(userId, context.query, rawResponse + note, flags);
+    recordTraining(userId, context.query, rawResponse + note, flags, null, []);
     return {
       response: rawResponse + note,
       synthesisNotes: 'degraded — Groq unavailable',
@@ -371,60 +440,167 @@ export async function applyOverseerLens(
       constitutionalFlags: flags,
       wasPersonalized: false,
       degraded: true,
+      routerDecision: null,
+      personalizationApplied: [],
+      gapDetectorOutcome: EMPTY_GAP_OUTCOME,
     };
   }
 
+  // ── Emergency kill switch (spec § 10) — legacy 4-step path. ────────────────
+  const v2Disabled = process.env.ATLAS_SHAPE_V2_DISABLE === '1';
+  if (v2Disabled) {
+    try {
+      const { synthesized, notes } = await synthesizeOutputs(
+        context.query,
+        allOutputs,
+        rawResponse
+      );
+      const { filled, gaps } = await fillGaps(context.query, synthesized);
+      const { translated, personalized } = await applyUserLensLegacy(userId, context.query, filled);
+      const flags = constitutionalCheck(translated, profile?.truthFirstStrictness ?? 0.72);
+      let finalResponse = translated;
+      if (flags.length > 0) {
+        finalResponse += `\n\n---\n*[Overseer: constitutional note — ${flags.join('; ')}]*`;
+      }
+      recordTraining(userId, context.query, finalResponse, flags, null, []);
+      return {
+        response: finalResponse,
+        synthesisNotes: `legacy-v1: ${notes}`,
+        gapsFound: gaps,
+        constitutionalFlags: flags,
+        wasPersonalized: personalized,
+        degraded: false,
+        routerDecision: null,
+        personalizationApplied: [],
+        gapDetectorOutcome: EMPTY_GAP_OUTCOME,
+      };
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      recordTraining(userId, context.query, rawResponse, ['pipeline_error_legacy'], null, []);
+      return {
+        response: rawResponse,
+        synthesisNotes: `legacy-v1 pipeline_error: ${errMsg}`,
+        gapsFound: [],
+        constitutionalFlags: [],
+        wasPersonalized: false,
+        degraded: true,
+        routerDecision: null,
+        personalizationApplied: [],
+        gapDetectorOutcome: EMPTY_GAP_OUTCOME,
+      };
+    }
+  }
+
+  // ── Stage 0 — Intent router ────────────────────────────────────────────────
+  let decision: RouterDecision | null = null;
   try {
-    // Step 1: Synthesize all model outputs
+    decision = await routeIntent(
+      context.userId || userId,
+      context.query,
+      context.recentTurns ?? []
+    );
+  } catch (err) {
+    console.warn('[OverseerService] Stage 0 (router) failed, continuing without decision:', err);
+    decision = null;
+  }
+
+  const modePromptFragment = decision
+    ? buildModeSystemPrompt(decision, resolveSections(decision))
+    : '';
+
+  try {
+    // Stage 1: synthesis (mode-aware prompt fragment prepended)
     const { synthesized, notes } = await synthesizeOutputs(
       context.query,
       allOutputs,
-      rawResponse
+      rawResponse,
+      modePromptFragment
     );
 
-    // Step 2: Completeness check + gap filling
-    const { filled, gaps } = await fillGaps(context.query, synthesized);
+    // Stage 2: completeness audit (also mode-aware)
+    const { filled, gaps } = await fillGaps(context.query, synthesized, modePromptFragment);
 
-    // Step 3: Translate through user's evolved lens
-    const { translated, personalized } = await applyUserLens(userId, context.query, filled);
+    // Stage 3: personalization layer (replaces legacy user-lens). Graceful degrade.
+    let personalizedText = filled;
+    let personalizationApplied: string[] = [];
+    if (decision) {
+      try {
+        const translateResult = await personalizedTranslate({
+          userId: context.userId || userId,
+          query: context.query,
+          decision,
+          synthesizedAnswer: filled,
+        });
+        personalizedText = translateResult.translated || filled;
+        personalizationApplied = translateResult.personalizationApplied;
+      } catch (err) {
+        console.warn('[OverseerService] Stage 3 (personalization) failed, passing through:', err);
+      }
+    }
 
-    // Step 4: Constitutional check
-    const flags = constitutionalCheck(translated, profile?.truthFirstStrictness ?? 0.72);
+    // Stage 4: constitutional check (unchanged)
+    const flags = constitutionalCheck(personalizedText, profile?.truthFirstStrictness ?? 0.72);
 
-    let finalResponse = translated;
+    let postConstitutional = personalizedText;
     if (flags.length > 0) {
-      // Append non-intrusive constitutional flag for training visibility
-      // (does NOT block the response — just marks it for Chronos review)
-      finalResponse +=
+      postConstitutional +=
         `\n\n---\n*[Overseer: constitutional note — ${flags.join('; ')}]*`;
     }
 
-    recordTraining(userId, context.query, finalResponse, flags);
+    // Stage 5: gap detector (appends at most one `> Continues:` / `> Next:` line).
+    let finalResponse = postConstitutional;
+    let gapDetectorOutcome: OverseerGapOutcome = EMPTY_GAP_OUTCOME;
+    if (decision) {
+      try {
+        const gapResult = await detectGaps({
+          userId: context.userId || userId,
+          query: context.query,
+          decision,
+          finalResponse: postConstitutional,
+        });
+        finalResponse = gapResult.augmentedResponse;
+        gapDetectorOutcome = {
+          appendedLine: gapResult.appendedLine,
+          unfinishedBusinessIdCreated: gapResult.unfinishedBusinessIdCreated,
+          unfinishedBusinessIdTouched: gapResult.unfinishedBusinessIdTouched,
+        };
+      } catch (err) {
+        console.warn('[OverseerService] Stage 5 (gap detector) failed, passing through:', err);
+      }
+    }
+
+    recordTraining(userId, context.query, finalResponse, flags, decision, personalizationApplied);
 
     return {
       response: finalResponse,
       synthesisNotes: notes,
       gapsFound: gaps,
       constitutionalFlags: flags,
-      wasPersonalized: personalized,
+      wasPersonalized: personalizationApplied.length > 0,
       degraded: false,
+      routerDecision: decision,
+      personalizationApplied,
+      gapDetectorOutcome,
     };
   } catch (err) {
-    // Pipeline failed mid-flight — degrade gracefully, never block user
-    // TPD (tokens per day) exhaustion is end-of-day normal behaviour — suppress the log noise
+    // Pipeline failed mid-flight — degrade gracefully, never block user.
+    // TPD (tokens per day) exhaustion is end-of-day normal behaviour — suppress the log noise.
     const errMsg = err instanceof Error ? err.message : String(err);
     const isTPD = errMsg.includes('per day') || errMsg.includes('tokens per day') || errMsg.includes('TPD');
     if (!isTPD) {
       console.error('[OverseerService] pipeline error:', err);
     }
-    recordTraining(userId, context.query, rawResponse, ['pipeline_error']);
+    recordTraining(userId, context.query, rawResponse, ['pipeline_error'], decision, []);
     return {
       response: rawResponse,
-      synthesisNotes: `pipeline_error: ${err instanceof Error ? err.message : String(err)}`,
+      synthesisNotes: `pipeline_error: ${errMsg}`,
       gapsFound: [],
       constitutionalFlags: [],
       wasPersonalized: false,
       degraded: true,
+      routerDecision: decision,
+      personalizationApplied: [],
+      gapDetectorOutcome: EMPTY_GAP_OUTCOME,
     };
   }
 }

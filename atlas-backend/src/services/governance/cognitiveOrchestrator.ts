@@ -772,6 +772,14 @@ export async function conductRequest(input: ConductorInput): Promise<ConductorRe
   // Phase D gate: stagePolicy.overseerEnabled skips Stage 7 in DEGRADED_2+.
   let overseerResult: OverseerResult | null = null;
   if (stagePolicy.overseerEnabled) try {
+    // Wave-3E plumbing: build recentTurns from input.messages, dropping system
+    // turns and the trailing current user message that produced userPrompt.
+    // Last 4 user/assistant turns are enough for router context.
+    const recentTurns = input.messages
+      .filter((m) => m.role === 'user' || m.role === 'assistant')
+      .slice(0, -1)
+      .slice(-4)
+      .map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content }));
     overseerResult = await Promise.race([
       applyOverseerLens(input.userId, dispatchResult.fullText, {
         query: userPrompt,
@@ -779,6 +787,7 @@ export async function conductRequest(input: ConductorInput): Promise<ConductorRe
         userId: input.userId,
         conversationId: traceId,
         modelOutputs: [],
+        recentTurns,
       }),
       new Promise<null>((resolve) => setTimeout(() => resolve(null), OVERSEER_TIMEOUT_MS)),
     ]);
