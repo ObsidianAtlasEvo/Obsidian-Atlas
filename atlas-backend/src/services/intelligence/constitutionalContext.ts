@@ -1,5 +1,6 @@
 import { getDb } from '../../db/sqlite.js';
 import { formatConstitutionBlockForPrompt, listActiveConstitutionClauses } from '../governance/constitutionalCoreService.js';
+import { listTruthEntriesSync } from '../governance/truthLedgerService.js';
 import { formatCognitiveTwinForPrompt } from '../governance/cognitiveTwinService.js';
 import { formatEvolutionSummaryForPrompt } from '../governance/evolutionTimelineService.js';
 import { formatUnfinishedBusinessForPrompt, listOpenUnfinishedRanked } from '../governance/unfinishedBusinessService.js';
@@ -21,14 +22,15 @@ import type { SovereignResponseMode } from './sovereigntyResponseRouter.js';
 import { sovereignModeDirective } from './sovereigntyResponseRouter.js';
 
 function buildLegacyTruthLedgerBlock(userId: string, limit = 20): string {
-  const db = getDb();
-  const rows = db
-    .prepare(
-      `SELECT statement, status, confidence FROM truth_entries
-       WHERE user_id = ? AND status != 'superseded'
-       ORDER BY updated_at DESC LIMIT ?`
-    )
-    .all(userId, limit) as { statement: string; status: string; confidence: number }[];
+  // Routed through truthLedgerService.listTruthEntriesSync (P4-A2). Sync path
+  // is SQLite-only; the async `listTruthEntriesAsync` honors the supabase
+  // cutover for callers that can await.
+  let rows: { statement: string; status: string; confidence: number }[];
+  try {
+    rows = listTruthEntriesSync(userId, limit);
+  } catch {
+    rows = [];
+  }
   if (rows.length === 0) return '(no legacy truth_entries on file)';
   return rows
     .map((t) => `- [${t.status} conf=${t.confidence.toFixed(2)}] ${t.statement}`)

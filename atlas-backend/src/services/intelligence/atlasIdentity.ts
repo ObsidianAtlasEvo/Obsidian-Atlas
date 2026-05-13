@@ -1,5 +1,6 @@
 import { getDb } from '../../db/sqlite.js';
 import { assembleAtlasContext } from '../context/contextAssembler.js';
+import { listTruthEntriesSync } from '../governance/truthLedgerService.js';
 import { buildSovereignChatContextPack } from './constitutionalContext.js';
 import {
   inferSovereignResponseMode,
@@ -46,15 +47,11 @@ type DecisionRow = { title: string; status: string; rationale: string };
 type SemanticClaimRow = { claim: string; domain: string | null; confidence: number };
 
 function loadTruthLedger(userId: string, limit: number): TruthRow[] {
+  // Routed through truthLedgerService (P4-A2). The sync wrapper reads SQLite
+  // for `sqlite` and `dual` modes and throws in `supabase` mode — callers
+  // must migrate to `listTruthEntriesAsync` before promoting the flag.
   try {
-    const db = getDb();
-    return db
-      .prepare(
-        `SELECT statement, status, confidence FROM truth_entries
-         WHERE user_id = ? AND status != 'superseded'
-         ORDER BY updated_at DESC LIMIT ?`
-      )
-      .all(userId, limit) as TruthRow[];
+    return listTruthEntriesSync(userId, limit);
   } catch {
     return [];
   }

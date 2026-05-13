@@ -7,6 +7,7 @@ import {
 import { supabaseRest } from '../db/supabase.js';
 import { getDb } from '../db/sqlite.js';
 import { generateDigestForUser } from '../services/autonomy/digestGeneratorService.js';
+import { listTruthEntriesAsync } from '../services/governance/truthLedgerService.js';
 
 const quotaBodySchema = z.object({
   userId: z.string().min(1),
@@ -67,12 +68,6 @@ interface EvolutionEventRow {
   significance: number;
   related_domain: string | null;
   created_at: string;
-}
-
-interface TruthEntryRow {
-  statement: string;
-  status: string;
-  confidence: number;
 }
 
 interface SemanticClaimRow {
@@ -430,24 +425,11 @@ export function registerSovereigntyRoutes(app: FastifyInstance): void {
       console.warn('[identity-profile] evolution fetch failed:', err instanceof Error ? err.message : err);
     }
 
-    // Truth ledger (from SQLite truth_entries).
+    // Truth ledger — routed through truthLedgerService (P4-A2). Honors
+    // `storeFlags.truth()` across sqlite / dual / supabase modes.
     let truthLedgerSummary: Array<{ statement: string; status: string; confidence: number }> = [];
     try {
-      const db = getDb();
-      const rows = db
-        .prepare(
-          `SELECT statement, status, confidence
-           FROM truth_entries
-           WHERE user_id = ? AND status != 'superseded'
-           ORDER BY confidence DESC, updated_at DESC
-           LIMIT 8`,
-        )
-        .all(userId) as TruthEntryRow[];
-      truthLedgerSummary = rows.map((r) => ({
-        statement: r.statement,
-        status: r.status,
-        confidence: r.confidence,
-      }));
+      truthLedgerSummary = await listTruthEntriesAsync(userId, 8);
     } catch (err) {
       console.warn('[identity-profile] truth fetch failed:', err instanceof Error ? err.message : err);
     }
