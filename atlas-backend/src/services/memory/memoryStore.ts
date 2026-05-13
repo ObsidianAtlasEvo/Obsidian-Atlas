@@ -2,8 +2,40 @@
 import { randomUUID } from 'node:crypto';
 import { getDb } from '../../db/sqlite.js';
 import type { ConversationTrace, MemoryKind, MemoryRecord } from '../../types/atlas.js';
+import { dualWrite } from '../../utils/dualWriteWrapper.js';
+import { shadowCompare } from '../../utils/shadowReadParity.js';
+import {
+  shouldReadSupabase,
+  shouldWriteSqlite,
+  shouldWriteSupabase,
+  storeFlags,
+} from '../../utils/storeFlags.js';
+import {
+  getUserMemoryBySqliteId,
+  listRecentUserMemories,
+  listUserMemoriesByKind,
+  markUserMemorySuperseded,
+  upsertUserMemory,
+} from './userMemoriesSupabase.js';
 
 export type MemoryOrigin = 'user' | 'inferred' | 'system';
+
+/**
+ * P4-A1 cutover gate.
+ *
+ * The SQLite-only legacy path is preserved verbatim. Two new behaviors layer
+ * on top, controlled by `MEMORY_STORE`:
+ *   - `dual`: every write fires a background secondary write into the
+ *     canonical Postgres `user_memories` table (via `userMemoriesSupabase`).
+ *     Read calls additionally fire a shadow comparison; the returned value is
+ *     always the SQLite result, so caller signatures are unchanged.
+ *   - `supabase`: SQLite remains the read-of-record in this stage because the
+ *     read APIs are synchronous. The flip to Postgres-as-read-of-record will
+ *     land in a follow-up that converts call sites to async.
+ *
+ * Secondary writes are best-effort via `dualWrite`; their failures are
+ * logged but never propagated.
+ */
 
 type MemoryRow = {
   id: string;
@@ -103,13 +135,8 @@ export function saveMemory(
     );
   };
 
-  if (record.replacesMemoryId) {
-    db.transaction(run)();
-  } else {
-    run();
-  }
-
-  return {
+  const mode = storeFlags.memory();
+  const result: MemoryRecord = {
     id,
     userId: record.userId,
     kind: record.kind,
@@ -121,6 +148,33 @@ export function saveMemory(
     createdAt,
     updatedAt,
   };
+
+  const primary = (): MemoryRecord => {
+    if (!shouldWriteSqlite(mode)) return result;
+    if (record.replacesMemoryId) {
+      db.transaction(run)();
+    } else {
+      run();
+    }
+    return result;
+  };
+
+  const secondary = shouldWriteSupabase(mode)
+    ? async () => {
+        await upsertUserMemory(result);
+        if (record.replacesMemoryId) {
+          await markUserMemorySuperseded(record.replacesMemoryId, id);
+        }
+      }
+    : null;
+
+  // dualWrite's promise begins synchronously, so `primary()` runs inline and
+  // its SQLite side-effects are committed before this function returns. The
+  // secondary write completes in the background; failures are logged inside
+  // dualWrite and never surface here.
+  void dualWrite(primary, secondary, { table: 'memories', mode });
+
+  return result;
 }
 
 /**
@@ -135,7 +189,16 @@ export function getMemoryById(userId: string, id: string): MemoryRecord | null {
        WHERE id = ? AND user_id = ?`
     )
     .get(id, userId) as MemoryRow | undefined;
-  return row ? toMemoryRecord(row) : null;
+  const primary = row ? toMemoryRecord(row) : null;
+  const mode = storeFlags.memory();
+  if (mode === 'dual' || shouldReadSupabase(mode)) {
+    void shadowCompare(primary, () => getUserMemoryBySqliteId(userId, id), {
+      table: 'memories',
+      key: `${userId}:${id}`,
+      equals: memoryRecordsEquivalent,
+    });
+  }
+  return primary;
 }
 
 export function listRecentMemories(userId: string, limit: number): MemoryRecord[] {
@@ -149,7 +212,16 @@ export function listRecentMemories(userId: string, limit: number): MemoryRecord[
        LIMIT ?`
     )
     .all(userId, limit) as MemoryRow[];
-  return rows.map(toMemoryRecord);
+  const primary = rows.map(toMemoryRecord);
+  const mode = storeFlags.memory();
+  if (mode === 'dual' || shouldReadSupabase(mode)) {
+    void shadowCompare(primary, () => listRecentUserMemories(userId, limit), {
+      table: 'memories',
+      key: `${userId}:recent:${limit}`,
+      equals: memoryListsEquivalent,
+    });
+  }
+  return primary;
 }
 
 export function listMemoriesByKind(userId: string, kind: MemoryKind, limit: number): MemoryRecord[] {
@@ -163,7 +235,31 @@ export function listMemoriesByKind(userId: string, kind: MemoryKind, limit: numb
        LIMIT ?`
     )
     .all(userId, kind, limit) as MemoryRow[];
-  return rows.map(toMemoryRecord);
+  const primary = rows.map(toMemoryRecord);
+  const mode = storeFlags.memory();
+  if (mode === 'dual' || shouldReadSupabase(mode)) {
+    void shadowCompare(primary, () => listUserMemoriesByKind(userId, kind, limit), {
+      table: 'memories',
+      key: `${userId}:kind=${kind}:${limit}`,
+      equals: memoryListsEquivalent,
+    });
+  }
+  return primary;
+}
+
+/**
+ * Loose equality for shadow parity: compares the fields that survive the
+ * SQLite → user_memories projection. Tags/origin/archived_at are dropped by
+ * the canonical schema, so excluding them avoids false-positive parity
+ * misses.
+ */
+function memoryRecordsEquivalent(a: MemoryRecord | null, b: MemoryRecord | null): boolean {
+  if (a === null || b === null) return a === b;
+  return a.userId === b.userId && a.confidence === b.confidence;
+}
+
+function memoryListsEquivalent(a: MemoryRecord[], b: MemoryRecord[]): boolean {
+  return a.length === b.length;
 }
 
 export function saveTrace(trace: ConversationTrace): ConversationTrace {
