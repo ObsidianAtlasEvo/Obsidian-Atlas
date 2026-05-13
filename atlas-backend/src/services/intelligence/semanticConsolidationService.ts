@@ -17,7 +17,10 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { getDb } from '../../db/sqlite.js';
+import { supabaseRest } from '../../db/supabase.js';
 import { createBackgroundModelProvider } from '../model/backgroundModelProvider.js';
+import { shouldWriteSqlite, shouldWriteSupabase, storeFlags } from '../../utils/storeFlags.js';
+import { deterministicUuid } from '../../utils/uuidMapping.js';
 
 const MIN_MEMORIES_TO_CONSOLIDATE = 15;
 const THROTTLE_MS = 3 * 24 * 60 * 60 * 1000; // 3 days
@@ -174,6 +177,9 @@ export async function runConsolidationForUser(userId: string): Promise<void> {
     .all(userId) as ExistingClaimRow[];
 
   const nowIso = new Date().toISOString();
+  const mode = storeFlags.semanticClaims();
+  const writeSqlite = shouldWriteSqlite(mode);
+  const writeSupabase = shouldWriteSupabase(mode);
   let inserted = 0;
 
   for (const c of parsed.claims) {
@@ -190,11 +196,16 @@ export async function runConsolidationForUser(userId: string): Promise<void> {
     );
     if (duplicate) {
       if (c.confidence > duplicate.confidence) {
-        db.prepare(
-          `UPDATE semantic_claims
-           SET confidence = ?, updated_at = ?
-           WHERE id = ?`,
-        ).run(c.confidence, nowIso, duplicate.id);
+        if (writeSqlite) {
+          db.prepare(
+            `UPDATE semantic_claims
+             SET confidence = ?, updated_at = ?
+             WHERE id = ?`,
+          ).run(c.confidence, nowIso, duplicate.id);
+        }
+        if (writeSupabase) {
+          await mirrorConfidenceUpdate(duplicate.id, c.confidence, nowIso);
+        }
       }
       continue;
     }
@@ -204,34 +215,143 @@ export async function runConsolidationForUser(userId: string): Promise<void> {
       (e) => e.domain === c.domain && e.confidence < c.confidence,
     );
     if (supersedeTargets.length > 0) {
-      const placeholders = supersedeTargets.map(() => '?').join(',');
-      db.prepare(
-        `UPDATE semantic_claims
-         SET invalidated_at = ?, updated_at = ?
-         WHERE id IN (${placeholders})`,
-      ).run(nowIso, nowIso, ...supersedeTargets.map((s) => s.id));
+      if (writeSqlite) {
+        const placeholders = supersedeTargets.map(() => '?').join(',');
+        db.prepare(
+          `UPDATE semantic_claims
+           SET invalidated_at = ?, updated_at = ?
+           WHERE id IN (${placeholders})`,
+        ).run(nowIso, nowIso, ...supersedeTargets.map((s) => s.id));
+      }
+      if (writeSupabase) {
+        await mirrorSupersessionUpdate(
+          supersedeTargets.map((s) => s.id),
+          nowIso,
+        );
+      }
     }
 
-    db.prepare(
-      `INSERT INTO semantic_claims
-         (id, user_id, claim, domain, confidence, evidence_memory_ids,
-          evidence_count, times_surfaced, last_surfaced_at, invalidated_at,
-          created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 0, NULL, NULL, ?, ?)`,
-    ).run(
-      randomUUID(),
-      userId,
-      c.claim,
-      c.domain,
-      c.confidence,
-      JSON.stringify(evidenceIds),
-      evidenceIds.length,
-      nowIso,
-      nowIso,
-    );
+    const newId = randomUUID();
+    if (writeSqlite) {
+      db.prepare(
+        `INSERT INTO semantic_claims
+           (id, user_id, claim, domain, confidence, evidence_memory_ids,
+            evidence_count, times_surfaced, last_surfaced_at, invalidated_at,
+            created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 0, NULL, NULL, ?, ?)`,
+      ).run(
+        newId,
+        userId,
+        c.claim,
+        c.domain,
+        c.confidence,
+        JSON.stringify(evidenceIds),
+        evidenceIds.length,
+        nowIso,
+        nowIso,
+      );
+    }
+    if (writeSupabase) {
+      await mirrorInsert({
+        sqliteId: newId,
+        userId,
+        claim: c.claim,
+        domain: c.domain,
+        confidence: c.confidence,
+        evidenceIds,
+        nowIso,
+      });
+    }
     inserted += 1;
 
     if (activeClaims + inserted >= MAX_ACTIVE_CLAIMS_PER_USER) break;
+  }
+}
+
+// ── Supabase mirroring (P4 dual-write) ────────────────────────────────────
+//
+// All three helpers are best-effort: Supabase failures are logged but never
+// thrown, so a Postgres outage during the `dual` phase does not break the
+// SQLite-of-record path.
+
+async function mirrorInsert(args: {
+  sqliteId: string;
+  userId: string;
+  claim: string;
+  domain: string;
+  confidence: number;
+  evidenceIds: string[];
+  nowIso: string;
+}): Promise<void> {
+  try {
+    const res = await supabaseRest('POST', 'semantic_claims', {
+      id: deterministicUuid('semantic_claims', args.sqliteId),
+      user_id: args.userId,
+      claim: args.claim,
+      domain: args.domain,
+      confidence: args.confidence,
+      evidence_memory_ids: args.evidenceIds.map((id) =>
+        deterministicUuid('memories', id),
+      ),
+      evidence_count: args.evidenceIds.length,
+      times_surfaced: 0,
+      last_surfaced_at: null,
+      invalidated_at: null,
+      created_at: args.nowIso,
+      updated_at: args.nowIso,
+    });
+    if (!res.ok) {
+      console.error(
+        `[semanticConsolidation] supabase insert failed (status=${res.status ?? 'n/a'})`,
+      );
+    }
+  } catch (err) {
+    console.error('[semanticConsolidation] supabase insert error:', err);
+  }
+}
+
+async function mirrorConfidenceUpdate(
+  sqliteId: string,
+  confidence: number,
+  nowIso: string,
+): Promise<void> {
+  try {
+    const pgId = deterministicUuid('semantic_claims', sqliteId);
+    const res = await supabaseRest(
+      'PATCH',
+      `semantic_claims?id=eq.${encodeURIComponent(pgId)}`,
+      { confidence, updated_at: nowIso },
+    );
+    if (!res.ok) {
+      console.error(
+        `[semanticConsolidation] supabase confidence patch failed (status=${res.status ?? 'n/a'})`,
+      );
+    }
+  } catch (err) {
+    console.error('[semanticConsolidation] supabase confidence patch error:', err);
+  }
+}
+
+async function mirrorSupersessionUpdate(
+  sqliteIds: string[],
+  nowIso: string,
+): Promise<void> {
+  if (sqliteIds.length === 0) return;
+  try {
+    const pgIds = sqliteIds.map((id) => deterministicUuid('semantic_claims', id));
+    const inList = pgIds.map((id) => `"${id}"`).join(',');
+    const res = await supabaseRest(
+      'PATCH',
+      `semantic_claims?id=in.(${encodeURIComponent(inList)})`,
+      { invalidated_at: nowIso, updated_at: nowIso },
+    );
+    if (!res.ok) {
+      console.error(
+        `[semanticConsolidation] supabase supersession patch failed (status=${res.status ?? 'n/a'})`,
+      );
+    }
+  } catch (err) {
+    console.error('[semanticConsolidation] supabase supersession patch error:', err);
   }
 }
 
