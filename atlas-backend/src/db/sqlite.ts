@@ -897,6 +897,28 @@ CREATE TABLE IF NOT EXISTS atlas_deletion_runs (
 );
 `;
 
+/** Semantic Consolidation: higher-order cognitive pattern claims (migration 022). */
+const SEMANTIC_CLAIMS_TABLE = `
+CREATE TABLE IF NOT EXISTS semantic_claims (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  claim TEXT NOT NULL,
+  domain TEXT,
+  confidence REAL NOT NULL DEFAULT 0.6,
+  evidence_memory_ids TEXT NOT NULL DEFAULT '[]',
+  evidence_count INTEGER NOT NULL DEFAULT 0,
+  times_surfaced INTEGER NOT NULL DEFAULT 0,
+  last_surfaced_at TEXT,
+  invalidated_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_semantic_claims_user
+  ON semantic_claims (user_id, invalidated_at, confidence DESC);
+CREATE INDEX IF NOT EXISTS idx_semantic_claims_domain
+  ON semantic_claims (user_id, domain, invalidated_at);
+`;
+
 /** Substrate Unification: journal entries (user-authored cognitive artifacts). */
 const SUBSTRATE_UNIFICATION = `
 CREATE TABLE IF NOT EXISTS journal_entries (
@@ -940,6 +962,7 @@ export function initSqlite(): Database.Database {
     database.exec(RETENTION_TABLES);
     database.exec(GAP_LEDGER_TABLES);
     database.exec(CHANGE_CONTROL_TABLE);
+    database.exec(SEMANTIC_CLAIMS_TABLE);
     database.exec(SUBSTRATE_UNIFICATION);
     migrateBillingSubscriptionSchema(database);
     runBillingMigration(database);

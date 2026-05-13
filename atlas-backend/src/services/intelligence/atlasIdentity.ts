@@ -43,6 +43,7 @@ IDENTITY_PACK_VERSION: ${ATLAS_IDENTITY_PROMPT_VERSION}`;
 
 type TruthRow = { statement: string; status: string; confidence: number };
 type DecisionRow = { title: string; status: string; rationale: string };
+type SemanticClaimRow = { claim: string; domain: string | null; confidence: number };
 
 function loadTruthLedger(userId: string, limit: number): TruthRow[] {
   try {
@@ -57,6 +58,33 @@ function loadTruthLedger(userId: string, limit: number): TruthRow[] {
   } catch {
     return [];
   }
+}
+
+function loadSemanticClaims(userId: string, limit: number): SemanticClaimRow[] {
+  try {
+    const db = getDb();
+    return db
+      .prepare(
+        `SELECT claim, domain, confidence FROM semantic_claims
+         WHERE user_id = ? AND invalidated_at IS NULL
+         ORDER BY confidence DESC LIMIT ?`
+      )
+      .all(userId, limit) as SemanticClaimRow[];
+  } catch {
+    return [];
+  }
+}
+
+function formatSemanticClaimsBlock(claims: SemanticClaimRow[]): string {
+  if (claims.length === 0) {
+    return '(no patterns identified yet — patterns emerge after extended use)';
+  }
+  return claims
+    .map(
+      (c) =>
+        `- [${c.domain ?? 'other'} conf=${c.confidence.toFixed(2)}] ${c.claim}`
+    )
+    .join('\n');
 }
 
 function loadRecentDecisions(userId: string, limit: number): DecisionRow[] {
@@ -109,6 +137,7 @@ export function buildPrimedChatSystemPrompt(
 ): string {
   const truths = loadTruthLedger(userId, 16);
   const decisions = loadRecentDecisions(userId, 8);
+  const semanticClaims = loadSemanticClaims(userId, 10);
 
   const substrate = assembleAtlasContext(userId, currentUserMessage);
 
@@ -132,6 +161,9 @@ export function buildPrimedChatSystemPrompt(
     '',
     'LEGACY_REALITY_GRAPH — SRG_DECISIONS (older srg_decisions table):',
     formatDecisionBlock(decisions),
+    '',
+    'COGNITIVE PATTERNS (Atlas-derived — treat as strong inference, not fact):',
+    formatSemanticClaimsBlock(semanticClaims),
     '',
     '---',
     'CONTEXT_AND_MEMORY_SUBSTRATE (recency-weighted memories and traces — fallible, not ground truth):',
