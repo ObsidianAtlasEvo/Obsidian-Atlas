@@ -5,6 +5,7 @@ import {
   setUserTavilyByok,
 } from '../services/intelligence/quotaManager.js';
 import { supabaseRest } from '../db/supabase.js';
+import { generateDigestForUser } from '../services/autonomy/digestGeneratorService.js';
 
 const quotaBodySchema = z.object({
   userId: z.string().min(1),
@@ -50,6 +51,21 @@ interface TransparencyRow {
   compliance_score: number | null;
   violations: unknown;
   created_at: string;
+}
+
+interface IntelligenceDigestRow {
+  id: string;
+  user_id: string;
+  digest_type: string;
+  event_count: number;
+  digest_markdown: string;
+  viewed: boolean;
+  viewed_at: string | null;
+  created_at: string;
+}
+
+interface UnackedCountRow {
+  id: string;
 }
 
 export function registerSovereigntyRoutes(app: FastifyInstance): void {
@@ -178,5 +194,75 @@ export function registerSovereigntyRoutes(app: FastifyInstance): void {
     );
     if (!result.ok) return reply.status(500).send({ error: 'fetch_failed' });
     return reply.send({ entries: result.data ?? [], limit, offset });
+  });
+
+  // ── Background Intelligence Digest ──────────────────────────────────────
+
+  app.get('/v1/sovereignty/digest', async (request, reply) => {
+    const auth = request.atlasAuthUser;
+    if (!auth?.supabaseId) {
+      return reply.status(401).send({ error: 'unauthenticated' });
+    }
+    const userId = auth.supabaseId;
+
+    const latest = await supabaseRest<IntelligenceDigestRow[]>(
+      'GET',
+      `intelligence_digests?user_id=eq.${encodeURIComponent(userId)}` +
+        `&select=id,user_id,digest_type,event_count,digest_markdown,viewed,viewed_at,created_at` +
+        `&order=created_at.desc&limit=1`,
+    );
+    if (!latest.ok) return reply.status(500).send({ error: 'fetch_failed' });
+
+    let digest: IntelligenceDigestRow | null = latest.data?.[0] ?? null;
+    if (digest && !digest.viewed) {
+      const nowIso = new Date().toISOString();
+      const upd = await supabaseRest<IntelligenceDigestRow[]>(
+        'PATCH',
+        `intelligence_digests?id=eq.${encodeURIComponent(digest.id)}&user_id=eq.${encodeURIComponent(userId)}`,
+        { viewed: true, viewed_at: nowIso },
+      );
+      if (upd.ok && upd.data && upd.data.length > 0 && upd.data[0]) {
+        digest = upd.data[0];
+      } else {
+        digest = { ...digest, viewed: true, viewed_at: nowIso };
+      }
+    }
+
+    const unacked = await supabaseRest<UnackedCountRow[]>(
+      'GET',
+      `watcher_events?user_id=eq.${encodeURIComponent(userId)}&acknowledged=eq.false&select=id`,
+    );
+    const unacked_event_count = unacked.ok && unacked.data ? unacked.data.length : 0;
+
+    return reply.send({ digest, unacked_event_count });
+  });
+
+  app.post('/v1/sovereignty/digest/generate', async (request, reply) => {
+    const auth = request.atlasAuthUser;
+    if (!auth?.supabaseId) {
+      return reply.status(401).send({ error: 'unauthenticated' });
+    }
+    const digest = await generateDigestForUser(auth.supabaseId, 'on_demand');
+    if (!digest) {
+      return reply.send({ message: 'No unacknowledged events to digest' });
+    }
+    return reply.send({ digest });
+  });
+
+  app.post('/v1/sovereignty/digest/events/acknowledge-all', async (request, reply) => {
+    const auth = request.atlasAuthUser;
+    if (!auth?.supabaseId) {
+      return reply.status(401).send({ error: 'unauthenticated' });
+    }
+    const userId = auth.supabaseId;
+    const nowIso = new Date().toISOString();
+    const result = await supabaseRest<UnackedCountRow[]>(
+      'PATCH',
+      `watcher_events?user_id=eq.${encodeURIComponent(userId)}&acknowledged=eq.false&select=id`,
+      { acknowledged: true, acknowledged_at: nowIso },
+    );
+    if (!result.ok) return reply.status(500).send({ error: 'update_failed' });
+    const acknowledged_count = result.data?.length ?? 0;
+    return reply.send({ acknowledged_count });
   });
 }
