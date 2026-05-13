@@ -75,6 +75,14 @@ interface TruthEntryRow {
   confidence: number;
 }
 
+interface SemanticClaimRow {
+  claim: string;
+  domain: string | null;
+  confidence: number;
+  evidence_count: number;
+  created_at: string;
+}
+
 interface PrincipleRow {
   id: string;
   user_id: string;
@@ -444,12 +452,43 @@ export function registerSovereigntyRoutes(app: FastifyInstance): void {
       console.warn('[identity-profile] truth fetch failed:', err instanceof Error ? err.message : err);
     }
 
+    // Semantic claims (from SQLite semantic_claims).
+    let semanticClaims: Array<{
+      claim: string;
+      domain: string;
+      confidence: number;
+      evidence_count: number;
+      created_at: string;
+    }> = [];
+    try {
+      const db = getDb();
+      const rows = db
+        .prepare(
+          `SELECT claim, domain, confidence, evidence_count, created_at
+           FROM semantic_claims
+           WHERE user_id = ? AND invalidated_at IS NULL
+           ORDER BY confidence DESC
+           LIMIT 10`,
+        )
+        .all(userId) as SemanticClaimRow[];
+      semanticClaims = rows.map((r) => ({
+        claim: r.claim,
+        domain: r.domain ?? 'other',
+        confidence: r.confidence,
+        evidence_count: r.evidence_count,
+        created_at: r.created_at,
+      }));
+    } catch (err) {
+      console.warn('[identity-profile] semantic_claims fetch failed:', err instanceof Error ? err.message : err);
+    }
+
     return reply.send({
       identity_domains: identityDomains,
       memory_stats: memoryStats,
       evolution_highlights: evolutionHighlights,
       recent_corrections: recentCorrections,
       truth_ledger_summary: truthLedgerSummary,
+      semantic_claims: semanticClaims,
     });
   });
 

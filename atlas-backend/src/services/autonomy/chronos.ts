@@ -13,6 +13,7 @@ import { listRecentEvolutionGaps } from '../evolution/gapStore.js';
 import { getDb } from '../../db/sqlite.js';
 import type { ModelProvider } from '../model/modelProvider.js';
 import { createBackgroundModelProvider } from '../model/backgroundModelProvider.js';
+import { runConsolidationForUser } from '../intelligence/semanticConsolidationService.js';
 import { appendAutonomyLog } from './autonomyLog.js';
 
 // ---------------------------------------------------------------------------
@@ -418,6 +419,16 @@ async function processUserTick(model: ModelProvider, userId: string): Promise<vo
     } else if (result.reason !== 'chronos_busy') {
       console.warn('[chronos] heartbeat skipped or failed:', result.reason);
     }
+
+    // Semantic consolidation — runs at most once per 3 days per user
+    // (throttled internally). Background work; never consumes Groq tokens.
+    await runConsolidationForUser(userId).catch((err) => {
+      console.warn(
+        '[chronos] semantic consolidation failed:',
+        err instanceof Error ? err.message : String(err),
+        `user=${userId}`,
+      );
+    });
   } catch (e) {
     console.warn('[chronos] tick error', e);
     appendAutonomyLog({
