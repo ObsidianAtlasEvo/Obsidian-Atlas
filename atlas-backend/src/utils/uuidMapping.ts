@@ -17,6 +17,9 @@ const NAMESPACES: Record<string, string> = {
   doctrine_nodes:            '8b1c4f00-1111-4000-8000-000000000006',
   unfinished_business_items: '8b1c4f00-1111-4000-8000-000000000007',
   adaptation_events:         '8b1c4f00-1111-4000-8000-000000000008',
+  // Non-migrating tables whose text ids are referenced by migrating rows.
+  // Their namespaces let us project the referenced FK columns into uuid form.
+  traces:                    '8b1c4f00-1111-4000-8000-000000000009',
 };
 
 export function deterministicUuid(table: keyof typeof NAMESPACES | string, sqliteId: string): string {
