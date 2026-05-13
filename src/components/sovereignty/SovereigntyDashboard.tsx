@@ -2,6 +2,7 @@ import React from 'react';
 import {
   Activity,
   AlertCircle,
+  Brain,
   CheckCircle2,
   Clock,
   Eye,
@@ -15,6 +16,7 @@ import {
   XCircle,
   Zap,
 } from 'lucide-react';
+import { IdentityProfile } from '../IdentityProfile';
 import {
   ActionContractRow,
   ActionStatus,
@@ -48,7 +50,7 @@ import {
 } from '../../lib/sovereigntyApi';
 import { ConfirmDialog } from './ConfirmDialog';
 
-type TabKey = 'actions' | 'connectors' | 'watchers' | 'evals' | 'audit' | 'controls' | 'timeline' | 'transparency';
+type TabKey = 'actions' | 'connectors' | 'watchers' | 'evals' | 'audit' | 'controls' | 'timeline' | 'transparency' | 'identity';
 
 interface Props {
   userId: string;
@@ -811,6 +813,7 @@ const tabs: { key: TabKey; label: string; icon: React.ReactNode }[] = [
   { key: 'controls', label: 'Controls', icon: <ShieldAlert size={12} /> },
   { key: 'timeline', label: 'Timeline', icon: <Clock size={12} /> },
   { key: 'transparency', label: 'Transparency', icon: <Eye size={12} /> },
+  { key: 'identity', label: 'Identity', icon: <Brain size={12} /> },
 ];
 
 export function SovereigntyDashboard({ userId }: Props) {
@@ -856,6 +859,7 @@ export function SovereigntyDashboard({ userId }: Props) {
         {tab === 'controls' && <ControlsPanel userId={userId} />}
         {tab === 'timeline' && <TimelinePanel userId={userId} />}
         {tab === 'transparency' && <TransparencyPanel userId={userId} />}
+        {tab === 'identity' && <IdentityProfile />}
       </div>
     </div>
   );
