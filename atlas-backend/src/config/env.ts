@@ -65,6 +65,12 @@ const envSchema = z.object({
   /** Google GenAI (Gemini) for `gemini_pro` / `multi_agent` expansion. */
   GEMINI_API_KEY: z.string().optional(),
   GEMINI_MODEL: z.string().optional(),
+  /**
+   * Model used by background workers (Chronos heartbeats, Chief-of-Staff routing).
+   * Defaults to Gemini Flash. Groq is intentionally avoided here so its limited
+   * free-tier daily token budget is reserved for user-facing inference.
+   */
+  BACKGROUND_MODEL_ID: z.string().optional(),
   /** Max time (ms) for the Groq routing JSON call. */
   OMNI_ROUTER_TIMEOUT_MS: z.coerce.number().int().positive().optional(),
   /** Max time (ms) for sovereign local Ollama streaming in `/v1/chat/omni-stream` (default 10 min; slow models need more). */
@@ -196,6 +202,7 @@ const raw = envSchema.parse({
   GROQ_DELEGATE_MODEL: process.env.GROQ_DELEGATE_MODEL,
   GEMINI_API_KEY: process.env.GEMINI_API_KEY,
   GEMINI_MODEL: process.env.GEMINI_MODEL,
+  BACKGROUND_MODEL_ID: process.env.BACKGROUND_MODEL_ID,
   OMNI_ROUTER_TIMEOUT_MS: process.env.OMNI_ROUTER_TIMEOUT_MS,
   OMNI_LOCAL_TIMEOUT_MS: process.env.OMNI_LOCAL_TIMEOUT_MS,
   OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY,
@@ -351,6 +358,17 @@ export const env = {
   groqDelegateModel: raw.GROQ_DELEGATE_MODEL?.trim() || undefined,
   geminiApiKey: raw.GEMINI_API_KEY?.trim() || undefined,
   geminiModel: raw.GEMINI_MODEL?.trim() || 'gemini-2.5-flash',
+  /**
+   * Model identifier used by background workers (Chronos heartbeats and the
+   * Chief-of-Staff routing planner). Defaults to the configured Gemini Flash
+   * model; can be set to an OpenAI model id to force OpenAI for background
+   * work. Background callers must never route to Groq — its 100k TPD free
+   * tier is reserved for user-facing inference.
+   */
+  backgroundModelId:
+    raw.BACKGROUND_MODEL_ID?.trim() ||
+    raw.GEMINI_MODEL?.trim() ||
+    'gemini-2.5-flash',
   geminiOverseerModelFree: process.env['GEMINI_OVERSEER_MODEL_FREE'] ?? GEMINI_MODEL_OVERSEER_FREE,
   geminiOverseerFallback: process.env['GEMINI_OVERSEER_FALLBACK'] ?? GEMINI_OVERSEER_FALLBACK,
   omniRouterTimeoutMs: raw.OMNI_ROUTER_TIMEOUT_MS ?? 12_000,
