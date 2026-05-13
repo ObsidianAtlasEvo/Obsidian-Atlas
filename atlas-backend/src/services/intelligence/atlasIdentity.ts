@@ -1,5 +1,6 @@
 import { getDb } from '../../db/sqlite.js';
 import { assembleAtlasContext } from '../context/contextAssembler.js';
+import { listRecentSrgDecisionsSync } from '../governance/srgService.js';
 import { listTruthEntriesSync } from '../governance/truthLedgerService.js';
 import { buildSovereignChatContextPack } from './constitutionalContext.js';
 import {
@@ -86,14 +87,11 @@ function formatSemanticClaimsBlock(claims: SemanticClaimRow[]): string {
 
 function loadRecentDecisions(userId: string, limit: number): DecisionRow[] {
   try {
-    const db = getDb();
-    return db
-      .prepare(
-        `SELECT title, status, rationale FROM srg_decisions
-         WHERE user_id = ?
-         ORDER BY updated_at DESC LIMIT ?`
-      )
-      .all(userId, limit) as DecisionRow[];
+    return listRecentSrgDecisionsSync(userId, limit).map((r) => ({
+      title: r.title,
+      status: r.status,
+      rationale: r.rationale,
+    }));
   } catch {
     return [];
   }

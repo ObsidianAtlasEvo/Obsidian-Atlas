@@ -5,6 +5,7 @@ import {
 } from '../evolution/policyStore.js';
 import { listRecentMemories } from '../memory/memoryStore.js';
 import { getDb } from '../../db/sqlite.js';
+import { listStaleDraftSrgDecisionsSync } from '../governance/srgService.js';
 import {
   buildTruthLedgerBlock,
   buildAtlasConstitutionBlock,
@@ -120,14 +121,12 @@ function formatGovernanceBriefing(userId: string): string {
       )
       .all(userId) as Array<{ id: string; contradiction_strength: number; created_at: string }>;
 
-    // Draft decisions older than 7 days
-    const staleDrafts = db
-      .prepare(
-        `SELECT id, title, created_at FROM srg_decisions
-         WHERE user_id = ? AND status = 'draft' AND created_at < ?
-         ORDER BY created_at ASC LIMIT 3`
-      )
-      .all(userId, sevenDaysAgo) as Array<{ id: string; title: string; created_at: string }>;
+    // Draft decisions older than 7 days (routed through srgService for P4-A4 cutover)
+    const staleDrafts = listStaleDraftSrgDecisionsSync(userId, sevenDaysAgo, 3).map((d) => ({
+      id: d.id,
+      title: d.title,
+      created_at: d.created_at,
+    }));
 
     // Top 3 open unfinished business items by composite score
     const unfinished = db
