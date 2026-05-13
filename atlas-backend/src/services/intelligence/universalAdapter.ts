@@ -252,12 +252,17 @@ async function streamOpenAiCompatibleChat(params: {
   timeoutMs?: number;
   extraHeaders?: Record<string, string>;
 }): Promise<{ fullText: string; model: string }> {
+  // Safety cap: never send an unbounded request. OpenRouter (and other compat
+  // providers) interpret a missing max_tokens as the model's full context
+  // window, which on credit-metered tiers can fail with HTTP 402. All caller
+  // sites should pass an explicit maxTokens; this default is the fire-breaker.
+  const DEFAULT_STREAM_MAX_TOKENS = 4096;
   const body: Record<string, unknown> = {
     model: params.model,
     messages: openAiStyleMessages(params.messages),
     temperature: params.temperature ?? 0.35,
     stream: true,
-    ...(params.maxTokens ? { max_tokens: params.maxTokens } : {}),
+    max_tokens: params.maxTokens ?? DEFAULT_STREAM_MAX_TOKENS,
   };
 
   const controller = new AbortController();
@@ -802,6 +807,7 @@ export async function streamRegistryModel(params: {
           model: entry.apiModel,
           messages,
           onDelta,
+          maxTokens: 2048,
           signal,
           timeoutMs,
           extraHeaders: {
@@ -818,6 +824,7 @@ export async function streamRegistryModel(params: {
           model: entry.apiModel.replace(/^openai\//, ''),
           messages,
           onDelta,
+          maxTokens: 2048,
           signal,
           timeoutMs,
         });
@@ -843,6 +850,7 @@ export async function streamRegistryModel(params: {
         model: entry.apiModel,
         messages,
         onDelta,
+        maxTokens: 2048,
         signal,
         timeoutMs,
       });
