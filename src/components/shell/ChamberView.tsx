@@ -45,6 +45,9 @@ const ChangeControlChamber   = lazy(() => import('../../chambers/ChangeControlCh
 // Multi-Model Orchestration
 const ModelHubChamber        = lazy(() => import('../../chambers/ModelHubChamber'));
 
+// Reality Spine (§IX) — implementation-state ledger
+const RealityLedgerChamber   = lazy(() => import('../../chambers/RealityLedgerChamber'));
+
 // ── Suspense wrapper ──────────────────────────────────────────────────────
 
 function ChamberSuspense({ children }: { children: React.ReactNode }) {
@@ -147,7 +150,7 @@ export default function ChamberView() {
       case 'operating-manual':                        return placeholder('Operating Manual');
       case 'essential-mode':                          return placeholder('Essential Mode');
       case 'second-sun':                              return placeholder('Second Sun');
-      case 'reality-ledger':                          return placeholder('Reality Ledger');
+      case 'reality-ledger':                          return chamber(RealityLedgerChamber);
       case 'drift-center':                            return placeholder('Drift Center');
       case 'final-filter':                            return placeholder('Final Filter');
       case 'deep-work':                               return placeholder('Deep Work');

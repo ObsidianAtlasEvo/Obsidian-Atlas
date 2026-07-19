@@ -1,5 +1,6 @@
 import React from 'react';
 import { useAtlasStore } from '../store/useAtlasStore';
+import { REALITY_SPINE } from '../reality/realitySpine';
 
 interface PlaceholderChamberProps {
   mode: string;
@@ -91,7 +92,11 @@ const CHAMBER_DESCRIPTIONS: Record<string, { summary: string; when: string }> = 
 
 export default function PlaceholderChamber({ mode }: PlaceholderChamberProps) {
   const setActiveMode = useAtlasStore((s) => s.setActiveMode);
+  const activeMode = useAtlasStore((s) => s.activeMode);
   const info = CHAMBER_DESCRIPTIONS[mode];
+  // State-congruent presentation (§IV): show the true implementation state
+  // for this route from the Reality Spine, not an implied "coming soon".
+  const spine = REALITY_SPINE[activeMode];
 
   return (
     <div
@@ -118,7 +123,7 @@ export default function PlaceholderChamber({ mode }: PlaceholderChamberProps) {
             marginBottom: 12,
           }}
         >
-          {info?.when ?? 'Planned'} · Under Construction
+          {spine ? spine.state.replace(/_/g, ' ') : `${info?.when ?? 'Planned'} · Under Construction`}
         </div>
 
         <h2
@@ -143,6 +148,19 @@ export default function PlaceholderChamber({ mode }: PlaceholderChamberProps) {
             }}
           >
             {info.summary}
+          </p>
+        )}
+
+        {spine && (
+          <p
+            style={{
+              fontSize: '0.72rem',
+              color: 'rgba(226,232,240,0.28)',
+              lineHeight: 1.6,
+              margin: '12px 0 0',
+            }}
+          >
+            Current reality: {spine.evidence}
           </p>
         )}
       </div>
@@ -201,6 +219,24 @@ export default function PlaceholderChamber({ mode }: PlaceholderChamberProps) {
         }}
       >
         Return to Atlas
+      </button>
+
+      {/* State provenance — where this classification comes from */}
+      <button
+        onClick={() => setActiveMode('reality-ledger')}
+        style={{
+          background: 'transparent',
+          border: 'none',
+          color: 'rgba(201,162,39,0.45)',
+          fontSize: '0.68rem',
+          cursor: 'pointer',
+          fontFamily: 'inherit',
+          letterSpacing: '0.06em',
+          textDecoration: 'underline',
+          textUnderlineOffset: 3,
+        }}
+      >
+        View the Reality Ledger
       </button>
     </div>
   );

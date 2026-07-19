@@ -2,7 +2,7 @@
 // Atlas-Audit: [PERF-P9] Verified — Single-flight prefetch: Chrysalis, CoreSystemsView, RelationshipDynamics, ResonanceChamber (resonance + threads); intelligence trio unchanged.
 // Atlas-Audit: [EXEC-EVO] Verified — evolution-layer prefetch loads Chrysalis (matches App routing).
 // Atlas-Audit: [EXEC-ROUTE] Verified — Prefetch map covers reality-engine, systems, evolution-layer, people, threads (aligned with App switch).
-// Atlas-Audit: [EXEC-QL] Verified — reality-ledger + memory-vault prefetch entries load CoreSystemsView (same chunk as core-systems).
+// Atlas-Audit: [EXEC-QL] Updated 2026-07-19 — reality-ledger now prefetches RealityLedgerChamber (real Reality Spine surface); memory-vault still warms CoreSystemsView.
 // Atlas-Audit: [PERF-P6] Verified — Shell prefetch helpers (search, rail, settings, codex, bug hunter) mirror Lazy* import specifiers for intent/hover and conditional-mount warming.
 // Atlas-Audit: [PERF-P5] Verified — prefetchChamberForMode mirrors lazy import graph so Sidebar hover warms chunks before navigation (no duplicate path drift).
 // Atlas-Audit: [PERF-P4] Verified — Lazy GlobalSearch + IntelligenceRail (command/search surfaces) to shrink App entry graph.
@@ -99,7 +99,7 @@ const CHAMBER_PREFETCH: Partial<Record<AppState['activeMode'], () => Promise<unk
   'core-systems': prefetchCoreSystemsChunk,
   'reality-engine': prefetchCoreSystemsChunk,
   systems: prefetchCoreSystemsChunk,
-  'reality-ledger': prefetchCoreSystemsChunk,
+  'reality-ledger': () => import('../chambers/RealityLedgerChamber'),
   'memory-vault': prefetchCoreSystemsChunk,
   'evolution-layer': prefetchChrysalisChunk,
   people: prefetchRelationshipDynamicsChunk,
