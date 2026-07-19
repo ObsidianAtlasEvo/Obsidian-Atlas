@@ -132,14 +132,18 @@ export const REALITY_SPINE: Record<ActiveMode, FeatureRecord> = {
     mode: 'atlas', title: 'Atlas chamber (chat)', domain: 'Core',
     state: 'INTEGRATED_UNVERIFIED',
     evidence:
-      'Streams through the governed backend via src/lib/atlasOmniStream.ts → POST /v1/chat/omni-stream ' +
-      '(quota gating, policy profile, swarm/consensus routing, quality gate, async Overseer lens + evolution ' +
-      'trigger). Local conversation persistence retained. tsc --noEmit and vite build pass; no live run against ' +
-      'a deployed backend was performed in this pass, so runtime behavior is unverified (§IX rule: do not claim ' +
-      'RUNTIME_CONFIRMED from memory).',
+      'Streams through the governed backend via src/lib/atlasOmniStream.ts → POST /v1/chat/omni-stream. ' +
+      'Runtime pass 2026-07-19 (local: tsx src/index.ts + Ollama): the exact request shape this chamber sends ' +
+      'was confirmed end-to-end over SSE — status → routing → route → delta tokens → done {traceId, requestId, ' +
+      'reply, surface: god_mode_local, model, evolution: scheduled}; 200 after ~39s of real local inference; ' +
+      'async Overseer lens ran post-response and degraded non-fatally on a dead Groq key exactly as coded. ' +
+      'The backend CONTRACT is runtime-confirmed; the chamber UI itself has not been clicked through (auth ' +
+      'gate requires a local account), so the feature stays below RUNTIME_CONFIRMED.',
     gaps: [
-      'Not runtime-confirmed: no live click-through against a running atlas-backend + provider stack in this pass.',
-      'Corrections do not yet mutate memory state client-side (§VII) — that lives entirely in the Overseer/evolution backend loop, unverified here.',
+      'UI click-through pending: send/stream/abort/persist in the real browser behind the local auth gate.',
+      'npm run dev starts atlas-backend/src/server.ts (lite server, no omni-stream); the governed pipeline only runs via src/index.ts — dev script fixed this pass, see audit §14.',
+      'Cloud lanes unverifiable here: Groq and Supabase keys on this machine return 401 (dead credentials, not code defects).',
+      'Corrections do not yet mutate memory state client-side (§VII) — that lives entirely in the Overseer/evolution backend loop.',
     ],
   },
 

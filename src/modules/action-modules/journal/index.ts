@@ -1,1 +1,0 @@
-export { JournalModule } from './JournalModule';

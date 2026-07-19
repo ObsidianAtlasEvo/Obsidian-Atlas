@@ -105,3 +105,38 @@ Its unique dependencies (`AtlasGraph.tsx`, `LayeredResponse.tsx`, `DirectiveInta
 2. Runtime confirmation pass on the Atlas chamber's backend path (§9.2, unchanged).
 3. Original priorities 2–6 from §4 (unify the constitution; surface Privacy Center; connect Memory Vault; wire the three `BACKEND_ONLY` intelligence chambers; purge template residue in `constants.ts`) remain open.
 4. Eventually: audit the rest of `src/components/` (~76 remaining files) against the same "does its design system exist" test applied here, and against whether `ChamberView.tsx` actually routes to it. Expect most of it to be dead by the same criterion.
+
+---
+
+## Addendum 3 — legacy tree retired; first real runtime pass
+
+### 13. The orphaned `src/components/` tree: measured, then retired
+
+Wrote a module-graph reachability walk (static + dynamic imports, `@/` alias resolution) rooted at the real entry point (`index.html` → `src/main.tsx` — verified the only entry). Result: **53 files are reachable; not one file in flat `src/components/` is among them.** The live app is exactly `App.tsx` → `AppShell` → `NavRail`/`ChamberView` → 30 chambers in `src/chambers/` + their `src/lib`, `src/store`, `src/hooks`, `src/reality` support. Everything else — 80 files in `src/components/` (except `shell/`), 49 one-line re-export bridge shims in `src/chambers/`, and all of `src/modules/action-modules/` — was unreachable from the running application. No test file imported any of it either (the repo's only two test files cover `atlasWayfinding` and `atlasWorkspacePersistence`).
+
+Applied §XXXII ("a feature that cannot justify its existence should be merged, redesigned, hidden, or removed"): **deleted all three groups via `git rm`** (~21,000 lines; recoverable from history). This includes the previously-noted `LayeredResponse`, `DirectiveIntake`, `AtlasGraph`, both `AtlasGraphView` copies, `PrivacyCenter`, `IntelligenceChambersViews` (556 lines, backend-wired — a real loss candidate, but it imported `AtlasPanel` and `atlasAuthContext` from the same dead tree and styles itself in the nonexistent Tailwind vocabulary; rebuilding it against the live design system remains the §4 priority it always was), `ErrorBoundary`, `GlobalSearch`, `Sidebar`, and `lazyChamberModules` — dead names that Atlas-Audit comments across the repo still reference as if live. Verified after deletion: `tsc --noEmit` (web + backend), `vite build`, and `vitest run` (17/17) all pass.
+
+One knock-on: `isAtlasAuthDisabled()` in `src/lib/atlasApi.ts` now has zero consumers — its only user (`AuthGuard`) died with the tree. `VITE_ATLAS_AUTH_DISABLED` is therefore currently a no-op env var. Left in place pending a decision (delete it, or wire the live `AuthChamber` to honor it for dev).
+
+### 14. First real runtime pass (local backend + local Ollama)
+
+Ran the stack in this session: `atlas-backend` under `tsx`, Vite dev server, Ollama daemon with `llama3.1:8b-instruct-q8_0` present.
+
+**Finding (fixed): `npm run dev` ran the wrong backend.** `atlas-backend`'s `dev` script pointed at `src/server.ts` — a "lite" server registering only health/embeddings/models/orchestrate/governance-console. No omni-stream, no auth, no sovereignty, no memory routes. Every dev session was exercising an unrepresentative backend while production (`start` → `dist/index.js`) runs the full one. The first curl of this pass 404'd on `/v1/chat/omni-stream` because of exactly this (plus a Windows subtlety: the lite server's `127.0.0.1:3001` bind coexisted with the full server's later `0.0.0.0:3001` bind, and loopback traffic went to the lite one). Fixed: `dev` now runs `tsx watch src/index.ts`; the lite server remains available as `dev:lite`.
+
+**Backend contract: runtime-confirmed.** POST `/v1/chat/omni-stream` with the exact body shape `atlasOmniStream.ts` sends (userId, posture, lineOfInquiry, messages), on the sovereign local lane (via the code's own `ATLAS_TRUST_ROUTING_EMAIL_HEADER` dev mechanism — set as process env for the test run only, not persisted):
+
+- SSE sequence observed: `status` (routing) → `routing` {mode: direct_qa, posture: 1, lineOfInquiry: atlas-chamber} → `route` {strategy: god_mode_local} → `delta` tokens (real streamed inference) → `done` {traceId, requestId, reply, surface: god_mode_local, model: llama3.1:8b-instruct-q8_0, evolution: scheduled}. HTTP 200 after ~39 s of genuine local inference.
+- These are precisely the events the new client parses. The public cloud lane was also exercised and produced the honest failure chain: `route` {strategy: direct, rationale: chief_http_401} → `error` (Groq 401).
+- Post-turn side effects observed in server logs: Overseer lens ran async after `done` and failed on the dead Groq key **non-fatally**, falling back to the evolution trigger with the raw response — the exact degradation path the code promises.
+- The degraded-mode oracle + auto-recovery orchestrator ran unprompted, correctly diagnosing the two dead credentials and reporting `DEGRADED` on `/health` instead of pretending health (§IV state-congruence, observed working).
+
+**Environment findings (not code defects):** the Groq API key and Supabase key configured on this machine both return 401 — dead/rotated credentials. Cloud lanes and Supabase-backed persistence can't be verified until they're replaced.
+
+**Not completed: the browser click-through.** The app boots to the local `AuthChamber` (renders correctly; verified via page inspection). Creating the local instance requires entering a password, which the operator must do — an assistant must not create accounts or enter credentials. The frontend half of the runtime pass (send a message from the real chamber UI, watch tokens stream, verify abort now actually cancels, verify persistence) resumes the moment a local session exists. Accordingly the `atlas` spine entry keeps `INTEGRATED_UNVERIFIED` with narrowed, precise gaps: the backend contract is confirmed; the UI traversal is not.
+
+### 15. Honest completion statement for this pass
+
+**Complete and verified:** legacy-tree deletion (typecheck + build + tests green); dev-script fix; backend omni-stream contract runtime-confirmed on the local lane with real streamed inference; degraded-mode honesty observed live.
+**Blocked on operator:** browser click-through of the Atlas chamber (local login), Groq/Supabase key rotation for cloud-lane verification.
+**Unchanged:** priorities in §12; `atlas` remains `INTEGRATED_UNVERIFIED` until the UI traversal completes.

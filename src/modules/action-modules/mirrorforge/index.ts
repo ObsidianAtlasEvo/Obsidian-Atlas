@@ -1,1 +1,0 @@
-export { MirrorforgeModule } from './MirrorforgeModule';
