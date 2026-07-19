@@ -50,3 +50,33 @@ Secondary findings:
 ## 6. Architectural effect (§XXXIV.14)
 
 The Reality Spine inverts the repository's default failure mode. Until now, the interface could silently promise more than the system was; from now on, every route carries a typed, evidenced, user-visible classification, and upgrading a claim requires editing a single audited file. The ledger is itself listed in the ledger, with its own gaps. The next structural act should be priority 1 above: making the governed backend the spine of the actual conversation, so that continuity, truth, and memory stop being parallel constructs and become the same system.
+
+---
+
+## Addendum — same-day follow-up pass
+
+### 7. Priority 1 closed: Atlas chamber now routes through the governed backend
+
+`src/chambers/AtlasChamber.tsx` streamed browser→Ollama directly via `src/lib/ollama.ts`. Added `src/lib/atlasOmniStream.ts`, a streaming client for `POST /v1/chat/omni-stream` (quota gating, policy profile, swarm/consensus routing, quality gate, async Overseer lens + evolution trigger), and rewired `AtlasChamber` to use it. Same change fixed a latent bug: the chamber's "Stop generation" button updated UI state but never actually aborted the in-flight stream, because the request-lifecycle `AbortController` (`useChatRequestState`) was never connected to the fetch that `streamChat` created internally. `atlasOmniStream.ts` accepts an external `signal` for exactly this reason; abort now actually cancels the request.
+
+`src/reality/realitySpine.ts`'s `atlas` entry is updated accordingly: `PARTIALLY_INTEGRATED` → `INTEGRATED_UNVERIFIED`. Not raised further — `tsc --noEmit` and `vite build` pass, but no live run against a deployed backend + provider stack was performed in this environment. Per the ledger's own rule, `RUNTIME_CONFIRMED` may not be claimed from memory.
+
+### 8. New finding: a second, disconnected component architecture
+
+While tracing why `today-in-atlas` (labeled "Home" everywhere it's referenced — `Sidebar.tsx`, `GlobalSearch.tsx`, `CapabilitiesView.tsx`) didn't appear to call the backend despite last session's `.env.production` comment claiming it lands users on "Home (Groq via omni-stream)": that mode is routed by `ChamberView.tsx` to `PulseChamber`, which has zero backend calls. The component the comment actually describes — `src/components/HomeView.tsx`, 1471 lines, genuinely wired to `/v1/chat/omni-stream` with routing-provenance UI and resonance context — is never imported by `ChamberView` or any live route. It is orphaned.
+
+Pulling this thread further: `src/components/` contains at least 36 files (`HomeView.tsx`, `TodayInAtlas.tsx`, `Sidebar.tsx`, `GlobalSearch.tsx`, `SovereignAtrium.tsx`, `ConsoleView.tsx`, `DriftView.tsx`, `GapLedger.tsx`, `ResonanceChamber.tsx`, and more) built against an older prop-drilled architecture (`{ state: AppState; setState: React.Dispatch<React.SetStateAction<AppState>> }`), some duplicating the name of a live, Zustand-hook-based chamber in `src/chambers/`. A parallel `src/modules/action-modules/` tree and `src/components/lazyChamberModules.tsx`'s `Lazy*` exports reference this older tree. Almost none of it appears reachable from `AppShell` → `ChamberView`, which is the only router actually mounted by `App.tsx`. This is a second, larger instance of the systemic-integrity failure named in §2 above (real code, disconnected from what runs) — the prior audit's "legacy `Lazy*` export system... dead code" note undersold its size.
+
+**Not attempted this pass, and why:** reconciling or wiring in a ~1500-line component with unverified dependencies (`useSettingsStore`, `ResonanceEngine`, an `InteractionSignal` type, a full `state`/`setState` bridge to the Zustand store) without the ability to run the app and click through it in this environment would risk shipping an unverified, possibly-broken surface while claiming it as an improvement — exactly what §XXXI/§XXXII prohibit. This is recorded as the new top priority instead of being rushed.
+
+### 9. Revised priority queue
+
+1. **Reconcile or retire the `src/components/` legacy tree** (§8). Decide, file by file: promote to a real route (with a runtime verification pass), or delete as dead weight per §XXXII ("a feature that cannot justify its existence should be merged, redesigned, hidden, or removed"). `HomeView.tsx` vs `PulseChamber` for `today-in-atlas` is the first decision this forces.
+2. **Runtime confirmation pass on the Atlas chamber's new backend path** (§7) — run the app against a live atlas-backend + at least one provider, send a real message, confirm the SSE events, the Overseer/evolution side effects, and the abort fix, before claiming `RUNTIME_CONFIRMED`.
+3. Original priorities 2–6 from §4 above remain open and unchanged (unify the constitution; surface Privacy Center; connect Memory Vault; wire the three `BACKEND_ONLY` intelligence chambers; purge template residue in `constants.ts`).
+
+### 10. Honest completion statement for this pass
+
+**Complete and verified by typecheck/build:** `atlasOmniStream.ts` added; `AtlasChamber.tsx` rewired; `tsc --noEmit` (web + backend) and `vite build` pass. Reality Spine and env-var comments updated to match.
+**Unverified:** runtime behavior of the new Atlas-chamber path — same environment limitation as the prior pass (no Vite/Vitest dev-server execution available here). Run the app locally against atlas-backend and confirm before wider release.
+**Not attempted (deferred, with reasons):** the `src/components/` legacy-tree reconciliation (§8/§9.1) — real, large, and requires runtime verification this environment cannot provide.

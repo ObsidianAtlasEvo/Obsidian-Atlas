@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useAtlasStore } from '../store/useAtlasStore';
-import { streamChat, OllamaError, type OllamaMessage } from '../lib/ollama';
+import { streamOmniChat, AtlasStreamError, type OmniMessage } from '../lib/atlasOmniStream';
+import { atlasTraceUserId } from '../lib/atlasTraceContext';
 import { buildAtlasSystemPrompt } from '../lib/atlasPrompt';
 import { generateId, nowISO } from '../lib/persistence';
 import { useChatRequestState, type ChatRequestStatus } from '../hooks/useChatRequestState';
@@ -321,10 +322,10 @@ export default function AtlasChamber() {
     };
   }, [request]);
 
-  // Build conversation history for Ollama context
-  const buildMessageHistory = useCallback((): OllamaMessage[] => {
+  // Build conversation history sent to the governed Atlas backend
+  const buildMessageHistory = useCallback((): OmniMessage[] => {
     const systemPrompt = buildAtlasSystemPrompt(store);
-    const history: OllamaMessage[] = [
+    const history: OmniMessage[] = [
       { role: 'system', content: systemPrompt },
     ];
 
@@ -468,7 +469,7 @@ export default function AtlasChamber() {
     };
 
     try {
-      streamChat(history, {
+      streamOmniChat(history, {
         onToken: (token) => {
           // FSM: submitting → streaming (on first token)
           if (request.stateRef.current.status === 'submitting') {
@@ -559,7 +560,7 @@ export default function AtlasChamber() {
             });
           }
         },
-        onError: (err: OllamaError) => {
+        onError: (err: AtlasStreamError) => {
           if (persistTimerRef.current) {
             clearTimeout(persistTimerRef.current);
             persistTimerRef.current = null;
@@ -597,12 +598,10 @@ export default function AtlasChamber() {
 
           request.transition('failed');
 
-          let errorMsg = err.message;
-          if (err.code === 'NETWORK') {
-            errorMsg = 'Cannot reach the local model. Make sure Ollama is running: `ollama serve`';
-          } else if (err.code === 'MODEL_NOT_FOUND') {
-            errorMsg = `Model not found. Pull it with: ollama pull ${process.env.OLLAMA_MODEL ?? 'llama3.1:70b'}`;
-          }
+          const errorMsg =
+            err.code === 'NETWORK'
+              ? 'Cannot reach the Atlas backend. Check your connection and try again.'
+              : err.message;
 
           finalizeMessage(assistantMsgId, {
             requestStatus: 'failed',
@@ -617,9 +616,14 @@ export default function AtlasChamber() {
             });
           }
         },
+      }, {
+        userId: atlasTraceUserId(store),
+        posture: store.activePosture.depth,
+        lineOfInquiry: 'atlas-chamber',
+        signal: controller.signal,
       });
     } catch {
-      // Catch any synchronous throw from streamChat setup
+      // Catch any synchronous throw from streamOmniChat setup
       cleanupThinking();
       setIsStreaming(false);
       request.transition('failed');

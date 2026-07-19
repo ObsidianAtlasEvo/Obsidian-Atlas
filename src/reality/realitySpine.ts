@@ -88,10 +88,13 @@ const LOCAL_ONLY_GAP =
 const NO_UI_GAP = 'No user-facing surface; route renders PlaceholderChamber.';
 
 /**
- * The ledger. Audited 2026-07-19 against ChamberView routing, chamber source,
- * and atlas-backend registered routes (src/index.ts). Central audited fact:
- * ModelHubChamber is the only chamber that calls atlas-backend; Atlas chat
- * streams browser→Ollama directly, bypassing the governed pipeline entirely.
+ * The ledger. First audited 2026-07-19 against ChamberView routing, chamber source,
+ * and atlas-backend registered routes (src/index.ts). Updated same day: the Atlas
+ * chamber (mode `atlas`) now streams through the governed backend (`atlasOmniStream.ts`
+ * → `/v1/chat/omni-stream`) instead of calling Ollama directly from the browser — see
+ * its entry below for the current, unverified-at-runtime state. ModelHubChamber and
+ * Atlas are the two chambers now known to call atlas-backend; most others remain
+ * local-only (LOCAL_ONLY_GAP below).
  */
 export const REALITY_SPINE: Record<ActiveMode, FeatureRecord> = {
   // ── Command ──────────────────────────────────────────────────────────────
@@ -104,8 +107,12 @@ export const REALITY_SPINE: Record<ActiveMode, FeatureRecord> = {
   'today-in-atlas': {
     mode: 'today-in-atlas', title: 'Home — prepared center', domain: 'Command',
     state: 'FRONTEND_ONLY',
-    evidence: 'PulseChamber renders from local store state.',
-    gaps: [LOCAL_ONLY_GAP, 'Home does not read priorities, unfinished business, or memory from any governed source.'],
+    evidence: 'Routed to PulseChamber (ChamberView.tsx), which renders from local store state only.',
+    gaps: [
+      LOCAL_ONLY_GAP,
+      'Home does not read priorities, unfinished business, or memory from any governed source.',
+      'src/components/HomeView.tsx is a substantial, separately-built alternative (omni-stream wired, routing provenance, resonance context) but is not imported by ChamberView or any live route — orphaned. Reconciling it with PulseChamber, or wiring it in directly, is undecided and unverified; do not assume it works without a runtime check first.',
+    ],
   },
   'directive-center': {
     mode: 'directive-center', title: 'Directive center', domain: 'Command',
@@ -123,11 +130,16 @@ export const REALITY_SPINE: Record<ActiveMode, FeatureRecord> = {
   // ── Conversation core ────────────────────────────────────────────────────
   atlas: {
     mode: 'atlas', title: 'Atlas chamber (chat)', domain: 'Core',
-    state: 'PARTIALLY_INTEGRATED',
-    evidence: 'Working streaming chat via src/lib/ollama.ts directly against Ollama; local conversation persistence.',
+    state: 'INTEGRATED_UNVERIFIED',
+    evidence:
+      'Streams through the governed backend via src/lib/atlasOmniStream.ts → POST /v1/chat/omni-stream ' +
+      '(quota gating, policy profile, swarm/consensus routing, quality gate, async Overseer lens + evolution ' +
+      'trigger). Local conversation persistence retained. tsc --noEmit and vite build pass; no live run against ' +
+      'a deployed backend was performed in this pass, so runtime behavior is unverified (§IX rule: do not claim ' +
+      'RUNTIME_CONFIRMED from memory).',
     gaps: [
-      'Bypasses atlas-backend /v1/chat orchestration: no intent classification, no context assembly, no memory extraction, no constitutional review, no trace (§VI pipeline unused).',
-      'Corrections do not mutate memory state (§VII).',
+      'Not runtime-confirmed: no live click-through against a running atlas-backend + provider stack in this pass.',
+      'Corrections do not yet mutate memory state client-side (§VII) — that lives entirely in the Overseer/evolution backend loop, unverified here.',
     ],
   },
 
