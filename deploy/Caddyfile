@@ -24,9 +24,14 @@ obsidianatlastech.com, www.obsidianatlastech.com {
 		reverse_proxy 127.0.0.1:3001
 	}
 
-	# Optional: same-origin Ollama for browser (matches default OLLAMA_CHAT_URL /ollama/api/chat)
+	# Optional: same-origin Ollama (matches default OLLAMA_CHAT_URL /ollama/api/chat).
+	# If /ollama/* returns 403 while 127.0.0.1:11434 works, Ollama is blocking the public Host/origin.
+	# Fix: `sudo systemctl edit ollama` → Environment=OLLAMA_ORIGINS=https://YOURDOMAIN,https://www.YOURDOMAIN,*
+	# then `daemon-reload` + `restart ollama`.
 	handle_path /ollama/* {
-		reverse_proxy 127.0.0.1:11434
+		reverse_proxy 127.0.0.1:11434 {
+			header_up Host 127.0.0.1:11434
+		}
 	}
 
 	handle {

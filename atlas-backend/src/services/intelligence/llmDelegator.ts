@@ -1,4 +1,5 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import { resolveGeminiApiModelId } from './geminiApiModel.js';
 import { env } from '../../config/env.js';
 import { getPolicyProfile } from '../evolution/policyStore.js';
 import {
@@ -166,7 +167,7 @@ function splitSystemAndRest(msgs: DelegatorMessage[]): { system: string; rest: D
 }
 
 function geminiModelId(): string {
-  return env.geminiModel?.trim() || 'gemini-2.0-flash';
+  return resolveGeminiApiModelId(env.geminiModel?.trim() || null, 'gemini-2.0-flash');
 }
 
 async function geminiGenerateStream(
@@ -191,7 +192,7 @@ async function geminiGenerateStream(
   let full = '';
 
   try {
-    const stream = await ai.getGenerativeModel({ model: "gemini-1.5-flash" }).generateContentStream({
+    const stream = await ai.getGenerativeModel({ model }).generateContentStream({
       contents,
       systemInstruction: system || undefined,
       generationConfig: {

@@ -1,4 +1,5 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import { resolveGeminiApiModelId } from './geminiApiModel.js';
 import { env } from '../../config/env.js';
 import type { LlmRegistryEntry } from './llmRegistry.js';
 
@@ -177,6 +178,7 @@ export async function streamGeminiChat(params: {
   const rest = params.messages.filter((m) => m.role !== 'system');
 
   const ai = new GoogleGenerativeAI(key);
+  const apiModel = resolveGeminiApiModelId(params.model, 'gemini-2.0-flash');
   const contents = rest.map((m) => ({
     role: m.role === 'assistant' ? ('model' as const) : ('user' as const),
     parts: [{ text: m.content }],
@@ -187,7 +189,7 @@ export async function streamGeminiChat(params: {
   let full = '';
 
   try {
-    const stream = await ai.getGenerativeModel({ model: "gemini-1.5-flash" }).generateContentStream({
+    const stream = await ai.getGenerativeModel({ model: apiModel }).generateContentStream({
       contents,
       systemInstruction: system || undefined,
       generationConfig: {
@@ -351,7 +353,10 @@ export async function streamRegistryModel(params: {
       throw new Error('OpenRouter (or OpenAI) credentials not configured for this model');
     }
     case 'gemini_sdk': {
-      const model = entry.apiModel || env.geminiModel?.trim() || 'gemini-1.5-pro';
+      const model = resolveGeminiApiModelId(
+        entry.apiModel || env.geminiModel?.trim() || null,
+        'gemini-2.0-flash'
+      );
       return streamGeminiChat({
         model,
         messages,
@@ -468,6 +473,7 @@ export async function completeGeminiChat(params: {
   const rest = params.messages.filter((m) => m.role !== 'system');
 
   const ai = new GoogleGenerativeAI(key);
+  const apiModel = resolveGeminiApiModelId(params.model, 'gemini-2.0-flash');
   const contents = rest.map((m) => ({
     role: m.role === 'assistant' ? ('model' as const) : ('user' as const),
     parts: [{ text: m.content }],
@@ -476,7 +482,7 @@ export async function completeGeminiChat(params: {
   const controller = new AbortController();
   const t = params.timeoutMs ? setTimeout(() => controller.abort(), params.timeoutMs) : undefined;
   try {
-    const response = await ai.getGenerativeModel({ model: "gemini-1.5-flash" }).generateContent({
+    const response = await ai.getGenerativeModel({ model: apiModel }).generateContent({
       contents,
       systemInstruction: system || undefined,
       generationConfig: {

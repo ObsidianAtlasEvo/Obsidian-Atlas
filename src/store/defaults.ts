@@ -8,8 +8,15 @@ import type { AppState } from '@/types';
 
 const now = new Date().toISOString();
 
+/** Production builds can set `VITE_ATLAS_DEFAULT_ACTIVE_MODE=today-in-atlas` so first paint uses `/api/.../omni-stream` (Groq) instead of the Atlas chamber’s `/ollama` client. */
+function initialActiveMode(): AppState['activeMode'] {
+  const v = import.meta.env.VITE_ATLAS_DEFAULT_ACTIVE_MODE?.trim();
+  if (v === 'today-in-atlas') return 'today-in-atlas';
+  return 'atlas';
+}
+
 export const defaultAppState: Omit<AppState, 'currentUser'> = {
-  activeMode: 'atlas',
+  activeMode: initialActiveMode(),
   absoluteSignalMode: false,
   isSearchOpen: false,
   selectedEntityId: null,

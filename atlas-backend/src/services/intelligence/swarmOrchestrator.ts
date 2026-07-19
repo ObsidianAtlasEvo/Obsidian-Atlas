@@ -577,7 +577,7 @@ export async function executeGroqGeminiDualConsensus(input: {
         phase: 'step',
         message: `Gemini lane degraded: ${e instanceof Error ? e.message : String(e)}`,
         step: 2,
-        model: 'gemini-1.5-pro',
+        model: geminiModel,
       });
       return { text: '(Gemini lane unavailable)', model: geminiModel };
     }),

@@ -30,7 +30,7 @@ export async function isLocalOllamaReachable(signal?: AbortSignal): Promise<bool
   const controller = new AbortController();
   const t = setTimeout(() => controller.abort(), 2500);
   try {
-    const res = await fetch(`${env.ollamaBaseUrl}/api/tags`, {
+    const res = await fetch(`${env.ollamaBaseUrl}/tags`, {
       method: 'GET',
       signal: signal ?? controller.signal,
     });

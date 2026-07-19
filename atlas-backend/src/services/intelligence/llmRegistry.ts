@@ -33,7 +33,7 @@ export const LLM_REGISTRY: readonly LlmRegistryEntry[] = [
     context: '2M',
     tier: 'free',
     backend: 'gemini_sdk',
-    apiModel: 'gemini-1.5-pro',
+    apiModel: 'gemini-2.0-flash',
   },
   {
     id: 'claude-3-5-sonnet',
