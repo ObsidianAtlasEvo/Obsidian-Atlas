@@ -111,7 +111,7 @@ export const REALITY_SPINE: Record<ActiveMode, FeatureRecord> = {
     gaps: [
       LOCAL_ONLY_GAP,
       'Home does not read priorities, unfinished business, or memory from any governed source.',
-      'src/components/HomeView.tsx is a substantial, separately-built alternative (omni-stream wired, routing provenance, resonance context) but is not imported by ChamberView or any live route — orphaned. Reconciling it with PulseChamber, or wiring it in directly, is undecided and unverified; do not assume it works without a runtime check first.',
+      'A richer alternative (src/components/HomeView.tsx, omni-stream wired) was found and evaluated, then deleted: it depended on a Tailwind utility design system (gold-500/ivory/stone/obsidian-surface/glass-obsidian/instrument-label) with zero definitions anywhere in this repo\'s CSS, so mounting it would have rendered unstyled. See atlas-governance/REALITY_AUDIT_2026-07-19.md §11. A real richer Home (priorities, unfinished business, memory, inquiry) remains open work — build it against the live design system (CSS custom properties in atlas-tokens.css), not by reviving the deleted file.',
     ],
   },
   'directive-center': {
@@ -191,7 +191,7 @@ export const REALITY_SPINE: Record<ActiveMode, FeatureRecord> = {
   pulse: {
     mode: 'pulse', title: 'Intelligence pulse', domain: 'Bridge',
     state: 'FRONTEND_ONLY',
-    evidence: 'PulseChamber renders local pulse items.',
+    evidence: 'PulseChamber renders local pulse items. Still aliased with `today-in-atlas` in ChamberView.tsx — same component serves both entry points today; splitting them requires a real, distinct Home surface first (see `today-in-atlas` gaps).',
     gaps: ['Pulse items are not derived from any signal pipeline.', LOCAL_ONLY_GAP],
   },
   council: {

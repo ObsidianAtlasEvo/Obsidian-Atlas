@@ -80,3 +80,28 @@ Pulling this thread further: `src/components/` contains at least 36 files (`Home
 **Complete and verified by typecheck/build:** `atlasOmniStream.ts` added; `AtlasChamber.tsx` rewired; `tsc --noEmit` (web + backend) and `vite build` pass. Reality Spine and env-var comments updated to match.
 **Unverified:** runtime behavior of the new Atlas-chamber path — same environment limitation as the prior pass (no Vite/Vitest dev-server execution available here). Run the app locally against atlas-backend and confirm before wider release.
 **Not attempted (deferred, with reasons):** the `src/components/` legacy-tree reconciliation (§8/§9.1) — real, large, and requires runtime verification this environment cannot provide.
+
+---
+
+## Addendum 2 — HomeView vs PulseChamber, resolved
+
+### 11. Decision: retire `src/components/HomeView.tsx`; keep PulseChamber
+
+Investigated the first item of the revised priority queue (§9.1): decide `HomeView.tsx` vs `PulseChamber` for the `today-in-atlas` ("Home") route. Read both fully.
+
+**`PulseChamber.tsx`** (393 lines, live, routed for both `pulse` and `today-in-atlas`): greeting, session-intent picker, quick stats, a pulse-item list with add/remove, a "Begin Session" handoff into the Atlas chamber. Small, but real, on-brand, and styled with this repo's actual live design system (CSS custom properties from `atlas-tokens.css` + inline styles — the same idiom `AtlasChamber.tsx` uses).
+
+**`HomeView.tsx`** (1471 lines, unrouted): a genuinely richer concept — three-column layout, live inquiry surface wired to `/v1/chat/omni-stream`, favorites, quick access, a background `AtlasGraph`, routing-provenance display. On functionality alone this reads closer to Vision §XI's description of Home. But every visual surface in it is built from Tailwind utility classes against a design system that does not exist in this repository: `gold-500`, `ivory`, `stone`, `obsidian-surface`, `glass-obsidian`, `instrument-label`, and similar tokens appear nowhere in `atlas-tokens.css`, `src/index.css`, or any Tailwind `@theme` block (checked directly — grepped for `@theme` across the repo: zero matches; grepped for `.glass-obsidian`/`.obsidian-surface`/`.instrument-label` definitions: zero matches). 80 files under `src/components/` use this same vocabulary; zero files under the live `src/chambers/` tree do. These are two different, incompatible design systems, and only one of them is connected to real CSS. Mounting `HomeView` today would render an unstyled, broken-looking page — the exact "beautiful interface concealing shallow logic" (inverted: shallow *appearance* concealing real logic) that §XXXI/§XXV exist to prevent, just discovered before shipping instead of after.
+
+Its unique dependencies (`AtlasGraph.tsx`, `LayeredResponse.tsx`, `DirectiveIntake.tsx`) were checked: `LayeredResponse` and `DirectiveIntake` have no other importers (dead once `HomeView` is gone); `AtlasGraph` is also imported by `src/chambers/AtlasGraphView.tsx` and a duplicate `src/components/AtlasGraphView.tsx` — neither of which is routed in `ChamberView.tsx` either, so `AtlasGraph` was already effectively dead. None of these were deleted in this pass (scope discipline: the ask was to resolve the Home/Pulse duplication specifically, not to clear the whole legacy tree) — they're noted here so the next pass doesn't have to re-derive it.
+
+**Action taken:** deleted `src/components/HomeView.tsx` (`git rm`, so it's recoverable from history, not silently gone). Updated `src/reality/realitySpine.ts`: `today-in-atlas` no longer lists the orphan as an open gap — it lists the retirement and why, plus a note that a real richer Home is still open work, to be built against the live design system next time, not by reviving the deleted file. Added a matching note to the `pulse` entry that it's still deliberately aliased with `today-in-atlas` (one component, two entry points) pending that future work. `tsc --noEmit` (web + backend) and `vite build` pass after the deletion.
+
+**What this did not do:** it did not build the richer Home surface Vision §XI actually asks for (priorities, unfinished business, relevant memory, system health, one meaningful thread). `PulseChamber` remains a minimal placeholder for that ambition, honestly labeled as such in the ledger. That is real, scoped, future work — building it against `atlas-tokens.css` conventions, most likely reusing the inquiry-surface pattern now proven in `AtlasChamber.tsx`/`atlasOmniStream.ts` rather than reviving any of the deleted Tailwind-era code.
+
+### 12. Revised priority queue
+
+1. **Build a real Home surface for `today-in-atlas`**, in the live design system, using `atlasOmniStream.ts` for any inquiry surface it includes. Un-alias it from `pulse` once it exists as its own thing.
+2. Runtime confirmation pass on the Atlas chamber's backend path (§9.2, unchanged).
+3. Original priorities 2–6 from §4 (unify the constitution; surface Privacy Center; connect Memory Vault; wire the three `BACKEND_ONLY` intelligence chambers; purge template residue in `constants.ts`) remain open.
+4. Eventually: audit the rest of `src/components/` (~76 remaining files) against the same "does its design system exist" test applied here, and against whether `ChamberView.tsx` actually routes to it. Expect most of it to be dead by the same criterion.
