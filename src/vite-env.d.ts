@@ -2,7 +2,6 @@
 
 interface ImportMetaEnv {
   readonly VITE_ATLAS_API_URL?: string;
-  readonly VITE_ATLAS_AUTH_DISABLED?: string;
   /** Production: SPA and API share a host; use relative `/api` paths without `VITE_ATLAS_API_URL`. */
   readonly VITE_ATLAS_SAME_ORIGIN?: string;
   /** First screen after load: `today-in-atlas` = Home orientation surface (local-only); default `atlas` = Atlas chamber (governed backend). See src/reality/realitySpine.ts for current per-mode state — do not infer it from this comment. */

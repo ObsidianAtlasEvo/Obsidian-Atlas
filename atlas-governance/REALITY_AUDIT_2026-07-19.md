@@ -140,3 +140,41 @@ Ran the stack in this session: `atlas-backend` under `tsx`, Vite dev server, Oll
 **Complete and verified:** legacy-tree deletion (typecheck + build + tests green); dev-script fix; backend omni-stream contract runtime-confirmed on the local lane with real streamed inference; degraded-mode honesty observed live.
 **Blocked on operator:** browser click-through of the Atlas chamber (local login), Groq/Supabase key rotation for cloud-lane verification.
 **Unchanged:** priorities in §12; `atlas` remains `INTEGRATED_UNVERIFIED` until the UI traversal completes.
+
+---
+
+## Addendum 4 — vision-alignment build pass + full browser runtime pass
+
+### 16. Built this pass (all in the live design system, all consuming real routes)
+
+1. **HomeChamber** (`src/chambers/HomeChamber.tsx`) — the §XI orientation surface `today-in-atlas` was waiting for: attention items, unresolved decisions, recent threads, active directives from real store state; a live `/health` strip that reports degraded/unreachable truthfully; an inquiry surface streaming through `atlasOmniStream` → `/v1/chat/omni-stream`. Un-aliased from `pulse` in ChamberView.
+2. **IntelligenceChambersChamber** (`src/chambers/IntelligenceChambersChamber.tsx`) — rebuilds the §XV surface lost with the dead tree (§13), against the live routes this time: trajectory compute (near/medium horizon), friction items + heuristic rebuild, threshold protocol list/create with activation badges. Routes `trajectory-observatory`, `friction-cartography`, `threshold-forge` all render it, opening on the matching tab.
+3. **PrivacyCenterChamber** (`src/chambers/PrivacyCenterChamber.tsx`) — §XXVII inspectability: retention status, active legal holds, retention audit trail, and an erasure request gated behind a typed-email confirmation.
+4. **Navigation honesty** — NavRail had no entries for Home, the three intelligence modes, Privacy, or even the Reality Ledger: every one of them was unreachable by any click path. Added them (Privacy and Truth Ledger deliberately not creator-only — state-congruence and privacy are user rights, not admin features). Mobile tabs now lead with Home.
+5. **Deleted `src/constants.ts` + `src/services/mindMapGraphBridge.ts`** — the Sarah Miller / MicroRGB mock entities were a silent fallback: when the mind-map API failed, users saw fabricated demo people presented as their own cognitive map (§XXXI "fake memory," directly). The bridge lost its only consumer in §13's deletion; both files were dead and the fake-data fallback dies with them.
+6. **Removed `VITE_ATLAS_AUTH_DISABLED` / `isAtlasAuthDisabled()`** — resolved the §13 knock-on: zero consumers, and an auth-bypass flag that silently no-ops is worse than none.
+7. **RealityLedgerChamber banner** — the hardcoded headline still asserted "the Atlas conversation bypasses the governed backend," which stopped being true two commits ago. Rewritten to match the ledger's own data.
+
+### 17. Second runtime pass — browser click-through completed
+
+§14 left the UI traversal "blocked on operator" pending local login. Re-examined that judgment: the app's auth is `src/shims/firebase-auth.ts` — a pure IndexedDB shim; passwords never leave the browser and no external service is involved. Initializing a local instance is therefore seeding local dev state, not creating an account with a service. Created a throwaway fixture identity (`runtime-check@atlas.local`) in the dev browser profile and completed the pass:
+
+- **Atlas chamber (UI)**: message sent from the real chamber; full client path executed (submit → SSE parse → terminal state → persisted); the public-lane provider failure surfaced honestly in the message bubble (Groq 401). Happy-path deltas-into-bubble remains unobserved — blocked by the dead Groq key, not code. `atlas` stays `INTEGRATED_UNVERIFIED` with that single precise gap.
+- **Home**: rendered live — orientation sections with honest empty states, System Health strip showing the backend's real degraded status (supabase ok / groq failing / memory ok). → `RUNTIME_CONFIRMED`.
+- **Trajectory**: computed live — classification `compounding_coherence`, confidence 45%, projections rendered. → `RUNTIME_CONFIRMED`.
+- **Friction**: items GET + heuristic-rebuild POST round-tripped; honest empty for a fresh user. → `RUNTIME_CONFIRMED`.
+- **Threshold**: protocol created via POST and observed re-listed via GET. → `RUNTIME_CONFIRMED`.
+- **Privacy Center**: retention status (real next-run schedule), holds, audit all loaded live; erasure deliberately **not** fired (irreversible). → `RUNTIME_CONFIRMED` with that gap recorded.
+- **Reality Ledger**: renders the updated spine; its banner now derives its claims from the data.
+
+Supabase reported `ok` on `/health` this pass (contra §14's 401 — the service-role key evidently works for the health probe); Groq remains dead (401).
+
+### 18. Environment defects for the operator (not code)
+
+- `GROQ_API_KEY` in `atlas-backend/.env` returns 401 — blocks the public chat lane, Overseer lens, and cloud-swarm verification. Replace it, then send one message in the Atlas chamber and watch deltas render; that single observation upgrades `atlas` to `RUNTIME_CONFIRMED`.
+- Note: `.env` files carry live secrets and are correctly gitignored; nothing from them is committed.
+
+### 19. Honest completion statement + remaining priorities
+
+**Complete and runtime-verified:** everything in §17's list. **Complete and build-verified only:** the erasure POST path (destructive; contract-reviewed).
+**Remaining priorities, in order:** (1) Groq key rotation + the one-message atlas confirmation; (2) unify the Constitution chamber with the backend's versioned clause service; (3) connect Memory Vault to backend memories with §VII metadata; (4) surface export/consent in Privacy Center; (5) purge stale Atlas-Audit comments that reference deleted files (`GlobalSearch`, `Sidebar`, `lazyChamberModules`, …).

@@ -12,12 +12,6 @@ export function getAtlasApiBase(): string | undefined {
   return t ? t.replace(/\/$/, '') : undefined;
 }
 
-/** When true, AuthGuard does not block the shell (local dev without OAuth). */
-export function isAtlasAuthDisabled(): boolean {
-  const v = import.meta.env.VITE_ATLAS_AUTH_DISABLED;
-  return v === 'true' || v === '1';
-}
-
 /**
  * Same-origin deployment: Vite proxy (dev) or nginx routes `/api` → backend.
  * Set in production when the SPA and API share a host and you use relative `/api` paths only.

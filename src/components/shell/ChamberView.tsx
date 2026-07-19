@@ -10,6 +10,7 @@ const AuthChamber        = lazy(() => import('../../chambers/AuthChamber'));
 const JournalChamber     = lazy(() => import('../../chambers/JournalChamber'));
 const DoctrineChamber    = lazy(() => import('../../chambers/DoctrineChamber'));
 const PulseChamber       = lazy(() => import('../../chambers/PulseChamber'));
+const HomeChamber        = lazy(() => import('../../chambers/HomeChamber'));
 const PlaceholderChamber = lazy(() => import('../../chambers/PlaceholderChamber'));
 
 // Phase 2 — Functional Depth
@@ -47,6 +48,12 @@ const ModelHubChamber        = lazy(() => import('../../chambers/ModelHubChamber
 
 // Reality Spine (§IX) — implementation-state ledger
 const RealityLedgerChamber   = lazy(() => import('../../chambers/RealityLedgerChamber'));
+
+// Intelligence chambers (§XV) — trajectory / friction / threshold via live backend routes
+const IntelligenceChambersChamber = lazy(() => import('../../chambers/IntelligenceChambersChamber'));
+
+// Privacy Center (§XXVII) — retention / holds / erasure / audit via live backend routes
+const PrivacyCenterChamber   = lazy(() => import('../../chambers/PrivacyCenterChamber'));
 
 // ── Suspense wrapper ──────────────────────────────────────────────────────
 
@@ -98,7 +105,8 @@ export default function ChamberView() {
       // ── Phase 1: Core ───────────────────────────────────────────────────
       case 'atlas':                                   return chamber(AtlasChamber);
       case 'journal':                                 return chamber(JournalChamber);
-      case 'pulse': case 'today-in-atlas':            return chamber(PulseChamber);
+      case 'today-in-atlas':                          return chamber(HomeChamber);
+      case 'pulse':                                   return chamber(PulseChamber);
       case 'doctrine':                                return chamber(DoctrineChamber);
 
       // ── Phase 2: Functional Depth ───────────────────────────────────────
@@ -141,7 +149,7 @@ export default function ChamberView() {
       case 'vault':                                   return placeholder('Vault');
       case 'threads':                                 return placeholder('Threads');
       case 'chambers':                                return placeholder('Chambers');
-      case 'privacy-center':                          return placeholder('Privacy Center');
+      case 'privacy-center':                          return chamber(PrivacyCenterChamber);
       case 'roadmap':                                 return placeholder('Roadmap');
       case 'onboarding':                              return placeholder('Onboarding');
       case 'evolution-layer':                         return placeholder('Evolution Layer');
@@ -158,9 +166,9 @@ export default function ChamberView() {
 
       case 'strategic-modeling':                      return placeholder('Strategic Modeling');
       case 'sovereign-atrium':                        return placeholder('Sovereign Atrium');
-      case 'trajectory-observatory':                  return placeholder('Trajectory Observatory');
-      case 'friction-cartography':                    return placeholder('Friction Cartography');
-      case 'threshold-forge':                         return placeholder('Threshold Forge');
+      case 'trajectory-observatory':
+      case 'friction-cartography':
+      case 'threshold-forge':                         return chamber(IntelligenceChambersChamber);
       case 'arena':                                   return placeholder('Arena');
 
       case 'auth':                                    return chamber(AuthChamber);

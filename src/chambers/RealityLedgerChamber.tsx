@@ -167,10 +167,10 @@ export default function RealityLedgerChamber() {
           <div style={{ color: T.muted, fontSize: '0.8rem', lineHeight: 1.6 }}>
             {total} routed surfaces. {verifiedCount} verified at runtime. {usableCount} usable today
             (local persistence or partial integration); the remainder are backend-only, scaffolds, or
-            doctrine awaiting construction. The Atlas conversation currently streams directly to the
-            local model and bypasses the governed backend pipeline — memory extraction, constitutional
-            review, and orchestration traces do not yet touch the primary experience. That is the
-            single highest-leverage gap in the system.
+            doctrine awaiting construction. The primary Atlas conversation and Home inquiry now stream
+            through the governed backend (`/v1/chat/omni-stream`); most other chambers still persist
+            locally without governed memory — closing that gap, surface by surface, is the current
+            work. Per-surface evidence and gaps below are the authoritative record.
           </div>
         </section>
 

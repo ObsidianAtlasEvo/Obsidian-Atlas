@@ -105,13 +105,16 @@ export const REALITY_SPINE: Record<ActiveMode, FeatureRecord> = {
     gaps: ['No chamber consumes the overview endpoint.', NO_UI_GAP],
   },
   'today-in-atlas': {
-    mode: 'today-in-atlas', title: 'Home — prepared center', domain: 'Command',
-    state: 'FRONTEND_ONLY',
-    evidence: 'Routed to PulseChamber (ChamberView.tsx), which renders from local store state only.',
+    mode: 'today-in-atlas', title: 'Home — orientation surface', domain: 'Command',
+    state: 'RUNTIME_CONFIRMED',
+    evidence:
+      'HomeChamber.tsx. Runtime-confirmed 2026-07-19 (live dev session, fresh local user): orientation sections ' +
+      'rendered with honest empty states, System Health strip showed the backend\'s real degraded state ' +
+      '(supabase ok / groq failing) from live GET /health, nav entry + quick access worked. Inquiry surface ' +
+      'streams via atlasOmniStream → /v1/chat/omni-stream (same client as Atlas chamber).',
     gaps: [
-      LOCAL_ONLY_GAP,
-      'Home does not read priorities, unfinished business, or memory from any governed source.',
-      'A richer alternative (src/components/HomeView.tsx, omni-stream wired) was found and evaluated, then deleted: it depended on a Tailwind utility design system (gold-500/ivory/stone/obsidian-surface/glass-obsidian/instrument-label) with zero definitions anywhere in this repo\'s CSS, so mounting it would have rendered unstyled. See atlas-governance/REALITY_AUDIT_2026-07-19.md §11. A real richer Home (priorities, unfinished business, memory, inquiry) remains open work — build it against the live design system (CSS custom properties in atlas-tokens.css), not by reviving the deleted file.',
+      'Inquiry happy-path not observed in-browser: public swarm lane blocked by invalid GROQ_API_KEY (env defect, HTTP 401 — fix the key in atlas-backend/.env).',
+      'Orientation reads local store only — priorities/unfinished business are not yet derived from governed backend memory (§XI "relevant memory" remains open).',
     ],
   },
   'directive-center': {
@@ -137,11 +140,13 @@ export const REALITY_SPINE: Record<ActiveMode, FeatureRecord> = {
       'was confirmed end-to-end over SSE — status → routing → route → delta tokens → done {traceId, requestId, ' +
       'reply, surface: god_mode_local, model, evolution: scheduled}; 200 after ~39s of real local inference; ' +
       'async Overseer lens ran post-response and degraded non-fatally on a dead Groq key exactly as coded. ' +
-      'The backend CONTRACT is runtime-confirmed; the chamber UI itself has not been clicked through (auth ' +
-      'gate requires a local account), so the feature stays below RUNTIME_CONFIRMED.',
+      'The backend CONTRACT is runtime-confirmed. Second runtime pass, same day, in-browser behind the local ' +
+      'auth gate: a real message was sent from this chamber; the full client path (submit → SSE parse → ' +
+      'terminal state → persisted message) executed, surfacing the public-lane provider failure honestly in ' +
+      'the message bubble (Groq 401). The happy path — deltas rendering into the bubble — remains unobserved, ' +
+      'blocked by the dead Groq key (public lane) and by OAuth-only access to the sovereign lane in-browser.',
     gaps: [
-      'UI click-through pending: send/stream/abort/persist in the real browser behind the local auth gate.',
-      'npm run dev starts atlas-backend/src/server.ts (lite server, no omni-stream); the governed pipeline only runs via src/index.ts — dev script fixed this pass, see audit §14.',
+      'Happy-path stream-into-UI unobserved: fix GROQ_API_KEY in atlas-backend/.env, or sign in as the sovereign owner, then send one message and watch deltas render.',
       'Cloud lanes unverifiable here: Groq and Supabase keys on this machine return 401 (dead credentials, not code defects).',
       'Corrections do not yet mutate memory state client-side (§VII) — that lives entirely in the Overseer/evolution backend loop.',
     ],
@@ -195,7 +200,7 @@ export const REALITY_SPINE: Record<ActiveMode, FeatureRecord> = {
   pulse: {
     mode: 'pulse', title: 'Intelligence pulse', domain: 'Bridge',
     state: 'FRONTEND_ONLY',
-    evidence: 'PulseChamber renders local pulse items. Still aliased with `today-in-atlas` in ChamberView.tsx — same component serves both entry points today; splitting them requires a real, distinct Home surface first (see `today-in-atlas` gaps).',
+    evidence: 'PulseChamber renders local pulse items. No longer aliased with `today-in-atlas` — Home is now its own chamber (HomeChamber.tsx).',
     gaps: ['Pulse items are not derived from any signal pipeline.', LOCAL_ONLY_GAP],
   },
   council: {
@@ -446,21 +451,21 @@ export const REALITY_SPINE: Record<ActiveMode, FeatureRecord> = {
   },
   'trajectory-observatory': {
     mode: 'trajectory-observatory', title: 'Trajectory observatory', domain: 'Intelligence',
-    state: 'BACKEND_ONLY',
-    evidence: '/v1/cognitive/trajectory/* registered (compute, snapshots); UI is a placeholder.',
-    gaps: [NO_UI_GAP],
+    state: 'RUNTIME_CONFIRMED',
+    evidence: 'Runtime-confirmed 2026-07-19: IntelligenceChambersChamber (trajectory tab) computed live via POST /v1/cognitive/trajectory/compute — observed classification "compounding_coherence", confidence 45%, projections rendered.',
+    gaps: ['Confirmed on a fresh user with sparse data; behavior under a rich record unobserved.', 'Snapshot history (GET /snapshots) not yet surfaced.'],
   },
   'friction-cartography': {
     mode: 'friction-cartography', title: 'Friction cartography', domain: 'Intelligence',
-    state: 'BACKEND_ONLY',
-    evidence: '/v1/cognitive/friction/* registered (items, rebuild); UI is a placeholder.',
-    gaps: [NO_UI_GAP],
+    state: 'RUNTIME_CONFIRMED',
+    evidence: 'Runtime-confirmed 2026-07-19: GET /v1/cognitive/friction/items and POST /friction/rebuild both round-tripped live; honest empty state for a fresh user.',
+    gaps: ['No friction items existed to render — list rendering with real rows unobserved.', 'Manual friction-item creation (POST /items) not yet surfaced.'],
   },
   'threshold-forge': {
     mode: 'threshold-forge', title: 'Threshold forge', domain: 'Intelligence',
-    state: 'BACKEND_ONLY',
-    evidence: '/v1/cognitive/threshold/* registered (protocols, match, activations); UI is a placeholder.',
-    gaps: [NO_UI_GAP],
+    state: 'RUNTIME_CONFIRMED',
+    evidence: 'Runtime-confirmed 2026-07-19: created a protocol via POST /v1/cognitive/threshold/protocols and observed it re-listed via GET — full round-trip against live SQLite.',
+    gaps: ['Activation/close flows and match-by-text not yet surfaced.'],
   },
   'drift-center': {
     mode: 'drift-center', title: 'Drift center', domain: 'Governance',
@@ -472,9 +477,9 @@ export const REALITY_SPINE: Record<ActiveMode, FeatureRecord> = {
   // ── Governance ───────────────────────────────────────────────────────────
   'privacy-center': {
     mode: 'privacy-center', title: 'Privacy center', domain: 'Governance',
-    state: 'BACKEND_ONLY',
-    evidence: '/api/governance/retention/* registered (status, holds, erasure, audit); PrivacyCenter.tsx exists unrouted; mode renders placeholder.',
-    gaps: ['Retention, erasure, and holds are invisible to the user (§XXVII requires inspectability).', NO_UI_GAP],
+    state: 'RUNTIME_CONFIRMED',
+    evidence: 'Runtime-confirmed 2026-07-19: retention status (next run schedule), holds, and audit trail all loaded live from /api/governance/retention/*; erasure form arms only on typed-email match.',
+    gaps: ['Erasure POST deliberately not fired in verification (irreversible); verified by contract review only.', 'Export and consent controls (§XXVII) not yet surfaced — only retention/erasure/holds/audit.'],
   },
   'audit-logs': {
     mode: 'audit-logs', title: 'Audit logs', domain: 'Governance',

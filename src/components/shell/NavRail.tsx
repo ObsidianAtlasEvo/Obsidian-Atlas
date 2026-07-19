@@ -36,6 +36,7 @@ const ICONS: Record<string, string> = {
 
 const CHAMBERS: ChamberDef[] = [
   // ── Core ────────────────────────────────────────────────────────────
+  { id: 'today-in-atlas', label: 'Home',           icon: 'pulse',        group: 'Core' },
   { id: 'atlas',          label: 'Atlas',          icon: 'atlas',        group: 'Core' },
   { id: 'pulse',          label: 'Pulse',          icon: 'pulse',        group: 'Core' },
   { id: 'journal',        label: 'Journal',        icon: 'journal',      group: 'Core' },
@@ -58,6 +59,9 @@ const CHAMBERS: ChamberDef[] = [
   { id: 'council',        label: 'Council',        icon: 'council',      group: 'Intelligence' },
   { id: 'topology',       label: 'Topology',       icon: 'topology',     group: 'Intelligence' },
   { id: 'mastery',        label: 'Mastery',        icon: 'canon',        group: 'Intelligence' },
+  { id: 'trajectory-observatory', label: 'Trajectory', icon: 'signals',  group: 'Intelligence' },
+  { id: 'friction-cartography',   label: 'Friction',   icon: 'crucible', group: 'Intelligence' },
+  { id: 'threshold-forge',        label: 'Threshold',  icon: 'doctrine', group: 'Intelligence' },
 
   // ── Adaptive ────────────────────────────────────────────────────────
   { id: 'core-systems',   label: 'Model Hub',      icon: 'atlas',        group: 'Adaptive' },
@@ -71,6 +75,8 @@ const CHAMBERS: ChamberDef[] = [
 
   // ── Meta ─────────────────────────────────────────────────────────────
   { id: 'directive-center', label: 'Directives',   icon: 'settings',     group: 'Meta' },
+  { id: 'privacy-center',   label: 'Privacy',      icon: 'constitution', group: 'Meta' },
+  { id: 'reality-ledger',   label: 'Truth Ledger', icon: 'console',      group: 'Meta' },
   { id: 'creator-console',  label: 'Console',      icon: 'console',      group: 'Meta', creatorOnly: true },
   { id: 'gap-ledger',       label: 'Gap Ledger',   icon: 'console',      group: 'Meta', creatorOnly: true },
   { id: 'audit-logs',       label: 'Audit Logs',   icon: 'console',      group: 'Meta', creatorOnly: true },
@@ -102,7 +108,7 @@ function Icon({ path, size = 18 }: { path: string; size?: number }) {
 // ── Mobile tab bar chambers (subset for bottom nav) ──────────────────────
 
 const MOBILE_TAB_IDS: AppState['activeMode'][] = [
-  'atlas', 'pulse', 'journal', 'decisions', 'doctrine',
+  'today-in-atlas', 'atlas', 'journal', 'decisions', 'doctrine',
 ];
 
 // ── NavRail ───────────────────────────────────────────────────────────────
