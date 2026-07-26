@@ -1,0 +1,38 @@
+# ModEngine2 config for the Victor von Doom conversion.
+# Launch via ModEngine2's launchmod_eldenring.bat (offline, EAC disabled).
+# Docs: this is the standard ModEngine2 TOML schema. [VERIFY] field names against your
+# ModEngine2 release; recent releases use exactly these keys.
+
+[modengine]
+# Debug logging to console; turn off for normal play.
+debug = false
+
+[extension.mod_loader]
+# Load loose files from the mod folder(s) below, in order (later overrides earlier).
+enabled = true
+# Loose files take precedence over the game's archives.
+loose_params = false   # we ship a merged regulation.bin, not loose param files
+
+  # The mod folder. Relative to the ModEngine2 install, or absolute.
+  # This folder mirrors the game's file tree:
+  #   Doom/regulation.bin
+  #   Doom/event/common.emevd.dcx
+  #   Doom/chr/c0000.behbnd.dcx           (HKS control layer)
+  #   Doom/chr/c0000.anibnd.dcx           (custom TAE/anims, optional)
+  #   Doom/sfx/sfxbnd_commoneffects.ffxbnd.dcx   (new FXR)
+  #   Doom/parts/*.partsbnd.dcx           (armor/Mjolnir models)
+  #   Doom/msg/engus/*.msgbnd.dcx         (FMG text)
+  [[extension.mod_loader.mods]]
+  enabled = true
+  name = "VictorVonDoom"
+  path = "Doom"
+
+[extension.scylla_hide]
+# Anti-anti-debug helper bundled with ModEngine2; leave default.
+enabled = false
+
+[extension.mod_loader.mods.overrides]
+# (Optional) explicit per-file overrides if you keep some modules separate.
+# Example — load Mjolnir module from its own folder AFTER core so it wins conflicts:
+#   [[extension.mod_loader.mods]] name = "Doom.Mjolnir" path = "modules/Mjolnir"
+# Keep Core first, Combined/Emperor last (they reference other modules' rows).

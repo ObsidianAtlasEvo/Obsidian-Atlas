@@ -1,0 +1,116 @@
+-- ============================================================================
+--  VICTOR VON DOOM — player behavior control layer  (HKS / Havok Script)
+-- ----------------------------------------------------------------------------
+--  Target: c0000.hks inside c0000.behbnd.dcx
+--  Install: WitchyBND unpack c0000.behbnd.dcx -> merge this into c0000.hks
+--           (append these functions + call installDoomLayer() from the main
+--           per-frame update) -> repack with WitchyBND -> place in Doom/chr/.
+--
+--  HKS is a Lua dialect FromSoft uses for the player state machine. It can read
+--  input, query/set SpEffects, and drive animation transitions. It is the right
+--  place for the "modifier + combined input" control scheme (doc 03), because it
+--  runs every frame with input access — something EMEVD cannot do cleanly.
+--
+--  [VERIFY] the exact HKS API names against a c0000.hks dump for your patch. The
+--  functions below (env:GetSpEffect, act:IsKeyOn, env:SetSpEffect, act:PlayAnim)
+--  are the *roles* you need; real c0000.hks exposes equivalents under names like
+--  env:GetEventFlag / act:GetInputEvent / act:ExecEventBehavior. Map each call to
+--  the real symbol before compiling. DO NOT ship guessed names.
+-- ============================================================================
+
+-- ---- editable bindings (users may change these chords) ---------------------
+local BIND = {
+  SELECTOR_A = INPUT.LB,   -- hold LB+LT to open the Cosmic Selector
+  SELECTOR_B = INPUT.LT,
+  SRC_DOOM   = INPUT.DPAD_UP,
+  SRC_MJOLNIR= INPUT.DPAD_RIGHT,
+  SRC_ODIN   = INPUT.DPAD_DOWN,
+  SRC_STONE  = INPUT.DPAD_LEFT,
+  COSMIC     = INPUT.R3,
+  RECALL     = INPUT.DPAD_RIGHT, -- tap while HAMMER_THROWN = manual recall
+}
+
+-- SpEffect tag IDs (mirror params/00) --------------------------------------
+local TAG = {
+  MODE_DOOM=7700000, MODE_SORC=7700001, MODE_MJOLNIR=7700002, MODE_ODIN=7700003,
+  MODE_STONE=7700004, MODE_COSMIC=7700005, HAMMER_THROWN=7700030,
+}
+local MODE_GROUP = { TAG.MODE_DOOM,TAG.MODE_SORC,TAG.MODE_MJOLNIR,
+                     TAG.MODE_ODIN,TAG.MODE_STONE,TAG.MODE_COSMIC }
+
+-- exclusive set: grant one mode, clear the others (belt-and-suspenders vs the
+-- SpEffect stateInfo category in params/10) --------------------------------
+local function setMode(env, id)
+  for _,m in ipairs(MODE_GROUP) do
+    if m == id then env:SetSpEffect(m) else env:ClearSpEffect(m) end   -- [VERIFY api]
+  end
+end
+
+-- ---- called every frame from the main c0000 update -------------------------
+function doomUpdate(env, act)
+  -- 1) Cosmic Selector: only while BOTH selector buttons held (misfire-proof).
+  if act:IsKeyOn(BIND.SELECTOR_A) and act:IsKeyOn(BIND.SELECTOR_B) then
+    if act:IsKeyOn(BIND.COSMIC)      then setMode(env, TAG.MODE_COSMIC)
+    elseif act:IsKeyOn(BIND.SRC_DOOM) then
+      -- double-context: tap = tech, hold = sorcery
+      if act:IsKeyHeld(BIND.SRC_DOOM, 0.3) then setMode(env, TAG.MODE_SORC)
+      else setMode(env, TAG.MODE_DOOM) end
+    elseif act:IsKeyOn(BIND.SRC_MJOLNIR) then setMode(env, TAG.MODE_MJOLNIR)
+    elseif act:IsKeyOn(BIND.SRC_ODIN)    then setMode(env, TAG.MODE_ODIN)
+    elseif act:IsKeyOn(BIND.SRC_STONE)   then setMode(env, TAG.MODE_STONE)
+    end
+    -- while the selector is held we suppress the bound buttons' normal meaning
+    return "selector"
+  end
+
+  -- 2) Hammer manual recall: tap the throw button again while the hammer is out.
+  if env:GetSpEffect(TAG.HAMMER_THROWN) and act:IsKeyPressed(BIND.RECALL) then
+    env:SetSpEffect(7700031 /*RECALL_REQUEST -> EMEVD event 7700100 reacts*/)     -- [VERIFY]
+  end
+
+  -- 3) Ability routing: the SAME action button fires a different Ash-of-War /
+  --    spell depending on the active mode tag. We do this by executing the
+  --    mode-appropriate behavior when the action button is pressed.
+  local mode = currentMode(env)
+  if mode then
+    if act:IsKeyPressed(INPUT.RB) then execAbility(env, act, mode, "primary")  end
+    if act:IsKeyPressed(INPUT.LT) then execAbility(env, act, mode, "heavy")    end
+    if act:IsKeyPressed(INPUT.LB) then execAbility(env, act, mode, "utility")  end
+    if act:IsKeyPressed(INPUT.L2R3)then execAbility(env, act, mode, "ultimate")end
+    if act:IsKeyPressed(INPUT.Y)  then execAbility(env, act, mode, "mobility") end
+  end
+end
+
+function currentMode(env)
+  for _,m in ipairs(MODE_GROUP) do if env:GetSpEffect(m) then return m end end
+  return nil
+end
+
+-- Map (mode, slot) -> the Ash-of-War / spell behavior id to execute.
+-- Behavior ids come from params/30. This table is the heart of "one button,
+-- dozens of abilities" (doc 03 §D.2).
+local ABILITY = {
+  [7700000] = { primary=7700, heavy=7703, utility=7700200, ultimate=7700300, mobility=7700210 }, -- Doom tech
+  [7700001] = { primary=7710, heavy=7715, utility=7702,    ultimate=7723,    mobility=7700211 }, -- Doom sorcery
+  [7700002] = { primary=7700200 /*throw AoW*/, heavy=7700201, utility=7740, ultimate=7748, mobility=7700212 }, -- Mjolnir
+  [7700003] = { primary=7760, heavy=7761, utility=7766, ultimate=7768, mobility=7700213 },       -- Odinforce
+  [7700004] = "STONE",  -- routed by STONE_SEL_* (see execAbility)
+  [7700005] = { primary=7790, heavy=7791, utility=7792, ultimate=7799, mobility=7700214 },       -- Cosmic/combined
+}
+
+function execAbility(env, act, mode, slot)
+  local tbl = ABILITY[mode]
+  if tbl == "STONE" then tbl = stoneTable(env) end   -- pick by selected Stone tag
+  local behavior = tbl and tbl[slot]
+  if behavior then
+    -- charge/hold flavor: if the slot is a charge ability and the button is held,
+    -- play the charge variant; TAE cancel windows handle release.
+    act:ExecEventBehavior(behavior)                   -- [VERIFY exec-behavior symbol]
+  end
+end
+
+function installDoomLayer()
+  -- Register doomUpdate into the c0000 per-frame update chain. In practice you
+  -- add `doomUpdate(env, act)` inside the existing Update()/exec function of
+  -- c0000.hks. Keep it early so mode selection resolves before normal actions.
+end
